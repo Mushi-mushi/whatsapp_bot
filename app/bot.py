@@ -18,16 +18,18 @@ CONFIG_PATH = 'config/config.json'
 USER_DATA_DIR = 'user_data/session'
 WHATSAPP_URL = 'https://web.whatsapp.com/'
 
-# --- ROBUST XPATH SELECTORS (Definitive Version) ---
+# --- XPATH SELECTORS (Definitive Final Version) ---
 QR_CODE_XPATH = "//div[@data-ref]"
 LOGGED_IN_MARKER_XPATH = "//div[@id='side']//div[@aria-label='Search input textbox']"
-UNREAD_CHAT_XPATH = "//span[contains(@aria-label, 'unread message')]/ancestor::div[@role='listitem']"
+
+# This selector finds the entire chat container DIV, but only if it contains an unread message span inside it.
+UNREAD_CHAT_CONTAINER_XPATH = "//div[@role='listitem'][.//span[contains(@aria-label, 'unread message')]]"
+# This is a RELATIVE selector to find the sender's name within a chat container. It looks for a span with a 'title' attribute.
+SENDER_NAME_IN_LIST_XPATH = ".//span[@title]"
+
+# Selectors for once a chat is open
 LAST_MESSAGE_CONTAINER_XPATH = "(//div[contains(@class, 'message-in')])[last()]"
-
-# This is the new, definitive selector based on the debug HTML you provided.
-# It looks for a button with the aria-label 'Play voice message' within the message bubble.
 AUDIO_PLAYER_IN_MSG_XPATH = ".//button[@aria-label='Play voice message']"
-
 TEXT_IN_MSG_XPATH = ".//span[contains(@class, 'selectable-text')]"
 MESSAGE_INPUT_BOX_XPATH = "//div[@id='main']//footer//div[@role='textbox']"
 
@@ -42,7 +44,8 @@ def load_config():
         return {
             "openai_api_key": "PASTE_YOUR_OPENAI_API_KEY_HERE",
             "transcription_enabled": True,
-            "keyword_responses": {"hello": "Default response: Hello!"}
+            "keyword_responses": {"hello": "Default response: Hello!"},
+            "approved_senders": []
         }
 
 def setup_driver():
@@ -76,6 +79,7 @@ def run_bot():
             shared_bot_state.status = "LOGGED_IN"
             print("Bot is logged in and running.")
         except NoSuchElementException:
+            # ... (QR code logic is correct) ...
             print("QR code found. Displaying on Web UI.")
             shared_bot_state.status = "NEEDS_LOGIN"
             while shared_bot_state.status == "NEEDS_LOGIN":
@@ -107,60 +111,73 @@ def run_bot():
                     config = load_config()
                     last_config_check_time = current_time
 
-                unread_chats = driver.find_elements(By.XPATH, UNREAD_CHAT_XPATH)
+                # Find all unread chat containers
+                unread_chat_containers = driver.find_elements(By.XPATH, UNREAD_CHAT_CONTAINER_XPATH)
                 
-                if unread_chats:
-                    print(f"[DEBUG] Found {len(unread_chats)} unread chat(s).")
-                    chat_to_process = unread_chats[0]
-                    try:
-                        chat_to_process.click()
-                        time.sleep(2)
-                        
-                        last_message_container = WebDriverWait(driver, 10).until(
-                            EC.presence_of_element_located((By.XPATH, LAST_MESSAGE_CONTAINER_XPATH))
-                        )
-
-                        is_audio = False
+                if unread_chat_containers:
+                    print(f"[DEBUG] Found {len(unread_chat_containers)} unread chat(s).")
+                    approved_senders = config.get('approved_senders', [])
+                    
+                    # --- START: NEW, SUPERIOR LOGIC ---
+                    # Iterate through all unread chats found
+                    for chat_container in unread_chat_containers:
                         try:
-                            # Use the new, correct selector to find the audio player
-                            last_message_container.find_element(By.XPATH, AUDIO_PLAYER_IN_MSG_XPATH)
-                            is_audio = True
-                            print("[DEBUG] Audio message detected.")
-                        except NoSuchElementException:
-                            is_audio = False
-                            print("[DEBUG] No audio player found, assuming text message.")
+                            # Extract the sender name *before* clicking
+                            sender_element = chat_container.find_element(By.XPATH, SENDER_NAME_IN_LIST_XPATH)
+                            sender_name = sender_element.get_attribute("title").strip()
+                            print(f"[DEBUG] Found unread message from: '{sender_name}'")
 
-                        if is_audio:
-                            reply_text = "No voice message allowed"
-                            input_box = WebDriverWait(driver, 10).until(
-                                EC.element_to_be_clickable((By.XPATH, MESSAGE_INPUT_BOX_XPATH))
-                            )
-                            input_box.send_keys(reply_text + Keys.ENTER)
-                            print(f"[SUCCESS] Sent reply: '{reply_text}'")
-                        else: 
-                            try:
-                                message_text = last_message_container.find_element(By.XPATH, TEXT_IN_MSG_XPATH).text.lower().strip()
-                                print(f"[DEBUG] Read text message: '{message_text}'")
+                            # Check against the whitelist
+                            if sender_name in approved_senders:
+                                print(f"[INFO] Sender '{sender_name}' is APPROVED. Processing...")
+                                chat_container.click()
+                                time.sleep(2)
+
+                                # Now that we're in the chat, process the last message
+                                last_message_container = WebDriverWait(driver, 10).until(
+                                    EC.presence_of_element_located((By.XPATH, LAST_MESSAGE_CONTAINER_XPATH))
+                                )
                                 
-                                keyword_responses = config.get('keyword_responses', {})
-                                if message_text in keyword_responses:
-                                    reply_text = keyword_responses[message_text]
-                                    input_box = WebDriverWait(driver, 10).until(
-                                        EC.element_to_be_clickable((By.XPATH, MESSAGE_INPUT_BOX_XPATH))
-                                    )
+                                is_audio = False
+                                try:
+                                    last_message_container.find_element(By.XPATH, AUDIO_PLAYER_IN_MSG_XPATH)
+                                    is_audio = True
+                                except NoSuchElementException:
+                                    is_audio = False
+
+                                if is_audio:
+                                    print("[DEBUG] Audio message detected.")
+                                    reply_text = "No voice message allowed"
+                                    input_box = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, MESSAGE_INPUT_BOX_XPATH)))
                                     input_box.send_keys(reply_text + Keys.ENTER)
-                                    print(f"[SUCCESS] Sent keyword reply: '{reply_text}'")
+                                    print(f"[SUCCESS] Sent audio rejection reply.")
                                 else:
-                                    print("[DEBUG] Keyword not found. No action taken.")
-                            except NoSuchElementException:
-                                print("[DEBUG] Last message has no text content (e.g., an image or sticker). Skipping.")
-                        
-                        time.sleep(2)
-                        print("[DEBUG] Refreshing page to reset focus...")
-                        driver.refresh()
-                        
-                    except Exception as e:
-                        print(f"[ERROR] An error occurred while processing chat: {e}")
+                                    print("[DEBUG] Assuming text message.")
+                                    message_text = last_message_container.find_element(By.XPATH, TEXT_IN_MSG_XPATH).text.lower().strip()
+                                    print(f"[DEBUG] Read text: '{message_text}'")
+                                    if message_text in config.get('keyword_responses', {}):
+                                        reply_text = config['keyword_responses'][message_text]
+                                        input_box = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, MESSAGE_INPUT_BOX_XPATH)))
+                                        input_box.send_keys(reply_text + Keys.ENTER)
+                                        print(f"[SUCCESS] Sent keyword reply.")
+                                    else:
+                                        print("[DEBUG] Keyword not found.")
+                                
+                                # Refresh the page to reset focus and look for the next message
+                                time.sleep(2)
+                                print("[DEBUG] Refreshing page to find next message...")
+                                driver.refresh()
+                                # Break out of the inner 'for' loop to start the 'while' loop again from a fresh page state
+                                break 
+                            else:
+                                print(f"[INFO] Sender '{sender_name}' is NOT approved. Skipping.")
+
+                        except Exception as e:
+                            print(f"[ERROR] An error occurred while processing a chat item: {e}")
+                            # Refresh to try and recover from a bad state
+                            driver.refresh()
+                            break
+                    # --- END: NEW, SUPERIOR LOGIC ---
                 
                 print("[DEBUG] Waiting for next cycle...")
                 time.sleep(5)

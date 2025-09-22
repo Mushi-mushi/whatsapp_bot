@@ -5,6 +5,10 @@
     "bot.hello": "Hello! This is a response from your bot.",
     "bot.help": "You can say 'hello' or 'status'.",
     "bot.status": "I am running correctly.",
-    "bot.status4": "I am running correctly."
-  }
+    "bot.time": "The current time is {{current_time}}."
+  },
+  "approved_senders": [
+    "Work Phone NESTLE",
+    "Si Ying"
+  ]
 }
