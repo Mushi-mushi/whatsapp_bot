@@ -18,13 +18,11 @@ CONFIG_PATH = 'config/config.json'
 USER_DATA_DIR = 'user_data/session'
 WHATSAPP_URL = 'https://web.whatsapp.com/'
 
-# --- ROBUST XPATH SELECTORS (Data-Driven Final Version) ---
+# --- ROBUST XPATH SELECTORS (Final Version) ---
 QR_CODE_XPATH = "//div[@data-ref]"
 LOGGED_IN_MARKER_XPATH = "//div[@id='side']//div[@aria-label='Search input textbox']"
 UNREAD_CHAT_XPATH = "//span[contains(@aria-label, 'unread message')]/ancestor::div[@role='listitem']"
 LAST_MESSAGE_TEXT_XPATH = "(//div[contains(@class, 'message-in')]//span[contains(@class, 'selectable-text')])[last()]"
-
-# This is the definitive selector based on the debug HTML provided.
 MESSAGE_INPUT_BOX_XPATH = "//div[@id='main']//footer//div[@role='textbox']"
 
 
@@ -139,7 +137,15 @@ def run_bot():
                             )
                             input_box.send_keys(reply_text + Keys.ENTER)
                             print(f"[SUCCESS] Sent reply: '{reply_text}'")
-                            time.sleep(2)
+                            
+                            # --- START: THE CRITICAL FIX ---
+                            # Add a pause to allow WhatsApp to send the message before we refresh.
+                            time.sleep(2) 
+                            # --- END: THE CRITICAL FIX ---
+                            
+                            print("[DEBUG] Refreshing page to reset focus...")
+                            driver.refresh()
+                            time.sleep(5) 
                         else:
                             print("[DEBUG] Keyword not found in dictionary. No action taken.")
                         
@@ -156,13 +162,13 @@ def run_bot():
                 break
             except Exception as e:
                 print(f"[CRITICAL] An unexpected error occurred in the main loop: {e}")
+                driver.save_screenshot("critical_error_screenshot.png")
                 shared_bot_state.status = "CRASHED"
                 time.sleep(10)
                 break
 
     except Exception as e:
         print(f"A critical error occurred during bot startup: {e}")
-        shared_bot_state.status = "CRASHED"
         
     finally:
         print("Bot is shutting down.")
