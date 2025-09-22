@@ -1,0 +1,11 @@
+# docker-compose.yml (Final Version)
+services:
+  whatsapp-bot:
+    build: .
+    ports:
+      - "5000:5000"
+    shm_size: '1g'
+    volumes:
+      # Re-enable both volumes.
+      - ./config:/usr/src/app/config
+      - ./user_data:/usr/src/app/user_data

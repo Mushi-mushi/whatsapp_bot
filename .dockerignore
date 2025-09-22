@@ -1,0 +1,11 @@
+# .dockerignore
+
+# Ignore the user_data directory during the build process.
+# This contains temporary session data and should not be part of the image.
+user_data/
+
+# Ignore Python's cache files
+__pycache__/
+
+# Ignore VSCode settings if they exist
+.vscode/

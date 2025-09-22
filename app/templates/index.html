@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WhatsApp Bot Configuration</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; background: #f9f9f9; }
+        textarea { width: 100%; height: 200px; font-family: monospace; }
+        input[type=text] { width: 100%; }
+        button { padding: 10px 15px; background: #007bff; color: white; border: none; cursor: pointer; border-radius: 8px; }
+        #status-container { padding: 20px; background: #fff; border: 1px solid #ddd; margin-bottom: 20px; text-align: center; border-radius: 16px; }
+        #qr-code img { max-width: 300px; }
+    </style>
+</head>
+<body>
+    
+    <!-- STATUS SECTION -->
+    <div id="status-container">
+        <h2>Bot Status</h2>
+        <p id="status-text">INITIALIZING...</p>
+        <div id="qr-code"></div>
+    </div>
+
+    <h1>WhatsApp Bot Configuration</h1>
+    <form method="post">
+        <p>
+            <label for="openai_api_key">OpenAI API Key:</label><br>
+            <input type="text" id="openai_api_key" name="openai_api_key" value="{{ config.openai_api_key }}">
+        </p>
+        <p>
+            <input type="checkbox" id="transcription_enabled" name="transcription_enabled" {% if config.transcription_enabled %}checked{% endif %}>
+            <label for="transcription_enabled">Enable Audio Transcription</label>
+        </p>
+        <p>
+            <label for="keyword_responses">Keyword Responses (JSON format):</label><br>
+            <!-- START: THE CRITICAL FIX -->
+            <!--
+                This line now does two things:
+                1. It accesses the nested 'keyword_responses' dictionary from the main 'config' object.
+                2. The '|tojson(indent=2)' filter correctly formats this dictionary as a pretty-printed JSON string.
+            -->
+            <textarea id="keyword_responses" name="keyword_responses">{{ config.keyword_responses|tojson(indent=2) }}</textarea>
+            <!-- END: THE CRITICAL FIX -->
+        </p>
+        <button type="submit">Save Configuration</button>
+    </form>
+    
+    {% if saved %}
+        <p style="color: green;"><strong>Configuration saved! The bot will pick up changes on its next cycle.</strong></p>
+    {% endif %}
+
+    <!-- JAVASCRIPT FOR STATUS POLLING -->
+    <script>
+        // ... (script is unchanged) ...
+        const statusText = document.getElementById('status-text');
+        const qrCodeContainer = document.getElementById('qr-code');
+        let intervalId;
+
+        async function checkStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                statusText.textContent = `Status: ${data.status}`;
+                if (data.status === 'NEEDS_LOGIN') {
+                    qrCodeContainer.innerHTML = `<p>Please scan the QR code below:</p><img src="data:image/png;base64,${data.qr_image}" alt="QR Code">`;
+                } else {
+                    qrCodeContainer.innerHTML = '';
+                }
+                if (data.status === 'LOGGED_IN') {
+                    statusText.textContent = 'Status: LOGGED IN and RUNNING';
+                    statusText.style.color = 'green';
+                    clearInterval(intervalId);
+                }
+                if (data.status === 'CRASHED') {
+                    statusText.textContent = 'Status: CRASHED. Check container logs.';
+                    statusText.style.color = 'red';
+                    clearInterval(intervalId);
+                }
+            } catch (error) {
+                statusText.textContent = 'Error fetching status. Is the server running?';
+                console.error('Error:', error);
+            }
+        }
+        intervalId = setInterval(checkStatus, 3000);
+        checkStatus();
+    </script>
+
+</body>
+</html>
