@@ -1,11 +1,10 @@
-# Dockerfile (Definitive, Final Version)
+# Dockerfile (Definitive, Corrected Version)
 FROM python:3.9-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install dependencies as root
 RUN apt-get update && apt-get install -y \
-    gosu \
     tini \
     ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 libcurl4 \
     libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
@@ -22,30 +21,31 @@ RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.d
 # Create the non-root user and its home directory
 RUN useradd -ms /bin/bash appuser
 
-# Set the working directory to the user's home directory.
+# Set the working directory to be the main app folder inside the user's home.
 WORKDIR /home/appuser/app
 
 # --- START: CRITICAL FIX ---
-# Create the directories for our volumes as the root user FIRST.
-RUN mkdir -p /home/appuser/app/config /home/appuser/app/user_data && \
-    # Now, give the non-root 'appuser' ownership of these directories.
-    # When the volumes are mounted, the permissions will be correct.
-    chown -R appuser:appuser /home/appuser/app/config /home/appuser/app/user_data
+# Copy the requirements and config files first to leverage Docker build caching.
+COPY --chown=appuser:appuser requirements.txt .
+COPY --chown=appuser:appuser config/ ./config/
+
+# Copy the session data, respecting the .dockerignore file
+COPY --chown=appuser:appuser user_data/ ./user_data/
+
+# Copy the *contents* of the local 'app' folder into the WORKDIR.
+COPY --chown=appuser:appuser app/ .
 # --- END: CRITICAL FIX ---
 
-# Copy the requirements file and install them
-COPY --chown=appuser:appuser requirements.txt .
-# Switch to the non-root user before running pip
+# Switch to the non-root user
 USER appuser
+
+# Install Python requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Now, copy the application code into the WORKDIR.
-# The USER is already appuser, so we don't need --chown here.
-COPY ./app/ .
-COPY ./config/ ./config/
-
-# Expose the port
+# This port is exposed from within the container
 EXPOSE 5000
 
-# The CMD will now run as 'appuser' and will have permission to write to the volumes.
+# Set tini as the entrypoint to properly manage processes
+ENTRYPOINT ["/usr/bin/tini", "--"]
+# The command will now correctly find main.py in the WORKDIR /home/appuser/app
 CMD ["python", "-u", "main.py"]
