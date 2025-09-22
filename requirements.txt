@@ -1,4 +1,6 @@
+# requirements.txt
 selenium
 flask
 openai
 waitress
+textblob

@@ -1,4 +1,4 @@
-# Dockerfile (Definitive, Corrected Version)
+# Dockerfile (Definitive, Final Version)
 FROM python:3.9-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -21,31 +21,35 @@ RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.d
 # Create the non-root user and its home directory
 RUN useradd -ms /bin/bash appuser
 
-# Set the working directory to be the main app folder inside the user's home.
+# Set the working directory
 WORKDIR /home/appuser/app
 
-# --- START: CRITICAL FIX ---
-# Copy the requirements and config files first to leverage Docker build caching.
+# --- START: CRITICAL PERMISSIONS AND COPY FIX ---
+# Create the directories that our volumes will mount to.
+# Do this as root so we can set permissions.
+RUN mkdir -p /home/appuser/app/config /home/appuser/app/user_data /home/appuser/app/logs && \
+    # Give the non-root 'appuser' ownership of these mount points.
+    chown -R appuser:appuser /home/appuser/app/config /home/appuser/app/user_data /home/appuser/app/logs
+
+# Copy only the requirements file first to leverage Docker build caching
 COPY --chown=appuser:appuser requirements.txt .
-COPY --chown=appuser:appuser config/ ./config/
 
-# Copy the session data, respecting the .dockerignore file
-COPY --chown=appuser:appuser user_data/ ./user_data/
-
-# Copy the *contents* of the local 'app' folder into the WORKDIR.
-COPY --chown=appuser:appuser app/ .
-# --- END: CRITICAL FIX ---
-
-# Switch to the non-root user
+# Switch to the non-root user for all subsequent operations
 USER appuser
 
-# Install Python requirements
+# Install Python requirements as 'appuser'
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m textblob.download_corpora
 
-# This port is exposed from within the container
+# Now, copy the application code into the WORKDIR.
+# We copy the *contents* of the local 'app' folder, not the folder itself.
+COPY --chown=appuser:appuser app/ .
+# --- END: CRITICAL PERMISSIONS AND COPY FIX ---
+
+# Expose the port
 EXPOSE 5000
 
 # Set tini as the entrypoint to properly manage processes
 ENTRYPOINT ["/usr/bin/tini", "--"]
-# The command will now correctly find main.py in the WORKDIR /home/appuser/app
+# The CMD will now run as 'appuser' and will have permission to write to the volumes.
 CMD ["python", "-u", "main.py"]

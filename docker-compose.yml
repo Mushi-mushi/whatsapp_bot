@@ -1,4 +1,4 @@
-# docker-compose.yml (Final Version)
+# docker-compose.yml (Definitive Version)
 services:
   whatsapp-bot:
     build: .
@@ -6,6 +6,7 @@ services:
       - "5000:5000"
     shm_size: '1g'
     volumes:
-      # Re-enable both volumes.
-      - ./config:/usr/src/app/config
-      - ./user_data:/usr/src/app/user_data
+      # These volumes ensure your config, session data, and logs persist on your local machine.
+      - ./config:/home/appuser/app/config
+      - ./user_data:/home/appuser/app/user_data
+      - ./logs:/home/appuser/app/logs

@@ -1,6 +1,12 @@
 {
   "openai_api_key": "PASTE_YOUR_OPENAI_API_KEY_HERE",
   "transcription_enabled": true,
+  "dynamic_commands": {
+    "bot.time": "time",
+    "bot.toppositive": "top_positive",
+    "bot.topnegative": "top_negative",
+    "bot.score": "score"
+  },
   "keyword_responses": {
     "bot.hello": "Hello! This is a response from your bot.",
     "bot.help": "You can say 'hello' or 'status'.",
