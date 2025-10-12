@@ -1,4 +1,6 @@
 Timestamp,Sender,Sentiment,Polarity Score,Message
-2025-09-22 11:55:36,Work Phone NESTLE,Positive,1.00,France is the best
-2025-09-22 12:07:21,Work Phone NESTLE,Positive,1.00,France is wonderful
-2025-09-22 12:09:52,Work Phone NESTLE,Positive,0.35,France is not bad
+2025-10-11 13:51:24,Si Ying,Positive,0.80,France is great
+2025-10-11 13:51:59,Si Ying,Negative,-0.70,France is bad
+2025-10-11 13:53:39,Si Ying,Positive,0.17,"I love French foods, culture and the French men"
+2025-10-11 13:56:30,Si Ying,Neutral,0.00,All hail le France !
+2025-10-11 13:59:47,Si Ying,Positive,0.75,France is amazing !

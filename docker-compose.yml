@@ -10,3 +10,4 @@ services:
       - ./config:/home/appuser/app/config
       - ./user_data:/home/appuser/app/user_data
       - ./logs:/home/appuser/app/logs
+      - ./downloads:/downloads

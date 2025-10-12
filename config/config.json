@@ -1,8 +1,16 @@
 {
   "openai_api_key": "PASTE_YOUR_OPENAI_API_KEY_HERE",
   "transcription_enabled": true,
+  "audio_download_enabled": false,
+  "audio_download_dir": "/downloads/audio",
   "dynamic_commands": {
+    "bot.complain": "complain",
+    "bot.help": "help", 
     "bot.time": "time",
+    "bot.siesta": "siesta",
+    "bot.status": "status",
+    "bot.torture": "torture",
+    "bot.insults": "insults",
     "bot.toppositive": "top_positive",
     "bot.topnegative": "top_negative",
     "bot.score": "score"
