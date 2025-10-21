@@ -1,0 +1,3 @@
+2025-10-21 06:19:16,170 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-10-21 06:19:17,174 INFO spawned: 'whatsapp_bot' with pid 8
+2025-10-21 06:19:28,025 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)

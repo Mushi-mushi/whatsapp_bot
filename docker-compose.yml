@@ -5,6 +5,7 @@ services:
     ports:
       - "5000:5000"
     shm_size: '1g'
+    restart: always
     volumes:
       # These volumes ensure your config, session data, and logs persist on your local machine.
       - ./config:/home/appuser/app/config
