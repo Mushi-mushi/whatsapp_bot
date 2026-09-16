@@ -1,7 +1,10 @@
 {
   "openai_api_key": "PASTE_YOUR_OPENAI_API_KEY_HERE",
   "transcription_enabled": true,
-  "audio_download_enabled": false,
+  "transcription_provider": "auralis",
+  "auralis_base_url": "http://host.docker.internal:8000",
+  "transcription_timeout_seconds": 90,
+  "audio_download_enabled": true,
   "audio_download_dir": "/downloads/audio",
   "dynamic_commands": {
     "bot.complain": "complain",
@@ -13,7 +16,14 @@
     "bot.insults": "insults",
     "bot.toppositive": "top_positive",
     "bot.topnegative": "top_negative",
-    "bot.score": "score"
+    "bot.score": "score",
+    "bot.jokes": "jokes",
+    "bot.weather": "weather",
+    "bot.fact": "fact",
+    "bot.8ball": "eightball",
+    "bot.quote": "quote",
+    "bot.roast.neg": "roast",
+    "bot.roast": "roast"
   },
   "keyword_responses": {
     "bot.hello": "Hello! This is a response from your bot.",
@@ -26,6 +36,8 @@
     "Si Ying",
     "Ignasi",
     "Climbing Team",
-    "Hernán Brocker"
+    "Hernán Brocker",
+    "Fiesta de frutas con IA 🍓🍍🍒🍋",
+    "Famille ❤️"
   ]
 }

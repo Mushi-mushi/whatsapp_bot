@@ -7,3 +7,169 @@
 2025-10-24 15:48:22,575 CRIT could not write pidfile /home/appuser/app/supervisord.pid
 2025-10-24 15:48:23,581 INFO spawned: 'whatsapp_bot' with pid 8
 2025-10-24 15:48:33,899 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-10-25 14:36:31,311 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-10-25 14:36:32,317 INFO spawned: 'whatsapp_bot' with pid 8
+2025-10-25 14:36:35,948 WARN received SIGTERM indicating exit request
+2025-10-25 14:36:35,949 INFO waiting for whatsapp_bot to die
+2025-10-25 14:36:35,952 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-10-25 14:36:36,857 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-10-25 14:36:37,861 INFO spawned: 'whatsapp_bot' with pid 8
+2025-10-25 14:36:48,031 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-10-25 14:38:15,132 WARN received SIGTERM indicating exit request
+2025-10-25 14:38:15,132 INFO waiting for whatsapp_bot to die
+2025-10-25 14:38:15,134 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-10-25 14:38:28,802 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-10-25 14:38:29,807 INFO spawned: 'whatsapp_bot' with pid 8
+2025-10-25 14:38:39,922 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-10-25 14:39:02,946 WARN received SIGTERM indicating exit request
+2025-10-25 14:39:02,947 INFO waiting for whatsapp_bot to die
+2025-10-25 14:39:02,949 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-10-25 14:39:10,704 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-10-25 14:39:11,708 INFO spawned: 'whatsapp_bot' with pid 8
+2025-10-25 14:39:22,202 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-10-27 22:37:23,666 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-10-27 22:37:24,671 INFO spawned: 'whatsapp_bot' with pid 8
+2025-10-27 22:37:31,399 WARN received SIGTERM indicating exit request
+2025-10-27 22:37:31,400 INFO waiting for whatsapp_bot to die
+2025-10-27 22:37:31,402 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-10-27 22:37:32,303 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-10-27 22:37:33,307 INFO spawned: 'whatsapp_bot' with pid 8
+2025-10-27 22:37:43,377 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-10-29 16:21:33,477 WARN received SIGTERM indicating exit request
+2025-10-29 16:21:33,478 INFO waiting for whatsapp_bot to die
+2025-10-29 16:21:33,480 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-10-29 16:21:50,107 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-10-29 16:21:51,111 INFO spawned: 'whatsapp_bot' with pid 8
+2025-10-29 16:22:01,753 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-10-29 16:22:50,809 WARN received SIGTERM indicating exit request
+2025-10-29 16:22:50,810 INFO waiting for whatsapp_bot to die
+2025-10-29 16:22:50,812 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-10-29 16:23:34,226 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-10-29 16:23:35,230 INFO spawned: 'whatsapp_bot' with pid 8
+2025-10-29 16:23:46,184 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-02 11:49:54,794 WARN received SIGTERM indicating exit request
+2025-11-02 11:49:54,795 INFO waiting for whatsapp_bot to die
+2025-11-02 11:49:54,800 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-02 11:51:35,532 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-02 11:51:36,536 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-02 11:51:46,676 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-05 19:41:01,137 WARN received SIGTERM indicating exit request
+2025-11-05 19:41:01,141 INFO waiting for whatsapp_bot to die
+2025-11-05 19:41:01,145 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-07 16:02:48,676 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-07 16:02:49,681 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-07 16:02:56,685 WARN received SIGTERM indicating exit request
+2025-11-07 16:02:56,686 INFO waiting for whatsapp_bot to die
+2025-11-07 16:02:56,688 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-07 16:02:57,629 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-07 16:02:58,633 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-07 16:03:08,799 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-07 16:03:21,807 WARN received SIGTERM indicating exit request
+2025-11-07 16:03:21,807 INFO waiting for whatsapp_bot to die
+2025-11-07 16:03:21,810 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-07 16:03:38,767 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-07 16:03:39,771 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-07 16:03:50,676 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-08 19:29:14,702 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-08 19:29:15,708 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-08 19:29:20,608 WARN received SIGTERM indicating exit request
+2025-11-08 19:29:20,609 INFO waiting for whatsapp_bot to die
+2025-11-08 19:29:20,612 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-08 19:29:21,605 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-08 19:29:22,609 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-08 19:29:32,822 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-08 19:32:08,995 WARN received SIGTERM indicating exit request
+2025-11-08 19:32:08,996 INFO waiting for whatsapp_bot to die
+2025-11-08 19:32:08,998 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-08 19:32:17,023 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-08 19:32:18,027 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-08 19:32:28,355 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-08 19:32:33,360 WARN received SIGTERM indicating exit request
+2025-11-08 19:32:33,361 INFO waiting for whatsapp_bot to die
+2025-11-08 19:32:33,363 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-08 19:56:49,124 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-08 19:56:50,128 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-08 19:57:00,198 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-10 17:37:02,543 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-10 17:37:03,547 INFO spawned: 'whatsapp_bot' with pid 9
+2025-11-10 17:37:10,181 WARN received SIGTERM indicating exit request
+2025-11-10 17:37:10,182 INFO waiting for whatsapp_bot to die
+2025-11-10 17:37:10,187 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-10 17:37:11,168 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-10 17:37:12,172 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-10 17:37:22,345 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-10 17:37:47,373 WARN received SIGTERM indicating exit request
+2025-11-10 17:37:47,373 INFO waiting for whatsapp_bot to die
+2025-11-10 17:37:47,376 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-10 17:37:54,426 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-10 17:37:55,431 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-10 17:38:05,606 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-18 16:23:25,491 WARN received SIGTERM indicating exit request
+2025-11-18 16:23:25,499 INFO waiting for whatsapp_bot to die
+2025-11-18 16:23:25,507 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-18 16:24:34,498 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-18 16:24:35,504 INFO spawned: 'whatsapp_bot' with pid 9
+2025-11-18 16:24:45,813 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-18 16:25:22,559 WARN received SIGTERM indicating exit request
+2025-11-18 16:25:22,559 INFO waiting for whatsapp_bot to die
+2025-11-18 16:25:22,562 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-18 16:25:34,455 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-18 16:25:35,460 INFO spawned: 'whatsapp_bot' with pid 9
+2025-11-18 16:25:45,772 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-20 09:12:45,495 WARN received SIGTERM indicating exit request
+2025-11-20 09:12:45,496 INFO waiting for whatsapp_bot to die
+2025-11-20 09:12:45,501 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-20 09:12:53,409 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-20 09:12:54,413 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-20 09:13:04,865 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-20 09:13:39,905 WARN received SIGTERM indicating exit request
+2025-11-20 09:13:39,906 INFO waiting for whatsapp_bot to die
+2025-11-20 09:13:39,909 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-21 17:33:55,364 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-21 17:33:56,368 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-21 17:34:07,033 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-21 17:34:26,054 WARN received SIGTERM indicating exit request
+2025-11-21 17:34:26,055 INFO waiting for whatsapp_bot to die
+2025-11-21 17:34:26,056 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-21 17:34:47,347 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-21 17:34:48,351 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-21 17:34:58,988 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-21 17:35:21,569 WARN received SIGTERM indicating exit request
+2025-11-21 17:35:21,570 INFO waiting for whatsapp_bot to die
+2025-11-21 17:35:21,576 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-21 17:38:47,887 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-21 17:38:48,892 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-21 17:38:59,157 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-21 17:39:13,174 WARN received SIGTERM indicating exit request
+2025-11-21 17:39:13,175 INFO waiting for whatsapp_bot to die
+2025-11-21 17:39:13,177 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2025-11-21 17:39:31,362 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2025-11-21 17:39:32,367 INFO spawned: 'whatsapp_bot' with pid 8
+2025-11-21 17:39:42,881 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2025-11-21 19:34:17,207 WARN received SIGTERM indicating exit request
+2025-11-21 19:34:17,208 INFO waiting for whatsapp_bot to die
+2025-11-21 19:34:17,211 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2026-02-02 11:15:19,897 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2026-02-02 11:15:20,901 INFO spawned: 'whatsapp_bot' with pid 8
+2026-02-02 11:15:31,398 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2026-02-02 11:15:41,599 WARN received SIGTERM indicating exit request
+2026-02-02 11:15:41,600 INFO waiting for whatsapp_bot to die
+2026-02-02 11:15:41,602 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2026-09-15 12:45:21,611 CRIT could not write pidfile /home/appuser/app/supervisord.pid
+2026-09-15 12:45:22,615 INFO spawned: 'whatsapp_bot' with pid 10
+2026-09-15 12:45:33,113 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2026-09-15 12:45:47,649 WARN received SIGTERM indicating exit request
+2026-09-15 12:45:47,650 INFO waiting for whatsapp_bot to die
+2026-09-15 12:45:47,653 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2026-09-15 12:45:51,242 INFO supervisord started with pid 7
+2026-09-15 12:45:52,247 INFO spawned: 'whatsapp_bot' with pid 10
+2026-09-15 12:46:03,083 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2026-09-15 12:49:56,377 WARN received SIGTERM indicating exit request
+2026-09-15 12:49:56,378 INFO waiting for whatsapp_bot to die
+2026-09-15 12:49:56,381 WARN stopped: whatsapp_bot (terminated by SIGTERM)
+2026-09-15 12:49:57,354 INFO supervisord started with pid 7
+2026-09-15 12:49:58,359 INFO spawned: 'whatsapp_bot' with pid 10
+2026-09-15 12:50:09,198 INFO success: whatsapp_bot entered RUNNING state, process has stayed up for > than 10 seconds (startsecs)
+2026-09-15 12:50:39,511 WARN received SIGTERM indicating exit request
+2026-09-15 12:50:39,512 INFO waiting for whatsapp_bot to die
+2026-09-15 12:50:39,515 WARN stopped: whatsapp_bot (terminated by SIGTERM)

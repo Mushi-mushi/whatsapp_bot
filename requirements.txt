@@ -4,3 +4,4 @@ flask
 openai
 waitress
 textblob
+requests

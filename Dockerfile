@@ -77,6 +77,10 @@ RUN python -m textblob.download_corpora
 # Now, copy the application code into the WORKDIR.
 COPY --chown=appuser:appuser app/ .
 
+# Copy startup entrypoint used to clean stale browser lock files before launch.
+COPY --chown=appuser:appuser entrypoint.sh /home/appuser/app/entrypoint.sh
+RUN chmod +x /home/appuser/app/entrypoint.sh
+
 # Copy supervisord config file and set permissions
 COPY --chown=appuser:appuser supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
@@ -85,6 +89,6 @@ COPY --chown=appuser:appuser supervisord.conf /etc/supervisor/conf.d/supervisord
 EXPOSE 5000
 
 # Set tini as the entrypoint to properly manage supervisord
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/home/appuser/app/entrypoint.sh"]
 # Now, CMD will run supervisord, which in turn will manage main.py
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
