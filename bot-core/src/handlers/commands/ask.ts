@@ -30,6 +30,7 @@ export const ask: Handler = async (ctx) => {
           {
             role: "system",
             content:
+              cfg.askSystemPrompt?.trim() ||
               "You are a helpful assistant answering inside a WhatsApp chat. Be concise and friendly. Reply in plain text (no markdown).",
           },
           { role: "user", content: prompt },

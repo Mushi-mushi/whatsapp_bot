@@ -3,18 +3,30 @@ import type { SeenStore } from "../state/repos.js";
 import type { RuntimeState } from "../state/runtime.js";
 import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
-import { normalizeName } from "../router/normalize.js";
+import { extractCommandToken, normalizeName } from "../router/normalize.js";
 
-// Skip our own outgoing messages entirely (Baileys tells us via key.fromMe).
+// Skip our own outgoing messages, except commands the owner types from the linked
+// phone (when enabled). The bot's own prefixed replies are always ignored to avoid loops.
 export const ignoreOwn: Middleware = async (ctx, next) => {
-  if (ctx.msg.fromMe) return;
+  if (!ctx.msg.fromMe) {
+    await next();
+    return;
+  }
+  if (!ctx.config.respondToOwnCommands) return;
+  const prefix = ctx.config.botReplyPrefix?.trim();
+  if (prefix && ctx.text.trimStart().startsWith(prefix)) return;
+  if (!extractCommandToken(ctx.text)) return;
   await next();
 };
 
 // Only process approved chats. Matches the chat name (group subject / DM contact),
 // or a phone number — robust for LID DMs where the saved name is hidden and only
-// the phone (senderPn) is known.
+// the phone (senderPn) is known. Own commands (fromMe) are always allowed.
 export const approvedSenderGuard: Middleware = async (ctx, next) => {
+  if (ctx.msg.fromMe) {
+    await next();
+    return;
+  }
   const approvedRaw = ctx.config.approvedSenders;
   const approvedNames = new Set(approvedRaw.map(normalizeName));
   if (approvedNames.has(normalizeName(ctx.msg.chatName))) {
@@ -36,13 +48,17 @@ export const approvedSenderGuard: Middleware = async (ctx, next) => {
   }
 };
 
-// Idempotent dedup keyed by the stable chat JID + protocol message id.
+// Idempotent dedup keyed on the WhatsApp message id alone. WhatsApp may deliver
+// the same message under both LID and phone addressing (different chat ids), so a
+// per-chat key would miss duplicates. Mark on first sight to also beat races.
 export function dedupe(seen: SeenStore): Middleware {
   return async (ctx, next) => {
-    const key = ctx.msg.chatId;
-    if (ctx.msg.messageId && seen.has(key, ctx.msg.messageId)) return;
+    const id = ctx.msg.messageId;
+    if (id) {
+      if (seen.has("msg", id)) return;
+      seen.mark("msg", id);
+    }
     await next();
-    if (ctx.msg.messageId) seen.mark(key, ctx.msg.messageId);
   };
 }
 

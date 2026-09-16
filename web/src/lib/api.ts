@@ -8,6 +8,7 @@ export interface BotConfig {
   ollamaBaseUrl: string;
   ollamaModel: string;
   ollamaTimeoutSeconds: number;
+  askSystemPrompt: string;
   botReplyPrefix: string;
   acknowledgeMedia: boolean;
   respondToOwnCommands: boolean;

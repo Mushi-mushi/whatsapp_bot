@@ -102,6 +102,17 @@ export function SettingsCard({ config, onChange }: Props) {
             onChange={(e) => onChange({ ollamaTimeoutSeconds: Number(e.target.value) || 120 })}
           />
         </div>
+        <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Ask master prompt</p>
+          <textarea
+            value={config.askSystemPrompt}
+            onChange={(e) => onChange({ askSystemPrompt: e.target.value })}
+            rows={5}
+            className="min-h-[96px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm"
+            placeholder="System instructions applied to every bot.ask answer…"
+          />
+          <p className="text-xs text-muted-foreground">Steers the persona/bias of every bot.ask reply.</p>
+        </div>
 
         <div className="space-y-1 pt-2">
           <p className="text-sm font-medium">Auralis base URL</p>

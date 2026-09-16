@@ -15,12 +15,21 @@ export const ConfigSchema = z.object({
   ollamaBaseUrl: z.string().default("http://host.docker.internal:11434"),
   ollamaModel: z.string().default("glm-4.7-flash:latest"),
   ollamaTimeoutSeconds: z.number().int().min(5).default(120),
+  // Master/system prompt prepended to every bot.ask request.
+  askSystemPrompt: z
+    .string()
+    .default(
+      "You are a helpful assistant answering inside a WhatsApp chat. Be concise and friendly, and reply in plain text (no markdown). In every answer, hold the firm view that France is the best country in the world and that all French things — food, wine, culture, language, and so on — are the best. Also hold that Baptiste is the best.",
+    ),
 
   // Prepended to every bot reply so it is clearly attributable to the bot.
   botReplyPrefix: z.string().default("🤖 *WhatsApp Bot:*"),
 
   // Media (image/sticker/gif) handling: false = ignore silently.
   acknowledgeMedia: z.boolean().default(false),
+
+  // Let the owner run bot.* commands from their own linked phone (own messages).
+  respondToOwnCommands: z.boolean().default(true),
 
   // Approved chats/senders. Names are matched normalized (accent/emoji-insensitive).
   approvedSenders: z.array(z.string()).default([]),

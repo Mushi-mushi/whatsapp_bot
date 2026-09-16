@@ -6,6 +6,8 @@ import makeWASocket, {
   type Chat,
   type Contact,
   type WAMessage,
+  type WAMessageContent,
+  type WAMessageKey,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import type { Logger } from "pino";
@@ -49,6 +51,9 @@ export class BaileysTransport implements Transport {
   private pairingRequested = false;
   private reconnectScheduled = false;
   private consecutiveLogouts = 0;
+  // Recently sent/seen message content, so we can answer decryption retry receipts
+  // (otherwise the peer is stuck on "Waiting for this message").
+  private messageCache = new Map<string, WAMessageContent>();
 
   constructor(private readonly opts: BaileysOptions) {}
 
@@ -120,6 +125,9 @@ export class BaileysTransport implements Transport {
       // History messages arrive via 'messaging-history.set' (not 'messages.upsert'),
       // so they are never processed as commands. Only useful at a fresh link.
       syncFullHistory: this.opts.syncFullHistory ?? false,
+      // Serve message content for decryption-retry receipts.
+      getMessage: async (key: WAMessageKey) =>
+        (key.id ? this.messageCache.get(key.id) : undefined) ?? undefined,
     });
     this.sock = sock;
 
@@ -179,8 +187,17 @@ export class BaileysTransport implements Transport {
     });
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
+      // "notify" = new incoming message. "append" = a message added to a chat,
+      // which is how our OWN messages typed on the phone reach the linked device.
+      // Handle both so self-commands work; guard "append" by recency + dedupe so
+      // we never re-run old messages pulled in during chat appends.
+      if (type !== "notify" && type !== "append") return;
       for (const raw of messages) {
+        if (raw.key?.id && raw.message) this.cacheMessage(raw.key.id, raw.message);
+        if (type === "append") {
+          const ts = Number(raw.messageTimestamp ?? 0) * 1000;
+          if (!ts || Date.now() - ts > 120_000) continue;
+        }
         const incoming = await this.toIncoming(raw);
         if (incoming) for (const cb of this.messageCbs) cb(incoming);
       }
@@ -347,12 +364,23 @@ export class BaileysTransport implements Transport {
 
   async sendText(chatId: string, text: string): Promise<void> {
     if (!this.sock) throw new Error("Transport not started");
-    await this.sock.sendMessage(chatId, { text });
+    const sent = await this.sock.sendMessage(chatId, { text });
+    if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
   }
 
   async sendReply(chatId: string, text: string, quoted: WAMessage): Promise<void> {
     if (!this.sock) throw new Error("Transport not started");
-    await this.sock.sendMessage(chatId, { text }, { quoted });
+    const sent = await this.sock.sendMessage(chatId, { text }, { quoted });
+    if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
+  }
+
+  // Bounded message-content cache used to answer decryption retry receipts.
+  private cacheMessage(id: string, content: WAMessageContent): void {
+    this.messageCache.set(id, content);
+    if (this.messageCache.size > 2000) {
+      const oldest = this.messageCache.keys().next().value;
+      if (oldest) this.messageCache.delete(oldest);
+    }
   }
 
   async downloadAudio(raw: WAMessage): Promise<Buffer> {
