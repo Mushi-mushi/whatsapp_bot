@@ -1,1 +1,11 @@
+# Runtime data & secrets — WhatsApp auth session keys + SQLite DB. Never commit.
+data/
+
+# Node
+node_modules/
+dist/
+*.log
+npm-debug.log*
+
+# Legacy (Python bot, removed)
 user_data/
