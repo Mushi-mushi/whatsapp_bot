@@ -1,10 +1,12 @@
 import type { Handler } from "../../router/router.js";
-import type { RuntimeState, TriviaGame } from "../../state/runtime.js";
+import type { RuntimeState, TriviaGame, TriviaSession } from "../../state/runtime.js";
 import type { TriviaScoreStore } from "../../state/repos.js";
 import { decodeEntities } from "../../util/net.js";
 
 const LABELS = ["A", "B", "C", "D", "E", "F"];
 const TIMEOUT_MS = 90_000;
+const OPENTDB = "https://opentdb.com";
+const BATCH = 20;
 
 export interface Category {
   id: number;
@@ -61,28 +63,47 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-async function fetchTrivia(category?: Category): Promise<TriviaGame | null> {
+async function requestToken(): Promise<string | null> {
   try {
-    const url =
-      "https://opentdb.com/api.php?amount=1&type=multiple" +
-      (category ? `&category=${category.id}` : "");
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${OPENTDB}/api_token.php?command=request`, {
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
-    const data = (await res.json()) as { response_code: number; results: OpenTdbResult[] };
-    const q = data.results?.[0];
-    if (!q) return null;
-    const correct = decodeEntities(q.correct_answer);
-    const options = shuffle([correct, ...q.incorrect_answers.map(decodeEntities)]);
-    return {
-      question: decodeEntities(q.question),
-      options,
-      correct,
-      askedAt: Date.now(),
-      categoryId: category?.id,
-      categoryName: category?.name,
-    };
+    const data = (await res.json()) as { response_code: number; token?: string };
+    return data.response_code === 0 ? (data.token ?? null) : null;
   } catch {
     return null;
+  }
+}
+
+// Refill a session's queue with a batch of questions. The opentdb token prevents
+// repeats server-side; response_code 4 means the token is exhausted (all seen).
+async function refillQueue(session: TriviaSession): Promise<boolean> {
+  const cat = session.category ? `&category=${session.category.id}` : "";
+  const tok = session.token ? `&token=${session.token}` : "";
+  try {
+    const res = await fetch(`${OPENTDB}/api.php?amount=${BATCH}&type=multiple${cat}${tok}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { response_code: number; results: OpenTdbResult[] };
+    if (data.response_code === 4 && session.token) {
+      // Token exhausted — reset it so questions can repeat, then let the caller retry.
+      await fetch(`${OPENTDB}/api_token.php?command=reset&token=${session.token}`).catch(() => {});
+      return false;
+    }
+    if (data.response_code !== 0 || !data.results?.length) return false;
+    for (const q of data.results) {
+      const correct = decodeEntities(q.correct_answer);
+      session.queue.push({
+        question: decodeEntities(q.question),
+        correct,
+        options: shuffle([correct, ...q.incorrect_answers.map(decodeEntities)]),
+      });
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -96,34 +117,46 @@ export function clearTrivia(game: TriviaGame): void {
   if (game.timer) clearTimeout(game.timer);
 }
 
-// Fetch a fresh question, arm its timeout, and post it. Used to start a session
-// and to continue after a correct answer or a skip. Returns false if unavailable.
+// Take the next prefetched question (refilling from opentdb as needed), arm its
+// timeout, and post it. Used to start a session and to continue after a correct
+// answer or a skip. Returns false if unavailable.
 export async function startQuestion(
   runtime: RuntimeState,
   chatId: string,
   reply: (text: string) => Promise<void>,
   category?: Category,
 ): Promise<boolean> {
-  const asked = runtime.triviaAsked.get(chatId) ?? new Set<string>();
-  runtime.triviaAsked.set(chatId, asked);
+  let session = runtime.triviaSessions.get(chatId);
+  if (!session) {
+    session = { token: await requestToken(), category, queue: [] };
+    runtime.triviaSessions.set(chatId, session);
+  }
 
-  // Try a few times to avoid repeating a question already asked this session.
-  let game: TriviaGame | null = null;
-  for (let i = 0; i < 6; i++) {
-    game = await fetchTrivia(category);
-    if (!game || !asked.has(game.question)) break;
+  if (session.queue.length === 0) {
+    // One retry covers a token reset (exhausted) or a transient hiccup.
+    if (!(await refillQueue(session))) {
+      if (!(await refillQueue(session))) {
+        await reply("Trivia is unavailable right now — try again in a moment.");
+        return false;
+      }
+    }
   }
-  if (!game) {
-    await reply("Trivia is unavailable right now — try again in a moment.");
-    return false;
-  }
-  asked.add(game.question);
+
+  const q = session.queue.shift()!;
+  const game: TriviaGame = {
+    question: q.question,
+    options: q.options,
+    correct: q.correct,
+    askedAt: Date.now(),
+    categoryId: session.category?.id,
+    categoryName: session.category?.name,
+  };
   // Expire the session if nobody answers correctly in time.
   game.timer = setTimeout(() => {
     if (runtime.triviaGames.get(chatId) === game) {
       runtime.triviaGames.delete(chatId);
-      runtime.triviaAsked.delete(chatId);
-      void reply(`⏰ Time's up! The answer was "${game!.correct}". Trivia ended — \`bot.trivia\` to play again.`);
+      runtime.triviaSessions.delete(chatId);
+      void reply(`⏰ Time's up! The answer was "${game.correct}". Trivia ended — \`bot.trivia\` to play again.`);
     }
   }, TIMEOUT_MS);
   runtime.triviaGames.set(chatId, game);
@@ -156,7 +189,7 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
       }
       clearTrivia(active);
       runtime.triviaGames.delete(chatId);
-      runtime.triviaAsked.delete(chatId);
+      runtime.triviaSessions.delete(chatId);
       await ctx.reply(`🛑 Trivia stopped — the answer was "${active.correct}".`);
       return;
     }
@@ -201,8 +234,8 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
     await ctx.reply(
       `🧩 Trivia time${category ? ` — ${category.name}` : ""}! Reply with the letter or the answer. A correct answer brings the next question. \`bot.trivia stop\` to end, \`bot.trivia skip\` to skip.`,
     );
-    // Fresh session — reset the "already asked" set so a new run can repeat old ones.
-    runtime.triviaAsked.set(chatId, new Set());
+    // Fresh session — drop any old token/queue so we start with a new pool.
+    runtime.triviaSessions.delete(chatId);
     await startQuestion(runtime, chatId, reply, category);
   };
 }

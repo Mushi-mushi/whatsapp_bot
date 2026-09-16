@@ -21,6 +21,20 @@ export interface TriviaGame {
   timer?: ReturnType<typeof setTimeout>;
 }
 
+export interface TriviaQuestion {
+  question: string;
+  correct: string;
+  options: string[];
+}
+
+// A running trivia session: an opentdb token (guarantees no repeats until
+// exhausted) + a locked category + a prefetched queue of questions.
+export interface TriviaSession {
+  token: string | null;
+  category?: { id: number; name: string };
+  queue: TriviaQuestion[];
+}
+
 export class RuntimeState {
   // Global siesta: while set and in the future, the bot ignores messages.
   siestaUntil: number | null = null;
@@ -36,9 +50,8 @@ export class RuntimeState {
   // Active trivia questions awaiting an answer, keyed by chat JID.
   triviaGames = new Map<string, TriviaGame>();
 
-  // Questions already asked in the current trivia session, keyed by chat JID
-  // (cleared when the session ends, so a new run can repeat them).
-  triviaAsked = new Map<string, Set<string>>();
+  // Running trivia sessions (token + category + prefetched queue), keyed by chat JID.
+  triviaSessions = new Map<string, TriviaSession>();
 
   isSleeping(): boolean {
     return this.siestaUntil != null && Date.now() < this.siestaUntil;
