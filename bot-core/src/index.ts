@@ -119,6 +119,7 @@ async function main(): Promise<void> {
       transport,
       configStore,
       knownChats,
+      triviaScores,
       logger,
       onConfigChange: () => {
         config = configStore.load();

@@ -1,7 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { api, type BotConfig } from "@/lib/api";
 
 interface Props {
@@ -28,6 +30,14 @@ export function SettingsCard({ config, onChange }: Props) {
   const options = models.includes(config.ollamaModel)
     ? models
     : [config.ollamaModel, ...models].filter(Boolean);
+  const [triviaCleared, setTriviaCleared] = useState(false);
+
+  async function clearTrivia() {
+    if (!window.confirm("Clear the trivia leaderboard for all chats? This can't be undone.")) return;
+    await api.resetTriviaScores();
+    setTriviaCleared(true);
+    setTimeout(() => setTriviaCleared(false), 2000);
+  }
 
   return (
     <Card>
@@ -135,6 +145,16 @@ export function SettingsCard({ config, onChange }: Props) {
             value={config.botReplyPrefix}
             onChange={(e) => onChange({ botReplyPrefix: e.target.value })}
           />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 border-t border-input pt-3">
+          <div>
+            <p className="text-sm font-medium">Trivia leaderboard</p>
+            <p className="text-xs text-muted-foreground">Reset all trivia scores across chats.</p>
+          </div>
+          <Button variant="outline" onClick={clearTrivia}>
+            {triviaCleared ? "Cleared ✓" : "Clear scores"}
+          </Button>
         </div>
       </CardContent>
     </Card>

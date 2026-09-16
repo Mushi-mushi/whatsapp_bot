@@ -28,13 +28,14 @@ export function makeFallback(deps: FallbackDeps): Handler {
         if (result.correct) {
           clearTrivia(trivia);
           deps.runtime.triviaGames.delete(ctx.msg.chatId);
-          const points = deps.triviaScores.increment(
+          const points = deps.triviaScores.add(
             ctx.msg.chatId,
             normalizeName(ctx.msg.senderName),
             ctx.msg.senderName,
+            1,
           );
           await ctx.reply(
-            `✅ Correct, ${ctx.msg.senderName}! The answer is "${trivia.correct}". (${points} point${points === 1 ? "" : "s"}) Next up…`,
+            `✅ Correct, ${ctx.msg.senderName}! The answer is "${trivia.correct}". (${points} point${points === 1 || points === -1 ? "" : "s"}) Next up…`,
           );
           // Continuous quiz: roll straight into the next question, same category.
           const category = trivia.categoryId
@@ -42,7 +43,15 @@ export function makeFallback(deps: FallbackDeps): Handler {
             : undefined;
           await startQuestion(deps.runtime, ctx.msg.chatId, (t) => ctx.reply(t), category);
         } else {
-          await ctx.reply(`❌ Not that one, ${ctx.msg.senderName} — keep trying!`);
+          const points = deps.triviaScores.add(
+            ctx.msg.chatId,
+            normalizeName(ctx.msg.senderName),
+            ctx.msg.senderName,
+            -1,
+          );
+          await ctx.reply(
+            `❌ Not that one, ${ctx.msg.senderName} — that's -1 (now ${points}). Keep trying!`,
+          );
         }
         return;
       }

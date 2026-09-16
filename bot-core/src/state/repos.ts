@@ -341,13 +341,14 @@ export interface TriviaScore {
 export class TriviaScoreStore {
   constructor(private readonly db: Database.Database) {}
 
-  increment(chatId: string, nameNorm: string, name: string): number {
+  // Adjust a player's score by delta (negative for a wrong answer). Returns the new total.
+  add(chatId: string, nameNorm: string, name: string, delta: number): number {
     this.db
       .prepare(
-        `INSERT INTO trivia_scores (chat_id, name_norm, name, correct) VALUES (?, ?, ?, 1)
-         ON CONFLICT(chat_id, name_norm) DO UPDATE SET correct = correct + 1, name = excluded.name`,
+        `INSERT INTO trivia_scores (chat_id, name_norm, name, correct) VALUES (?, ?, ?, ?)
+         ON CONFLICT(chat_id, name_norm) DO UPDATE SET correct = correct + excluded.correct, name = excluded.name`,
       )
-      .run(chatId, nameNorm, name);
+      .run(chatId, nameNorm, name, delta);
     const row = this.db
       .prepare("SELECT correct FROM trivia_scores WHERE chat_id = ? AND name_norm = ?")
       .get(chatId, nameNorm) as { correct: number };
@@ -358,5 +359,9 @@ export class TriviaScoreStore {
     return this.db
       .prepare("SELECT name, correct FROM trivia_scores WHERE chat_id = ? ORDER BY correct DESC LIMIT ?")
       .all(chatId, limit) as TriviaScore[];
+  }
+
+  clearAll(): void {
+    this.db.prepare("DELETE FROM trivia_scores").run();
   }
 }

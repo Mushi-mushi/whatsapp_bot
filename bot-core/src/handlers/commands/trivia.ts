@@ -104,16 +104,26 @@ export async function startQuestion(
   reply: (text: string) => Promise<void>,
   category?: Category,
 ): Promise<boolean> {
-  const game = await fetchTrivia(category);
+  const asked = runtime.triviaAsked.get(chatId) ?? new Set<string>();
+  runtime.triviaAsked.set(chatId, asked);
+
+  // Try a few times to avoid repeating a question already asked this session.
+  let game: TriviaGame | null = null;
+  for (let i = 0; i < 6; i++) {
+    game = await fetchTrivia(category);
+    if (!game || !asked.has(game.question)) break;
+  }
   if (!game) {
     await reply("Trivia is unavailable right now — try again in a moment.");
     return false;
   }
+  asked.add(game.question);
   // Expire the session if nobody answers correctly in time.
   game.timer = setTimeout(() => {
     if (runtime.triviaGames.get(chatId) === game) {
       runtime.triviaGames.delete(chatId);
-      void reply(`⏰ Time's up! The answer was "${game.correct}". Trivia ended — \`bot.trivia\` to play again.`);
+      runtime.triviaAsked.delete(chatId);
+      void reply(`⏰ Time's up! The answer was "${game!.correct}". Trivia ended — \`bot.trivia\` to play again.`);
     }
   }, TIMEOUT_MS);
   runtime.triviaGames.set(chatId, game);
@@ -146,6 +156,7 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
       }
       clearTrivia(active);
       runtime.triviaGames.delete(chatId);
+      runtime.triviaAsked.delete(chatId);
       await ctx.reply(`🛑 Trivia stopped — the answer was "${active.correct}".`);
       return;
     }
@@ -190,6 +201,8 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
     await ctx.reply(
       `🧩 Trivia time${category ? ` — ${category.name}` : ""}! Reply with the letter or the answer. A correct answer brings the next question. \`bot.trivia stop\` to end, \`bot.trivia skip\` to skip.`,
     );
+    // Fresh session — reset the "already asked" set so a new run can repeat old ones.
+    runtime.triviaAsked.set(chatId, new Set());
     await startQuestion(runtime, chatId, reply, category);
   };
 }

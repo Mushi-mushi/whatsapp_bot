@@ -2,13 +2,14 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
-import type { ConfigStore, KnownChatsStore } from "../state/repos.js";
+import type { ConfigStore, KnownChatsStore, TriviaScoreStore } from "../state/repos.js";
 import type { Transport } from "../transport/types.js";
 
 export interface ApiDeps {
   transport: Transport;
   configStore: ConfigStore;
   knownChats: KnownChatsStore;
+  triviaScores: TriviaScoreStore;
   onConfigChange: () => void;
   logger: Logger;
 }
@@ -33,6 +34,12 @@ export async function startApi(deps: ApiDeps, port: number): Promise<void> {
   });
 
   app.get("/api/chats", async () => ({ chats: deps.knownChats.list() }));
+
+  // Wipe the trivia leaderboard (all chats).
+  app.post("/api/trivia/reset", async () => {
+    deps.triviaScores.clearAll();
+    return { ok: true };
+  });
 
   // Re-pull the WhatsApp address book + chats on the live session (no re-link).
   app.post("/api/resync", async (_req, reply) => {

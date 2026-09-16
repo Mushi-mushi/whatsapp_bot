@@ -43,6 +43,8 @@ export const api = {
   getChats: () => fetch("/api/chats").then(json<{ chats: string[] }>),
   getOllamaModels: () =>
     fetch("/api/ollama/models").then(json<{ ok: boolean; models: string[] }>),
+  resetTriviaScores: () =>
+    fetch("/api/trivia/reset", { method: "POST" }).then(json<{ ok: boolean }>),
   requestPairing: (phoneNumber: string) =>
     fetch("/api/pair", {
       method: "POST",

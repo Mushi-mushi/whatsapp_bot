@@ -36,6 +36,10 @@ export class RuntimeState {
   // Active trivia questions awaiting an answer, keyed by chat JID.
   triviaGames = new Map<string, TriviaGame>();
 
+  // Questions already asked in the current trivia session, keyed by chat JID
+  // (cleared when the session ends, so a new run can repeat them).
+  triviaAsked = new Map<string, Set<string>>();
+
   isSleeping(): boolean {
     return this.siestaUntil != null && Date.now() < this.siestaUntil;
   }
