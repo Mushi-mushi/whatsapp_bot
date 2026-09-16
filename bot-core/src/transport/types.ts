@@ -1,0 +1,40 @@
+import type { WAMessage } from "@whiskeysockets/baileys";
+
+export type MessageKind = "text" | "audio" | "image" | "video" | "sticker" | "other";
+
+export interface IncomingMessage {
+  chatId: string;
+  chatName: string;
+  senderId: string;
+  senderName: string;
+  senderPhone: string;
+  messageId: string;
+  fromMe: boolean;
+  isGroup: boolean;
+  text: string | null;
+  kind: MessageKind;
+  timestamp: number;
+  raw: WAMessage;
+}
+
+export type ConnectionState = "connecting" | "qr" | "pairing" | "open" | "close";
+
+export interface ConnectionStatus {
+  state: ConnectionState;
+  qrDataUrl: string | null;
+  pairingCode: string | null;
+  me: string | null;
+}
+
+export interface Transport {
+  start(): Promise<void>;
+  sendText(chatId: string, text: string): Promise<void>;
+  sendReply(chatId: string, text: string, quoted: WAMessage): Promise<void>;
+  downloadAudio(raw: WAMessage): Promise<Buffer>;
+  requestPairingCode(phoneNumber: string): Promise<string>;
+  resyncContacts(): Promise<void>;
+  getStatus(): ConnectionStatus;
+  onMessage(cb: (m: IncomingMessage) => void): void;
+  onStatus(cb: (s: ConnectionStatus) => void): void;
+  onChatsDiscovered(cb: (names: string[]) => void): void;
+}

@@ -1,0 +1,31 @@
+{
+  "name": "whatsapp-bot-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WhatsApp bot core (Baileys transport + typed middleware router).",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.16",
+    "better-sqlite3": "^11.8.1",
+    "fastify": "^5.2.1",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4",
+    "sentiment": "^5.0.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.7",
+    "@types/qrcode": "^1.5.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}
