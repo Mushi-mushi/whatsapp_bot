@@ -56,5 +56,46 @@ function migrate(db: Database.Database): void {
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts (phone);
+
+    CREATE TABLE IF NOT EXISTS seen_activity (
+      name_norm TEXT PRIMARY KEY,
+      name      TEXT NOT NULL,
+      last_ts   INTEGER NOT NULL,
+      chat_name TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS tells (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      target_norm TEXT NOT NULL,
+      target_name TEXT NOT NULL,
+      from_name   TEXT NOT NULL,
+      message     TEXT NOT NULL,
+      created_ts  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tells_target ON tells (target_norm);
+
+    CREATE TABLE IF NOT EXISTS karma (
+      name_norm TEXT PRIMARY KEY,
+      name      TEXT NOT NULL,
+      points    INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS reminders (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id     TEXT NOT NULL,
+      target_name TEXT,
+      text        TEXT NOT NULL,
+      due_ts      INTEGER NOT NULL,
+      created_ts  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders (due_ts);
+
+    CREATE TABLE IF NOT EXISTS trivia_scores (
+      chat_id   TEXT NOT NULL,
+      name_norm TEXT NOT NULL,
+      name      TEXT NOT NULL,
+      correct   INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (chat_id, name_norm)
+    );
   `);
 }

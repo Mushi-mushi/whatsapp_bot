@@ -5,8 +5,9 @@ const CONFIG_KEY = "config";
 const CONFIG_VERSION_KEY = "config_version";
 // Bump when DEFAULT_CONFIG.commands gains new triggers that should be backfilled
 // into existing installs. v2 adds weather/fact/8ball/quote/siesta/complain/score/
-// top.positive/top.negative/torture/insults. v3 adds ask (Ollama).
-const CONFIG_VERSION = 3;
+// top.positive/top.negative/torture/insults. v3 adds ask (Ollama). v4 adds
+// seen/tell/remind/karma. v5 adds translate/tldr/roll/trivia.
+const CONFIG_VERSION = 5;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {
@@ -208,5 +209,154 @@ export class ContactsStore {
 
   all(): ContactRecord[] {
     return this.db.prepare("SELECT jid, phone, name FROM contacts").all() as ContactRecord[];
+  }
+}
+
+export interface SeenRecord {
+  name: string;
+  last_ts: number;
+  chat_name: string | null;
+}
+
+export class SeenActivityStore {
+  constructor(private readonly db: Database.Database) {}
+
+  record(nameNorm: string, name: string, ts: number, chatName: string | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO seen_activity (name_norm, name, last_ts, chat_name) VALUES (?, ?, ?, ?)
+         ON CONFLICT(name_norm) DO UPDATE SET name = excluded.name, last_ts = excluded.last_ts, chat_name = excluded.chat_name`,
+      )
+      .run(nameNorm, name, ts, chatName);
+  }
+
+  get(nameNorm: string): SeenRecord | undefined {
+    return this.db
+      .prepare("SELECT name, last_ts, chat_name FROM seen_activity WHERE name_norm = ?")
+      .get(nameNorm) as SeenRecord | undefined;
+  }
+}
+
+export interface Tell {
+  target_name: string;
+  from_name: string;
+  message: string;
+  created_ts: number;
+}
+
+export class TellStore {
+  constructor(private readonly db: Database.Database) {}
+
+  add(targetNorm: string, targetName: string, fromName: string, message: string): void {
+    this.db
+      .prepare(
+        "INSERT INTO tells (target_norm, target_name, from_name, message, created_ts) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(targetNorm, targetName, fromName, message, Date.now());
+  }
+
+  // Fetch and clear all pending messages for a recipient (delivered exactly once).
+  takeFor(targetNorm: string): Tell[] {
+    const rows = this.db
+      .prepare("SELECT id, target_name, from_name, message, created_ts FROM tells WHERE target_norm = ? ORDER BY id")
+      .all(targetNorm) as (Tell & { id: number })[];
+    if (rows.length) {
+      this.db
+        .prepare(`DELETE FROM tells WHERE id IN (${rows.map(() => "?").join(",")})`)
+        .run(...rows.map((r) => r.id));
+    }
+    return rows;
+  }
+}
+
+export interface KarmaRecord {
+  name: string;
+  points: number;
+}
+
+export class KarmaStore {
+  constructor(private readonly db: Database.Database) {}
+
+  adjust(nameNorm: string, name: string, delta: number): number {
+    this.db
+      .prepare(
+        `INSERT INTO karma (name_norm, name, points) VALUES (?, ?, ?)
+         ON CONFLICT(name_norm) DO UPDATE SET points = points + excluded.points, name = excluded.name`,
+      )
+      .run(nameNorm, name, delta);
+    const row = this.db
+      .prepare("SELECT points FROM karma WHERE name_norm = ?")
+      .get(nameNorm) as { points: number };
+    return row.points;
+  }
+
+  get(nameNorm: string): KarmaRecord | undefined {
+    return this.db
+      .prepare("SELECT name, points FROM karma WHERE name_norm = ?")
+      .get(nameNorm) as KarmaRecord | undefined;
+  }
+
+  top(limit = 5): KarmaRecord[] {
+    return this.db
+      .prepare("SELECT name, points FROM karma ORDER BY points DESC LIMIT ?")
+      .all(limit) as KarmaRecord[];
+  }
+}
+
+export interface Reminder {
+  id: number;
+  chat_id: string;
+  target_name: string | null;
+  text: string;
+  due_ts: number;
+}
+
+export class RemindersStore {
+  constructor(private readonly db: Database.Database) {}
+
+  add(chatId: string, targetName: string | null, text: string, dueTs: number): void {
+    this.db
+      .prepare(
+        "INSERT INTO reminders (chat_id, target_name, text, due_ts, created_ts) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(chatId, targetName, text, dueTs, Date.now());
+  }
+
+  due(now: number): Reminder[] {
+    return this.db
+      .prepare("SELECT id, chat_id, target_name, text, due_ts FROM reminders WHERE due_ts <= ? ORDER BY due_ts")
+      .all(now) as Reminder[];
+  }
+
+  remove(id: number): void {
+    this.db.prepare("DELETE FROM reminders WHERE id = ?").run(id);
+  }
+}
+
+export interface TriviaScore {
+  name: string;
+  correct: number;
+}
+
+export class TriviaScoreStore {
+  constructor(private readonly db: Database.Database) {}
+
+  increment(chatId: string, nameNorm: string, name: string): number {
+    this.db
+      .prepare(
+        `INSERT INTO trivia_scores (chat_id, name_norm, name, correct) VALUES (?, ?, ?, 1)
+         ON CONFLICT(chat_id, name_norm) DO UPDATE SET correct = correct + 1, name = excluded.name`,
+      )
+      .run(chatId, nameNorm, name);
+    const row = this.db
+      .prepare("SELECT correct FROM trivia_scores WHERE chat_id = ? AND name_norm = ?")
+      .get(chatId, nameNorm) as { correct: number };
+    return row.correct;
+  }
+
+  top(chatId: string, limit = 5): TriviaScore[] {
+    return this.db
+      .prepare("SELECT name, correct FROM trivia_scores WHERE chat_id = ? ORDER BY correct DESC LIMIT ?")
+      .all(chatId, limit) as TriviaScore[];
   }
 }

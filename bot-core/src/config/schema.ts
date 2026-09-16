@@ -62,5 +62,13 @@ export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
     "bot.torture": "torture",
     "bot.insults": "insults",
     "bot.ask": "ask",
+    "bot.seen": "seen",
+    "bot.tell": "tell",
+    "bot.remind": "remind",
+    "bot.karma": "karma",
+    "bot.translate": "translate",
+    "bot.tldr": "tldr",
+    "bot.roll": "roll",
+    "bot.trivia": "trivia",
   },
 });

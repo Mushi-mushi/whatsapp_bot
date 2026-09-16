@@ -4,9 +4,14 @@ import {
   ComplaintStore,
   ConfigStore,
   ContactsStore,
+  KarmaStore,
   KnownChatsStore,
+  RemindersStore,
+  SeenActivityStore,
   SeenStore,
   SentimentStore,
+  TellStore,
+  TriviaScoreStore,
 } from "./state/repos.js";
 import { RuntimeState } from "./state/runtime.js";
 import type { BotConfig } from "./config/schema.js";
@@ -14,6 +19,7 @@ import { BaileysTransport } from "./transport/baileys.js";
 import { Bot } from "./router/router.js";
 import { Context, type Services } from "./router/context.js";
 import {
+  activityTracker,
   approvedSenderGuard,
   dedupe,
   ignoreOwn,
@@ -22,6 +28,7 @@ import {
   siestaGuard,
 } from "./middleware/index.js";
 import { buildCommandRegistry } from "./handlers/commands/index.js";
+import { KARMA_PATTERN, makeKarmaHears } from "./handlers/commands/karma.js";
 import { makeAudioHandler } from "./handlers/audio.js";
 import { makeFallback } from "./handlers/fallback.js";
 
@@ -40,6 +47,11 @@ async function main(): Promise<void> {
   const sentiment = new SentimentStore(db);
   const complaints = new ComplaintStore(db);
   const contacts = new ContactsStore(db);
+  const seenActivity = new SeenActivityStore(db);
+  const tells = new TellStore(db);
+  const karma = new KarmaStore(db);
+  const reminders = new RemindersStore(db);
+  const triviaScores = new TriviaScoreStore(db);
   const runtime = new RuntimeState();
 
   // Cached config, refreshed when the API saves changes.
@@ -59,17 +71,28 @@ async function main(): Promise<void> {
   // Build the router from config-driven command triggers.
   const bot = new Bot();
   bot
-    .use(ignoreOwn)
+    .use(ignoreOwn(runtime))
     .use(logging(logger))
     .use(approvedSenderGuard)
     .use(siestaGuard(runtime))
     .use(mediaPolicy)
-    .use(dedupe(seen));
+    .use(dedupe(seen))
+    .use(activityTracker(seenActivity, tells));
 
   bot.on("audio", makeAudioHandler(logger));
-  bot.fallback(makeFallback({ runtime, sentiment }));
+  bot.hears(KARMA_PATTERN, makeKarmaHears(karma));
+  bot.fallback(makeFallback({ runtime, sentiment, triviaScores }));
 
-  const commandRegistry = buildCommandRegistry({ runtime, sentiment, complaints });
+  const commandRegistry = buildCommandRegistry({
+    runtime,
+    sentiment,
+    complaints,
+    seenActivity,
+    tells,
+    karma,
+    reminders,
+    triviaScores,
+  });
   const registerCommands = (cfg: BotConfig) => {
     bot.clearCommands();
     for (const [trigger, name] of Object.entries(cfg.commands)) {
@@ -107,6 +130,19 @@ async function main(): Promise<void> {
 
   await transport.start();
   logger.info("bot-core started");
+
+  // Deliver due reminders. Persisted in SQLite, so they survive restarts.
+  setInterval(() => {
+    for (const r of reminders.due(Date.now())) {
+      const prefix = config.botReplyPrefix?.trim();
+      const who = r.target_name ? ` ${r.target_name},` : "";
+      const body = `⏰ Reminder:${who} ${r.text}`;
+      void transport
+        .sendText(r.chat_id, prefix ? `${prefix}\n${body}` : body)
+        .catch((err) => logger.error({ err }, "reminder send failed"));
+      reminders.remove(r.id);
+    }
+  }, 15_000);
 }
 
 main().catch((err) => {

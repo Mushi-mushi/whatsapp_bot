@@ -1,23 +1,28 @@
 import type { Logger } from "pino";
-import type { SeenStore } from "../state/repos.js";
+import type { SeenActivityStore, SeenStore, TellStore } from "../state/repos.js";
 import type { RuntimeState } from "../state/runtime.js";
 import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
 import { extractCommandToken, normalizeName } from "../router/normalize.js";
 
 // Skip our own outgoing messages, except commands the owner types from the linked
-// phone (when enabled). The bot's own prefixed replies are always ignored to avoid loops.
-export const ignoreOwn: Middleware = async (ctx, next) => {
-  if (!ctx.msg.fromMe) {
+// phone (when enabled) and answers to an active game in the chat. The bot's own
+// prefixed replies are always ignored to avoid loops.
+export function ignoreOwn(runtime: RuntimeState): Middleware {
+  return async (ctx, next) => {
+    if (!ctx.msg.fromMe) {
+      await next();
+      return;
+    }
+    if (!ctx.config.respondToOwnCommands) return;
+    const prefix = ctx.config.botReplyPrefix?.trim();
+    if (prefix && ctx.text.trimStart().startsWith(prefix)) return;
+    const gameActive =
+      runtime.triviaGames.has(ctx.msg.chatId) || runtime.insultGames.has(ctx.msg.chatId);
+    if (!extractCommandToken(ctx.text) && !gameActive) return;
     await next();
-    return;
-  }
-  if (!ctx.config.respondToOwnCommands) return;
-  const prefix = ctx.config.botReplyPrefix?.trim();
-  if (prefix && ctx.text.trimStart().startsWith(prefix)) return;
-  if (!extractCommandToken(ctx.text)) return;
-  await next();
-};
+  };
+}
 
 // Only process approved chats. Matches the chat name (group subject / DM contact),
 // or a phone number — robust for LID DMs where the saved name is hidden and only
@@ -75,6 +80,20 @@ export const mediaPolicy: Middleware = async (ctx, next) => {
 export function siestaGuard(runtime: RuntimeState): Middleware {
   return async (_ctx, next) => {
     if (runtime.isSleeping()) return;
+    await next();
+  };
+}
+
+// Record last-seen for the sender and deliver any pending "tell" messages to them.
+export function activityTracker(seen: SeenActivityStore, tells: TellStore): Middleware {
+  return async (ctx, next) => {
+    const nameNorm = normalizeName(ctx.msg.senderName);
+    if (nameNorm) {
+      seen.record(nameNorm, ctx.msg.senderName, Date.now(), ctx.msg.isGroup ? ctx.msg.chatName : null);
+      for (const t of tells.takeFor(nameNorm)) {
+        await ctx.reply(`📨 ${ctx.msg.senderName}, ${t.from_name} said: ${t.message}`);
+      }
+    }
     await next();
   };
 }

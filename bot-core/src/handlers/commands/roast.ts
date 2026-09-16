@@ -12,6 +12,14 @@ const GENERIC = [
   "you're like Monday — nobody's happy to see you, but here we are.",
   "you're the WiFi at a cheap hotel: weak, unreliable, and everywhere I don't want you.",
   "you're like a software update: whenever I see you, I think 'not now'.",
+  "you're like a screenshot of a screenshot — technically here, but nobody can make you out.",
+  "you've got the depth of a puddle and the loading speed of dial-up.",
+  "you're the 'terms and conditions' nobody reads and everyone agrees to ignore.",
+  "you're living proof that talking and saying something are two very different skills.",
+  "you're like a group project — somehow everyone else did more than you.",
+  "you're the participation trophy of this conversation.",
+  "you have the energy of a phone at 1% that refuses to just switch off.",
+  "you're like a pop-up ad: unwanted, poorly timed, and weirdly persistent.",
 ];
 
 const SINGAPORE = [
@@ -53,6 +61,21 @@ const FRANCE_COMPLIMENT = [
   "you light up the room like the Eiffel Tower at midnight.",
 ];
 
+const AMERICA = [
+  "you're like a bottomless soda refill: endless, watered down, and nobody asked.",
+  "you've got the confidence of a monster truck and the fuel economy to match.",
+  "you're the human equivalent of a '2-day shipping' estimate that takes two weeks.",
+  "you deep-fry every conversation and still somehow serve it bland.",
+  "you talk like the movie trailer and deliver like the straight-to-DVD sequel.",
+  "you're all star-spangled hype and zero follow-through.",
+  "you've got more warning labels than a bottle of hot sauce and half the kick.",
+  "you're like a gas-station hot dog: technically an option, immediately regretted.",
+  "you insist you're number one, but even the participation trophy looks embarrassed.",
+  "you supersize everything except the actual point you're trying to make.",
+  "you're the pumpkin-spice of people: everywhere for a month, tolerated at best.",
+  "you've got drive-thru wisdom — fast, cheap, and bad for everyone involved.",
+];
+
 function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -63,6 +86,7 @@ function themeFor(target: string): string[] {
   if (norm.includes("si ying") || norm.includes("siying") || tokens.includes("si")) return SINGAPORE;
   if (norm.includes("hernan")) return ARGENTINA;
   if (norm.includes("baptis")) return FRANCE_ROAST;
+  if (norm.includes("tristan") || norm.includes("rhea")) return AMERICA;
   return GENERIC;
 }
 

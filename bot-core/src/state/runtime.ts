@@ -11,6 +11,16 @@ export interface InsultGame {
   lastInteraction: number;
 }
 
+export interface TriviaGame {
+  question: string;
+  options: string[]; // labeled A..D order shown to the chat
+  correct: string; // correct answer text
+  askedAt: number;
+  categoryId?: number; // opentdb category id the session is locked to
+  categoryName?: string;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
 export class RuntimeState {
   // Global siesta: while set and in the future, the bot ignores messages.
   siestaUntil: number | null = null;
@@ -22,6 +32,9 @@ export class RuntimeState {
 
   // Active insult duels, keyed by chat JID.
   insultGames = new Map<string, InsultGame>();
+
+  // Active trivia questions awaiting an answer, keyed by chat JID.
+  triviaGames = new Map<string, TriviaGame>();
 
   isSleeping(): boolean {
     return this.siestaUntil != null && Date.now() < this.siestaUntil;
