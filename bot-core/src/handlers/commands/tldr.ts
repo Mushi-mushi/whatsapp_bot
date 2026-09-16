@@ -44,14 +44,19 @@ export const tldr: Handler = async (ctx) => {
     return;
   }
 
-  const r = await ollamaChat(cfg, [
-    {
-      role: "system",
-      content:
-        "Summarize the following web page in 3-5 concise bullet points using '-' bullets. Plain text only, be factual, no preamble.",
-    },
-    { role: "user", content: `${title ? `Title: ${title}\n\n` : ""}${text.slice(0, 6000)}` },
-  ]);
+  const r = await ollamaChat(
+    cfg,
+    [
+      {
+        role: "system",
+        content:
+          "Summarize the following web page in 3-5 concise bullet points using '-' bullets. Plain text only, be factual, no preamble.",
+      },
+      { role: "user", content: `${title ? `Title: ${title}\n\n` : ""}${text.slice(0, 15000)}` },
+    ],
+    // Summarizing a long page is prefill-heavy; give it extra headroom.
+    { numPredict: 350, timeoutMs: 180_000 },
+  );
   if (!r.ok) {
     await ctx.reply(ollamaErrorMessage(r, cfg.ollamaModel));
     return;

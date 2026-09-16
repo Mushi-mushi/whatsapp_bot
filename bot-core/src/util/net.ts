@@ -53,18 +53,25 @@ export function decodeEntities(s: string): string {
   });
 }
 
-// Extract a page title and readable text from raw HTML (tags/scripts stripped).
+// Extract a page title and readable text from raw HTML. Prefers <p> paragraph
+// prose (skips nav/menus/boilerplate); falls back to a full tag-strip.
 export function extractReadable(html: string): { title: string; text: string } {
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = titleMatch ? decodeEntities(titleMatch[1]).replace(/\s+/g, " ").trim() : "";
-  const text = decodeEntities(
-    html
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
-      .replace(/<[^>]+>/g, " "),
-  )
-    .replace(/\s+/g, " ")
-    .trim();
+
+  const cleaned = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ");
+
+  // Prefer real article prose from <p> tags (drops short/boilerplate paragraphs).
+  const paragraphs = [...cleaned.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+    .map((m) => decodeEntities(m[1].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim())
+    .filter((p) => p.length > 40);
+
+  let text = paragraphs.join("\n");
+  if (text.length < 400) {
+    text = decodeEntities(cleaned.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+  }
   return { title, text };
 }
