@@ -41,7 +41,14 @@ export function makeFallback(deps: FallbackDeps): Handler {
           const category = trivia.categoryId
             ? { id: trivia.categoryId, name: trivia.categoryName ?? "" }
             : undefined;
-          await startQuestion(deps.runtime, ctx.msg.chatId, (t) => ctx.reply(t), category);
+          await startQuestion(
+            deps.runtime,
+            ctx.msg.chatId,
+            (t) => ctx.reply(t),
+            ctx.config,
+            category,
+            trivia.language,
+          );
         } else {
           const points = deps.triviaScores.add(
             ctx.msg.chatId,

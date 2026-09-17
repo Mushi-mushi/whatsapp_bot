@@ -1,12 +1,15 @@
 import type { Handler } from "../../router/router.js";
+import type { BotConfig } from "../../config/schema.js";
 import type { RuntimeState, TriviaGame, TriviaSession } from "../../state/runtime.js";
 import type { TriviaScoreStore } from "../../state/repos.js";
 import { decodeEntities } from "../../util/net.js";
+import { ollamaChat } from "../../util/ollama.js";
 
 const LABELS = ["A", "B", "C", "D", "E", "F"];
 const TIMEOUT_MS = 90_000;
 const OPENTDB = "https://opentdb.com";
 const BATCH = 20;
+type TriviaLanguage = "en" | "es";
 
 export interface Category {
   id: number;
@@ -40,6 +43,16 @@ const CATEGORIES: Record<string, Category> = {
   anime: { id: 31, name: "Anime" },
 };
 
+const LANGUAGES: Record<string, TriviaLanguage> = {
+  en: "en",
+  english: "en",
+  es: "es",
+  esp: "es",
+  espanol: "es",
+  "español": "es",
+  spanish: "es",
+};
+
 export function resolveCategory(keyword: string): Category | undefined {
   return CATEGORIES[keyword.trim().toLowerCase()];
 }
@@ -48,10 +61,24 @@ export function categoryKeywordList(): string {
   return [...new Set(Object.keys(CATEGORIES))].sort().join(", ");
 }
 
+function resolveLanguage(keyword: string): TriviaLanguage | undefined {
+  return LANGUAGES[keyword.trim().toLowerCase()];
+}
+
+function languageLabel(language: TriviaLanguage): string {
+  return language === "es" ? "Español" : "English";
+}
+
 interface OpenTdbResult {
   question: string;
   correct_answer: string;
   incorrect_answers: string[];
+}
+
+interface TranslatedTrivia {
+  question: string;
+  options: string[];
+  correct: string;
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -71,6 +98,60 @@ async function requestToken(): Promise<string | null> {
     if (!res.ok) return null;
     const data = (await res.json()) as { response_code: number; token?: string };
     return data.response_code === 0 ? (data.token ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonObject(raw: string): unknown {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const body = fenced ? fenced[1].trim() : trimmed;
+  return JSON.parse(body);
+}
+
+async function translateQuestionToSpanish(
+  cfg: BotConfig,
+  question: string,
+  options: string[],
+  correct: string,
+): Promise<TranslatedTrivia | null> {
+  const correctIndex = options.findIndex((o) => o === correct);
+  if (correctIndex < 0) return null;
+
+  const prompt = JSON.stringify({ question, options, correctIndex });
+  const r = await ollamaChat(
+    cfg,
+    [
+      {
+        role: "system",
+        content:
+          "You translate trivia from English to Spanish. Return strict JSON only with keys question, options, correctIndex. Preserve options length and order. Keep correctIndex unchanged.",
+      },
+      { role: "user", content: prompt },
+    ],
+    { numPredict: 220, timeoutMs: 20_000 },
+  );
+  if (!r.ok) return null;
+
+  try {
+    const data = parseJsonObject(r.content) as {
+      question?: unknown;
+      options?: unknown;
+      correctIndex?: unknown;
+    };
+    if (typeof data.question !== "string") return null;
+    if (!Array.isArray(data.options) || data.options.length !== options.length) return null;
+    if (typeof data.correctIndex !== "number") return null;
+    const translatedOptions = data.options.map((v) => (typeof v === "string" ? v.trim() : ""));
+    if (translatedOptions.some((v) => !v)) return null;
+    const idx = Math.trunc(data.correctIndex);
+    if (idx < 0 || idx >= translatedOptions.length) return null;
+    return {
+      question: data.question.trim(),
+      options: translatedOptions,
+      correct: translatedOptions[idx],
+    };
   } catch {
     return null;
   }
@@ -124,11 +205,13 @@ export async function startQuestion(
   runtime: RuntimeState,
   chatId: string,
   reply: (text: string) => Promise<void>,
+  cfg: BotConfig,
   category?: Category,
+  language: TriviaLanguage = "en",
 ): Promise<boolean> {
   let session = runtime.triviaSessions.get(chatId);
   if (!session) {
-    session = { token: await requestToken(), category, queue: [] };
+    session = { token: await requestToken(), category, language, queue: [] };
     runtime.triviaSessions.set(chatId, session);
   }
 
@@ -143,11 +226,24 @@ export async function startQuestion(
   }
 
   const q = session.queue.shift()!;
+  let question = q.question;
+  let options = q.options;
+  let correct = q.correct;
+  if (session.language === "es" && cfg.askEnabled) {
+    const translated = await translateQuestionToSpanish(cfg, q.question, q.options, q.correct);
+    if (translated) {
+      question = translated.question;
+      options = translated.options;
+      correct = translated.correct;
+    }
+  }
+
   const game: TriviaGame = {
-    question: q.question,
-    options: q.options,
-    correct: q.correct,
+    question,
+    options,
+    correct,
     askedAt: Date.now(),
+    language: session.language,
     categoryId: session.category?.id,
     categoryName: session.category?.name,
   };
@@ -202,15 +298,18 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
       const category = active.categoryId
         ? { id: active.categoryId, name: active.categoryName ?? "" }
         : undefined;
+      const language = active.language;
       clearTrivia(active);
       runtime.triviaGames.delete(chatId);
       await ctx.reply(`⏭️ Skipped — the answer was "${active.correct}". Next up…`);
-      await startQuestion(runtime, chatId, reply, category);
+      await startQuestion(runtime, chatId, reply, ctx.config, category, language);
       return;
     }
 
     if (sub === "categories" || sub === "category") {
-      await ctx.reply(`🗂️ Trivia categories: ${categoryKeywordList()}.\nStart one with e.g. \`bot.trivia science\`.`);
+      await ctx.reply(
+        `🗂️ Trivia categories: ${categoryKeywordList()}.\nStart one with e.g. \`bot.trivia science\`. Language options: \`en\` or \`es\` (e.g. \`bot.trivia science es\`).`,
+      );
       return;
     }
 
@@ -221,22 +320,38 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
 
     // An unrecognized argument is treated as a category keyword.
     let category: Category | undefined;
+    let language: TriviaLanguage = "en";
     if (sub) {
-      category = resolveCategory(sub);
-      if (!category) {
+      const parts = sub.split(/\s+/).filter(Boolean);
+      for (const part of parts) {
+        const maybeLanguage = resolveLanguage(part);
+        if (maybeLanguage) {
+          language = maybeLanguage;
+          continue;
+        }
+        const maybeCategory = resolveCategory(part);
+        if (maybeCategory) {
+          category = maybeCategory;
+          continue;
+        }
         await ctx.reply(
-          `Unknown category "${sub}". Try \`bot.trivia categories\` to see the list, or just \`bot.trivia\` for a mix.`,
+          `Unknown trivia option "${part}". Use \`bot.trivia categories\`, and language options \`en\` or \`es\` (e.g. \`bot.trivia science es\`).`,
         );
         return;
       }
     }
 
+    if (language === "es" && !ctx.config.askEnabled) {
+      await ctx.reply("Spanish trivia needs AI features enabled in Settings (used to translate questions).");
+      return;
+    }
+
     await ctx.reply(
-      `🧩 Trivia time${category ? ` — ${category.name}` : ""}! Reply with the letter or the answer. A correct answer brings the next question. \`bot.trivia stop\` to end, \`bot.trivia skip\` to skip.`,
+      `🧩 Trivia time${category ? ` — ${category.name}` : ""} (${languageLabel(language)})! Reply with the letter or the answer. A correct answer brings the next question. \`bot.trivia stop\` to end, \`bot.trivia skip\` to skip.`,
     );
     // Fresh session — drop any old token/queue so we start with a new pool.
     runtime.triviaSessions.delete(chatId);
-    await startQuestion(runtime, chatId, reply, category);
+    await startQuestion(runtime, chatId, reply, ctx.config, category, language);
   };
 }
 

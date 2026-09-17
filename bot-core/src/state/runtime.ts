@@ -16,6 +16,7 @@ export interface TriviaGame {
   options: string[]; // labeled A..D order shown to the chat
   correct: string; // correct answer text
   askedAt: number;
+  language: "en" | "es";
   categoryId?: number; // opentdb category id the session is locked to
   categoryName?: string;
   timer?: ReturnType<typeof setTimeout>;
@@ -32,6 +33,7 @@ export interface TriviaQuestion {
 export interface TriviaSession {
   token: string | null;
   category?: { id: number; name: string };
+  language: "en" | "es";
   queue: TriviaQuestion[];
 }
 
