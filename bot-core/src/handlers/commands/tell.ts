@@ -1,6 +1,6 @@
 import type { Handler } from "../../router/router.js";
 import type { TellStore } from "../../state/repos.js";
-import { normalizeName } from "../../router/normalize.js";
+import { normalizeLooseName } from "../../router/normalize.js";
 
 // bot.tell <name>: <message>  (colon separates a multi-word name from the message;
 // without a colon, the first word is taken as the name).
@@ -29,7 +29,9 @@ export function makeTell(tells: TellStore): Handler {
     if (!name || !message) {
       return ctx.reply("Usage: `bot.tell Alice: call me back`");
     }
-    tells.add(normalizeName(name), name, ctx.msg.senderName, message);
+    const digits = name.replace(/\D/g, "");
+    const targetNorm = digits.length >= 6 ? digits : normalizeLooseName(name);
+    tells.add(targetNorm, name, ctx.msg.senderName, message);
     return ctx.reply(`Got it — I'll tell ${name} next time they're active. 📨`);
   };
 }

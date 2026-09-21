@@ -31,6 +31,7 @@ import { buildCommandRegistry } from "./handlers/commands/index.js";
 import { KARMA_PATTERN, makeKarmaHears } from "./handlers/commands/karma.js";
 import { makeAudioHandler } from "./handlers/audio.js";
 import { makeFallback } from "./handlers/fallback.js";
+import { paintImage } from "./handlers/commands/paint.js";
 
 const AUTH_DIR = process.env.AUTH_DIR ?? "auth";
 const DB_PATH = process.env.DB_PATH ?? "data/bot.db";
@@ -75,11 +76,12 @@ async function main(): Promise<void> {
     .use(logging(logger))
     .use(approvedSenderGuard)
     .use(siestaGuard(runtime))
-    .use(mediaPolicy)
     .use(dedupe(seen))
-    .use(activityTracker(seenActivity, tells));
+    .use(activityTracker(seenActivity, tells))
+    .use(mediaPolicy);
 
   bot.on("audio", makeAudioHandler(logger));
+  bot.on("image", paintImage);
   bot.hears(KARMA_PATTERN, makeKarmaHears(karma));
   bot.fallback(makeFallback({ runtime, sentiment, triviaScores }));
 

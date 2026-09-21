@@ -3,7 +3,7 @@ import type { SeenActivityStore, SeenStore, TellStore } from "../state/repos.js"
 import type { RuntimeState } from "../state/runtime.js";
 import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
-import { extractCommandToken, normalizeName } from "../router/normalize.js";
+import { extractCommandToken, normalizeLooseName, normalizeName } from "../router/normalize.js";
 
 // Skip our own outgoing messages, except commands the owner types from the linked
 // phone (when enabled) and answers to an active game in the chat. The bot's own
@@ -67,11 +67,13 @@ export function dedupe(seen: SeenStore): Middleware {
   };
 }
 
-// Ignore media unless explicitly enabled in config.
+// Ignore media unless explicitly enabled in config, EXCEPT media whose caption
+// carries a bot command (e.g. a photo captioned `bot.paint ...` for img2img).
 export const mediaPolicy: Middleware = async (ctx, next) => {
   const k = ctx.msg.kind;
-  if ((k === "image" || k === "video" || k === "sticker") && !ctx.config.acknowledgeMedia) {
-    return;
+  if (k === "image" || k === "video" || k === "sticker") {
+    const hasCommand = !!extractCommandToken(ctx.text);
+    if (!hasCommand && !ctx.config.acknowledgeMedia) return;
   }
   await next();
 };
@@ -87,10 +89,15 @@ export function siestaGuard(runtime: RuntimeState): Middleware {
 // Record last-seen for the sender and deliver any pending "tell" messages to them.
 export function activityTracker(seen: SeenActivityStore, tells: TellStore): Middleware {
   return async (ctx, next) => {
-    const nameNorm = normalizeName(ctx.msg.senderName);
-    if (nameNorm) {
-      seen.record(nameNorm, ctx.msg.senderName, Date.now(), ctx.msg.isGroup ? ctx.msg.chatName : null);
-      for (const t of tells.takeFor(nameNorm)) {
+    const strictName = normalizeName(ctx.msg.senderName);
+    const looseName = normalizeLooseName(ctx.msg.senderName);
+    const phone = ctx.msg.senderPhone.replace(/\D/g, "");
+    if (strictName) {
+      seen.record(strictName, ctx.msg.senderName, Date.now(), ctx.msg.isGroup ? ctx.msg.chatName : null);
+    }
+    const keys = [...new Set([strictName, looseName, phone])].filter(Boolean);
+    for (const key of keys) {
+      for (const t of tells.takeFor(key)) {
         await ctx.reply(`📨 ${ctx.msg.senderName}, ${t.from_name} said: ${t.message}`);
       }
     }

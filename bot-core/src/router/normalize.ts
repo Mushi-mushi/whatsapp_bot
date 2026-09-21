@@ -9,6 +9,15 @@ export function normalizeName(name: string | null | undefined): string {
     .toLowerCase();
 }
 
+// Looser person-name key used by tell/seen-like features: keeps letters/numbers,
+// drops punctuation and emoji so "Alice 🌟" and "Alice" map together.
+export function normalizeLooseName(name: string | null | undefined): string {
+  return normalizeName(name)
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Extract a bot command token (supports dotted subcommands like "bot.roast.neg")
 // from mixed text, ignoring a trailing "HH:MM" timestamp.
 export function extractCommandToken(text: string | null | undefined): string | null {

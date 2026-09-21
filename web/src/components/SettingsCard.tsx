@@ -75,6 +75,12 @@ export function SettingsCard({ config, onChange }: Props) {
             onCheckedChange={(v) => onChange({ askEnabled: v })}
           />
         </Row>
+        <Row label="Paint (image generation)" hint="Enable bot.paint via local ComfyUI">
+          <Switch
+            checked={config.paintEnabled}
+            onCheckedChange={(v) => onChange({ paintEnabled: v })}
+          />
+        </Row>
 
         <div className="space-y-1 pt-2">
           <p className="text-sm font-medium">Ollama model</p>
@@ -113,6 +119,96 @@ export function SettingsCard({ config, onChange }: Props) {
           />
         </div>
         <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Paint backend URL (ComfyUI)</p>
+          <Input
+            value={config.paintBaseUrl}
+            onChange={(e) => onChange({ paintBaseUrl: e.target.value })}
+            placeholder="http://host.docker.internal:8188"
+          />
+          <p className="text-xs text-muted-foreground">ComfyUI API base (default port 8188)</p>
+        </div>
+        <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Paint checkpoint</p>
+          <Input
+            value={config.paintCheckpoint}
+            onChange={(e) => onChange({ paintCheckpoint: e.target.value })}
+            placeholder="DreamShaper_8_pruned.safetensors"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2 pt-2">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Sampler</p>
+            <Input
+              value={config.paintSampler}
+              onChange={(e) => onChange({ paintSampler: e.target.value })}
+              placeholder="euler"
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Scheduler</p>
+            <Input
+              value={config.paintScheduler}
+              onChange={(e) => onChange({ paintScheduler: e.target.value })}
+              placeholder="normal"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 pt-2">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Paint steps</p>
+            <Input
+              type="number"
+              value={config.paintSteps}
+              onChange={(e) => onChange({ paintSteps: Number(e.target.value) || 24 })}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-medium">CFG scale</p>
+            <Input
+              type="number"
+              value={config.paintCfgScale}
+              onChange={(e) => onChange({ paintCfgScale: Number(e.target.value) || 7 })}
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 pt-2">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Width</p>
+            <Input
+              type="number"
+              value={config.paintWidth}
+              onChange={(e) => onChange({ paintWidth: Number(e.target.value) || 768 })}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Height</p>
+            <Input
+              type="number"
+              value={config.paintHeight}
+              onChange={(e) => onChange({ paintHeight: Number(e.target.value) || 768 })}
+            />
+          </div>
+        </div>
+        <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Paint negative prompt</p>
+          <textarea
+            value={config.paintNegativePrompt}
+            onChange={(e) => onChange({ paintNegativePrompt: e.target.value })}
+            rows={3}
+            className="min-h-[72px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm"
+            placeholder="optional negative prompt"
+          />
+        </div>
+        <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Paint denoise (img2img strength)</p>
+          <Input
+            type="number"
+            value={config.paintDenoise}
+            onChange={(e) => onChange({ paintDenoise: Number(e.target.value) || 0.6 })}
+          />
+          <p className="text-xs text-muted-foreground">0.1 keeps the photo, 1.0 fully repaints it (used when a photo is sent).</p>
+        </div>
+        <div className="space-y-1 pt-2">
           <p className="text-sm font-medium">Ask master prompt</p>
           <textarea
             value={config.askSystemPrompt}
@@ -122,6 +218,44 @@ export function SettingsCard({ config, onChange }: Props) {
             placeholder="System instructions applied to every bot.ask answer…"
           />
           <p className="text-xs text-muted-foreground">Steers the persona/bias of every bot.ask reply.</p>
+        </div>
+
+        <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Reddit client ID</p>
+          <Input
+            value={config.redditClientId}
+            onChange={(e) => onChange({ redditClientId: e.target.value })}
+            placeholder="optional"
+          />
+        </div>
+        <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Reddit client secret</p>
+          <Input
+            type="password"
+            value={config.redditClientSecret}
+            onChange={(e) => onChange({ redditClientSecret: e.target.value })}
+            placeholder="optional"
+          />
+        </div>
+        <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Reddit user agent</p>
+          <Input
+            value={config.redditUserAgent}
+            onChange={(e) => onChange({ redditUserAgent: e.target.value })}
+            placeholder="whatsapp-bot/1.0"
+          />
+        </div>
+        <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Reddit refresh token</p>
+          <Input
+            type="password"
+            value={config.redditRefreshToken}
+            onChange={(e) => onChange({ redditRefreshToken: e.target.value })}
+            placeholder="optional"
+          />
+          <p className="text-xs text-muted-foreground">
+            Stored in bot config; used for authenticated Reddit fetching when enabled.
+          </p>
         </div>
 
         <div className="space-y-1 pt-2">

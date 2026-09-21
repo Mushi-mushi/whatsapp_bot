@@ -30,7 +30,10 @@ export interface Transport {
   start(): Promise<void>;
   sendText(chatId: string, text: string): Promise<void>;
   sendReply(chatId: string, text: string, quoted: WAMessage): Promise<void>;
+  sendImage(chatId: string, image: Buffer, caption?: string): Promise<void>;
   downloadAudio(raw: WAMessage): Promise<Buffer>;
+  downloadImage(raw: WAMessage): Promise<Buffer>;
+  downloadQuotedImage(raw: WAMessage): Promise<Buffer | null>;
   requestPairingCode(phoneNumber: string): Promise<string>;
   resyncContacts(): Promise<void>;
   getStatus(): ConnectionStatus;

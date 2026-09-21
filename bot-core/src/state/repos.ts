@@ -6,8 +6,8 @@ const CONFIG_VERSION_KEY = "config_version";
 // Bump when DEFAULT_CONFIG.commands gains new triggers that should be backfilled
 // into existing installs. v2 adds weather/fact/8ball/quote/siesta/complain/score/
 // top.positive/top.negative/torture/insults. v3 adds ask (Ollama). v4 adds
-// seen/tell/remind/karma. v5 adds translate/tldr/roll/trivia.
-const CONFIG_VERSION = 5;
+// seen/tell/remind/karma. v5 adds translate/tldr/roll/trivia. v6 adds paint.
+const CONFIG_VERSION = 6;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {

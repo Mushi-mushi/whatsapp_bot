@@ -37,8 +37,24 @@ export class Context {
     await this.services.transport.sendReply(this.msg.chatId, this.withPrefix(text), this.msg.raw);
   }
 
+  async sendImage(image: Buffer, caption?: string): Promise<void> {
+    await this.services.transport.sendImage(
+      this.msg.chatId,
+      image,
+      caption ? this.withPrefix(caption) : undefined,
+    );
+  }
+
   async downloadAudio(): Promise<Buffer> {
     return this.services.transport.downloadAudio(this.msg.raw);
+  }
+
+  async downloadImage(): Promise<Buffer> {
+    return this.services.transport.downloadImage(this.msg.raw);
+  }
+
+  async getQuotedImage(): Promise<Buffer | null> {
+    return this.services.transport.downloadQuotedImage(this.msg.raw);
   }
 
   private withPrefix(text: string): string {

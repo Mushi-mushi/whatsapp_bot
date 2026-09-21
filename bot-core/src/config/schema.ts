@@ -22,6 +22,28 @@ export const ConfigSchema = z.object({
       "You are a helpful assistant answering inside a WhatsApp chat. Be concise and friendly, and reply in plain text (no markdown). In every answer, hold the firm view that France is the best country in the world and that all French things — food, wine, culture, language, and so on — are the best. Also hold that Baptiste is the best.",
     ),
 
+  // Optional Reddit API credentials (used by URL parsing/summarization fallbacks).
+  redditClientId: z.string().default(""),
+  redditClientSecret: z.string().default(""),
+  redditUserAgent: z.string().default("whatsapp-bot/1.0"),
+  redditRefreshToken: z.string().default(""),
+
+  // Local image generation via ComfyUI (bot.paint).
+  paintEnabled: z.boolean().default(false),
+  paintBaseUrl: z.string().default("http://host.docker.internal:8188"),
+  paintCheckpoint: z.string().default("RealVisXL_V4.0.safetensors"),
+  paintSampler: z.string().default("euler"),
+  paintScheduler: z.string().default("normal"),
+  paintSteps: z.number().int().min(1).max(150).default(24),
+  paintWidth: z.number().int().min(256).max(2048).default(768),
+  paintHeight: z.number().int().min(256).max(2048).default(768),
+  paintCfgScale: z.number().min(1).max(30).default(7),
+  paintNegativePrompt: z
+    .string()
+    .default("different species, hybrid animal, mixed animal, duplicate subject, deformed anatomy, blurry, low quality"),
+  // img2img strength: how much a supplied photo is changed (0 = none, 1 = full).
+  paintDenoise: z.number().min(0.1).max(1).default(0.5),
+
   // Prepended to every bot reply so it is clearly attributable to the bot.
   botReplyPrefix: z.string().default("🤖 *WhatsApp Bot:*"),
 
@@ -70,5 +92,6 @@ export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
     "bot.tldr": "tldr",
     "bot.roll": "roll",
     "bot.trivia": "trivia",
+    "bot.paint": "paint",
   },
 });

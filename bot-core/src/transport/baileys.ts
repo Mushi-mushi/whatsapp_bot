@@ -374,6 +374,12 @@ export class BaileysTransport implements Transport {
     if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
   }
 
+  async sendImage(chatId: string, image: Buffer, caption?: string): Promise<void> {
+    if (!this.sock) throw new Error("Transport not started");
+    const sent = await this.sock.sendMessage(chatId, { image, caption });
+    if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
+  }
+
   // Bounded message-content cache used to answer decryption retry receipts.
   private cacheMessage(id: string, content: WAMessageContent): void {
     this.messageCache.set(id, content);
@@ -387,6 +393,42 @@ export class BaileysTransport implements Transport {
     if (!this.sock) throw new Error("Transport not started");
     const buffer = (await downloadMediaMessage(
       raw,
+      "buffer",
+      {},
+      { logger: this.opts.logger, reuploadRequest: this.sock.updateMediaMessage },
+    )) as Buffer;
+    return buffer;
+  }
+
+  async downloadImage(raw: WAMessage): Promise<Buffer> {
+    if (!this.sock) throw new Error("Transport not started");
+    const buffer = (await downloadMediaMessage(
+      raw,
+      "buffer",
+      {},
+      { logger: this.opts.logger, reuploadRequest: this.sock.updateMediaMessage },
+    )) as Buffer;
+    return buffer;
+  }
+
+  // Download an image the message is replying to (quoted). Returns null when the
+  // reply doesn't quote an image.
+  async downloadQuotedImage(raw: WAMessage): Promise<Buffer | null> {
+    if (!this.sock) throw new Error("Transport not started");
+    const ctxInfo = raw.message?.extendedTextMessage?.contextInfo;
+    const quoted = ctxInfo?.quotedMessage;
+    if (!quoted?.imageMessage) return null;
+    const synthetic = {
+      key: {
+        remoteJid: raw.key.remoteJid,
+        id: ctxInfo?.stanzaId,
+        fromMe: false,
+        participant: ctxInfo?.participant,
+      },
+      message: quoted,
+    } as WAMessage;
+    const buffer = (await downloadMediaMessage(
+      synthetic,
       "buffer",
       {},
       { logger: this.opts.logger, reuploadRequest: this.sock.updateMediaMessage },
