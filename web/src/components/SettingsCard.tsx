@@ -135,6 +135,15 @@ export function SettingsCard({ config, onChange }: Props) {
             placeholder="DreamShaper_8_pruned.safetensors"
           />
         </div>
+        <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Flux checkpoint</p>
+          <Input
+            value={config.paintFluxCheckpoint}
+            onChange={(e) => onChange({ paintFluxCheckpoint: e.target.value })}
+            placeholder="flux1-dev-fp8.safetensors"
+          />
+          <p className="text-xs text-muted-foreground">Used when a prompt includes the `flux` keyword (better at complex scenes).</p>
+        </div>
         <div className="grid grid-cols-2 gap-2 pt-2">
           <div className="space-y-1">
             <p className="text-sm font-medium">Sampler</p>

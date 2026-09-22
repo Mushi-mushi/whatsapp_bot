@@ -16,6 +16,7 @@ export interface BotConfig {
   paintEnabled: boolean;
   paintBaseUrl: string;
   paintCheckpoint: string;
+  paintFluxCheckpoint: string;
   paintSampler: string;
   paintScheduler: string;
   paintSteps: number;

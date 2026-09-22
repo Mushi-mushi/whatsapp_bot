@@ -32,6 +32,8 @@ export const ConfigSchema = z.object({
   paintEnabled: z.boolean().default(false),
   paintBaseUrl: z.string().default("http://host.docker.internal:8188"),
   paintCheckpoint: z.string().default("RealVisXL_V4.0.safetensors"),
+  // Flux all-in-one checkpoint used when a prompt asks for the `flux` model.
+  paintFluxCheckpoint: z.string().default("flux1-dev-fp8.safetensors"),
   paintSampler: z.string().default("euler"),
   paintScheduler: z.string().default("normal"),
   paintSteps: z.number().int().min(1).max(150).default(24),

@@ -33,6 +33,44 @@ function buildWorkflow(cfg: BotConfig, prompt: string, seed: number): Record<str
   };
 }
 
+// Flux txt2img via the all-in-one flux checkpoint. Flux is distilled (cfg=1, no
+// real negative) and follows complex multi-subject prompts far better than SDXL,
+// at the cost of speed. Uses a 16-channel SD3 latent and FluxGuidance.
+function buildFluxWorkflow(
+  cfg: BotConfig,
+  prompt: string,
+  seed: number,
+  guidance: number,
+): Record<string, unknown> {
+  return {
+    "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: cfg.paintFluxCheckpoint } },
+    "5": {
+      class_type: "EmptySD3LatentImage",
+      inputs: { width: cfg.paintWidth, height: cfg.paintHeight, batch_size: 1 },
+    },
+    "6": { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["4", 1] } },
+    "10": { class_type: "FluxGuidance", inputs: { conditioning: ["6", 0], guidance } },
+    "7": { class_type: "CLIPTextEncode", inputs: { text: "", clip: ["4", 1] } },
+    "3": {
+      class_type: "KSampler",
+      inputs: {
+        seed,
+        steps: cfg.paintSteps,
+        cfg: 1,
+        sampler_name: "euler",
+        scheduler: "simple",
+        denoise: 1,
+        model: ["4", 0],
+        positive: ["10", 0],
+        negative: ["7", 0],
+        latent_image: ["5", 0],
+      },
+    },
+    "8": { class_type: "VAEDecode", inputs: { samples: ["3", 0], vae: ["4", 2] } },
+    "9": { class_type: "SaveImage", inputs: { filename_prefix: "bot", images: ["8", 0] } },
+  };
+}
+
 // SDXL img2img: re-generates the photo through an SDXL checkpoint at a high
 // denoise so it truly repaints the scene (real painterly styles), unlike Kontext
 // which only edits over the preserved photo. Higher denoise = stronger restyle,
@@ -249,6 +287,31 @@ async function runAndSend(
   await ctx.sendImage(image, `🖼️ ${prompt.slice(0, 180)}`);
 }
 
+// Deterministic pixelation (no diffusion): downscale with area averaging, then
+// upscale back to the original size with nearest-neighbour so it becomes real
+// blocks. Higher factor = chunkier blocks.
+function buildPixelateWorkflow(imageName: string, factor: number): Record<string, unknown> {
+  return {
+    "1": { class_type: "LoadImage", inputs: { image: imageName } },
+    "2": { class_type: "GetImageSize", inputs: { image: ["1", 0] } },
+    "3": {
+      class_type: "ImageScaleBy",
+      inputs: { image: ["1", 0], upscale_method: "area", scale_by: 1 / factor },
+    },
+    "4": {
+      class_type: "ImageScale",
+      inputs: {
+        image: ["3", 0],
+        upscale_method: "nearest-exact",
+        width: ["2", 0],
+        height: ["2", 1],
+        crop: "disabled",
+      },
+    },
+    "5": { class_type: "SaveImage", inputs: { filename_prefix: "bot", images: ["4", 0] } },
+  };
+}
+
 // Optional inline override in the prompt, e.g. "g=4" or "guidance=4"; returns
 // the clamped value plus the prompt with that token removed.
 function parseGuidance(prompt: string, fallback: number): { guidance: number; text: string } {
@@ -257,6 +320,14 @@ function parseGuidance(prompt: string, fallback: number): { guidance: number; te
   const guidance = Math.min(10, Math.max(1, Number(m[1])));
   const text = prompt.replace(m[0], "").replace(/\s{2,}/g, " ").trim();
   return { guidance, text };
+}
+
+// Detect a "pixelate"/"8-bit" request and optional "p=24" block factor.
+function parsePixelate(prompt: string): { pixelate: boolean; factor: number } {
+  const pixelate = /\bpixel(?:ate|ated|ize|ized|ised|s)?\b|\b8-?bit\b/i.test(prompt);
+  const pm = prompt.match(/\bp\s*=\s*(\d{1,3})\b/i);
+  const factor = pm ? Math.min(64, Math.max(6, Number(pm[1]))) : 24;
+  return { pixelate, factor };
 }
 
 // Detect a "hard"/"strong" restyle flag and optional "d=0.7"/"denoise=0.7"
@@ -274,6 +345,19 @@ function parseRestyle(prompt: string): { hard: boolean; denoise: number | null; 
   return { hard, denoise, text: text.replace(/\s{2,}/g, " ").trim() };
 }
 
+// Pick the generation model from the prompt: `flux`/`flux1` → Flux, else SDXL.
+function parseModel(prompt: string): { model: "flux" | "sdxl"; text: string } {
+  let text = prompt;
+  let model: "flux" | "sdxl" = "sdxl";
+  if (/\bflux1?\b/i.test(text)) {
+    model = "flux";
+    text = text.replace(/\bflux1?\b/i, "");
+  } else if (/\bsdxl\b/i.test(text)) {
+    text = text.replace(/\bsdxl\b/i, "");
+  }
+  return { model, text: text.replace(/\s{2,}/g, " ").trim() };
+}
+
 // Upload a source photo and run img2img on it.
 async function repaint(
   ctx: Parameters<Handler>[0],
@@ -283,6 +367,12 @@ async function repaint(
   source: Buffer,
 ): Promise<void> {
   const name = await uploadImage(base, source, `bot-src-${seed}.png`);
+  // "pixelate"/"8-bit" is a filter, not a style — apply it deterministically.
+  const pix = parsePixelate(prompt);
+  if (pix.pixelate) {
+    await runAndSend(ctx, base, buildPixelateWorkflow(name, pix.factor), prompt);
+    return;
+  }
   const restyle = parseRestyle(prompt);
   // "hard"/"strong" → SDXL img2img (real repaint); otherwise Flux Kontext edit.
   if (restyle.hard) {
@@ -307,7 +397,7 @@ export const paint: Handler = async (ctx) => {
   const prompt = ctx.args.trim();
   if (!prompt) {
     await ctx.reply(
-      "Usage:\n• `bot.paint a cozy cyberpunk alley at night` — create an image\n• reply to a photo with `bot.paint <style/prompt>` — modify that photo\n• or send a photo captioned `bot.paint <prompt>`\n• add `g=4` to a photo edit for a stronger restyle (1=subtle, 4=bold)\n• add `hard` for a full painterly repaint (real Picasso/Monet look, less likeness); tune with `d=0.8`",
+      "Usage:\n• `bot.paint a cozy cyberpunk alley at night` — create an image (SDXL)\n• add `flux` for far better complex-scene prompts, e.g. `bot.paint flux thor smashing the sagrada familia in a storm`\n• reply to a photo with `bot.paint <style/prompt>` — modify that photo\n• or send a photo captioned `bot.paint <prompt>`\n• add `g=4` to a photo edit for a stronger restyle (1=subtle, 4=bold)\n• add `hard` for a full painterly repaint (real Picasso/Monet look, less likeness); tune with `d=0.8`\n• reply to a photo with `bot.paint pixelate` for a real 8-bit blocky look (tune with `p=24`)",
     );
     return;
   }
@@ -333,7 +423,13 @@ export const paint: Handler = async (ctx) => {
   }
 
   try {
-    await runAndSend(ctx, base, buildWorkflow(cfg, prompt, seed), prompt);
+    const { model, text } = parseModel(prompt);
+    if (model === "flux") {
+      const { guidance, text: fluxText } = parseGuidance(text, cfg.paintGuidance);
+      await runAndSend(ctx, base, buildFluxWorkflow(cfg, fluxText, seed, guidance), fluxText);
+    } else {
+      await runAndSend(ctx, base, buildWorkflow(cfg, text, seed), text);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await ctx.reply(`Couldn't paint that: ${msg}. Is ComfyUI running at ${cfg.paintBaseUrl}?`);
