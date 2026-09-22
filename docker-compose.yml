@@ -28,3 +28,24 @@ services:
       - bot-core
     ports:
       - "8080:80"
+
+  # Core ComfyUI (bot.paint backend). Always-on via restart policy; reuses the
+  # host model/IO/workflow folders via bind mounts. Set COMFYUI_DIR to your
+  # ComfyUI install path (forward slashes on Windows).
+  comfyui:
+    build: ./comfyui
+    restart: unless-stopped
+    ports:
+      - "8188:8188"
+    volumes:
+      - ${COMFYUI_DIR:-C:/Edit/ComfyUI}/models:/app/ComfyUI/models
+      - ${COMFYUI_DIR:-C:/Edit/ComfyUI}/input:/app/ComfyUI/input
+      - ${COMFYUI_DIR:-C:/Edit/ComfyUI}/output:/app/ComfyUI/output
+      - ${COMFYUI_DIR:-C:/Edit/ComfyUI}/user:/app/ComfyUI/user
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

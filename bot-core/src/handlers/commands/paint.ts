@@ -33,17 +33,74 @@ function buildWorkflow(cfg: BotConfig, prompt: string, seed: number): Record<str
   };
 }
 
+// SDXL img2img: re-generates the photo through an SDXL checkpoint at a high
+// denoise so it truly repaints the scene (real painterly styles), unlike Kontext
+// which only edits over the preserved photo. Higher denoise = stronger restyle,
+// less likeness.
+function buildImg2ImgWorkflow(
+  cfg: BotConfig,
+  prompt: string,
+  seed: number,
+  imageName: string,
+  denoise: number,
+): Record<string, unknown> {
+  return {
+    "3": {
+      class_type: "KSampler",
+      inputs: {
+        seed,
+        steps: cfg.paintSteps,
+        cfg: cfg.paintCfgScale,
+        sampler_name: cfg.paintSampler,
+        scheduler: cfg.paintScheduler,
+        denoise,
+        model: ["4", 0],
+        positive: ["6", 0],
+        negative: ["7", 0],
+        latent_image: ["11", 0],
+      },
+    },
+    "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: cfg.paintCheckpoint } },
+    "6": { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["4", 1] } },
+    "7": { class_type: "CLIPTextEncode", inputs: { text: cfg.paintNegativePrompt, clip: ["4", 1] } },
+    "8": { class_type: "VAEDecode", inputs: { samples: ["3", 0], vae: ["4", 2] } },
+    "9": { class_type: "SaveImage", inputs: { filename_prefix: "bot", images: ["8", 0] } },
+    "10": { class_type: "LoadImage", inputs: { image: imageName } },
+    "11": { class_type: "VAEEncode", inputs: { pixels: ["10", 0], vae: ["4", 2] } },
+  };
+}
+
+// look far better than a bare artist name, and won't shift the palette unless
+// told to (hence the explicit colour cues).
+const STYLE_HINTS: ReadonlyArray<{ re: RegExp; hint: string }> = [
+  {
+    re: /watercolou?r/i,
+    hint: "Watercolor painting, hand-painted illustration, visible translucent pigment washes, paper grain, expressive brushwork, soft bleeding edges, and simplified painted details.",
+  },
+  {
+    re: /monet|impressionis/i,
+    hint: "Impressionist oil painting in the style of Claude Monet: soft dappled natural light, feathery broken brushstrokes, hazy blurred edges, and a plein-air atmosphere. Recolour the whole image into a soft muted pastel palette of gentle blues, greens, lavender and pale pink — remove any harsh saturated colours.",
+  },
+  {
+    re: /picasso|cubis/i,
+    hint: "Cubist painting in the style of Pablo Picasso: the subject fragmented into flat angular geometric planes, several viewpoints shown at once, bold outlines, and abstracted simplified forms.",
+  },
+  {
+    re: /van ?gogh/i,
+    hint: "Post-impressionist oil painting in the style of Vincent van Gogh: thick swirling impasto brushstrokes, dynamic flowing lines, and vivid expressive colour with a starry-night energy.",
+  },
+];
+
 function buildRepaintPrompt(prompt: string): string {
-  const watercolor = /watercolou?r/i.test(prompt)
-    ? "Watercolor painting, hand-painted illustration, visible translucent pigment washes, paper grain, expressive brushwork, soft bleeding edges, and simplified painted details."
-    : "";
-  return `${watercolor} Preserve the exact main subject, species, identity, pose, composition, and framing of the source image. Do not turn it into another species or a hybrid. Apply only this requested transformation: ${prompt}.`;
+  const hint = STYLE_HINTS.find((s) => s.re.test(prompt))?.hint ?? "";
+  return `${hint} Keep the same subject, species, pose, and composition as the source photo, but fully and boldly restyle the entire image as requested — apply the look thoroughly across every part of the picture, not as a subtle filter: ${prompt}.`;
 }
 
 function buildKontextWorkflow(
   prompt: string,
   seed: number,
   imageName: string,
+  guidance: number,
 ): Record<string, unknown> {
   return {
     "1": { class_type: "LoadImage", inputs: { image: imageName } },
@@ -78,7 +135,7 @@ function buildKontextWorkflow(
       class_type: "ReferenceLatent",
       inputs: { conditioning: ["6", 0], latent: ["8", 0] },
     },
-    "10": { class_type: "FluxGuidance", inputs: { conditioning: ["9", 0], guidance: 2.5 } },
+    "10": { class_type: "FluxGuidance", inputs: { conditioning: ["9", 0], guidance } },
     "11": {
       class_type: "KSampler",
       inputs: {
@@ -184,11 +241,37 @@ async function runAndSend(
   prompt: string,
 ): Promise<void> {
   const clientId = `whatsapp-bot-${Math.random().toString(36).slice(2)}`;
-  const timeoutMs = Math.max(ctx.config.ollamaTimeoutSeconds, 180) * 1000;
+  // Flux Kontext edits load large models on first use; allow a generous wait.
+  const timeoutMs = Math.max(ctx.config.ollamaTimeoutSeconds, 600) * 1000;
   const promptId = await queuePrompt(base, workflow, clientId);
   const ref = await waitForImage(base, promptId, timeoutMs);
   const image = await fetchImage(base, ref);
   await ctx.sendImage(image, `🖼️ ${prompt.slice(0, 180)}`);
+}
+
+// Optional inline override in the prompt, e.g. "g=4" or "guidance=4"; returns
+// the clamped value plus the prompt with that token removed.
+function parseGuidance(prompt: string, fallback: number): { guidance: number; text: string } {
+  const m = prompt.match(/\b(?:g|guidance)\s*=\s*(\d+(?:\.\d+)?)\b/i);
+  if (!m) return { guidance: fallback, text: prompt };
+  const guidance = Math.min(10, Math.max(1, Number(m[1])));
+  const text = prompt.replace(m[0], "").replace(/\s{2,}/g, " ").trim();
+  return { guidance, text };
+}
+
+// Detect a "hard"/"strong" restyle flag and optional "d=0.7"/"denoise=0.7"
+// override; strips both tokens from the prompt.
+function parseRestyle(prompt: string): { hard: boolean; denoise: number | null; text: string } {
+  let text = prompt;
+  const hard = /\b(?:hard|strong)\b/i.test(text);
+  if (hard) text = text.replace(/\b(?:hard|strong)\b/i, "");
+  const dm = text.match(/\b(?:d|denoise)\s*=\s*(0?\.\d+|1(?:\.0+)?)\b/i);
+  let denoise: number | null = null;
+  if (dm) {
+    denoise = Math.min(1, Math.max(0.1, Number(dm[1])));
+    text = text.replace(dm[0], "");
+  }
+  return { hard, denoise, text: text.replace(/\s{2,}/g, " ").trim() };
 }
 
 // Upload a source photo and run img2img on it.
@@ -200,8 +283,17 @@ async function repaint(
   source: Buffer,
 ): Promise<void> {
   const name = await uploadImage(base, source, `bot-src-${seed}.png`);
-  const repaintPrompt = buildRepaintPrompt(prompt);
-  await runAndSend(ctx, base, buildKontextWorkflow(repaintPrompt, seed, name), prompt);
+  const restyle = parseRestyle(prompt);
+  // "hard"/"strong" → SDXL img2img (real repaint); otherwise Flux Kontext edit.
+  if (restyle.hard) {
+    const denoise = restyle.denoise ?? 0.7;
+    const stylePrompt = buildRepaintPrompt(restyle.text);
+    await runAndSend(ctx, base, buildImg2ImgWorkflow(ctx.config, stylePrompt, seed, name, denoise), restyle.text);
+    return;
+  }
+  const { guidance, text } = parseGuidance(restyle.text, ctx.config.paintGuidance);
+  const repaintPrompt = buildRepaintPrompt(text);
+  await runAndSend(ctx, base, buildKontextWorkflow(repaintPrompt, seed, name, guidance), text);
 }
 
 // bot.paint <prompt> — generate an image, or (if replying to a photo) modify it.
@@ -215,7 +307,7 @@ export const paint: Handler = async (ctx) => {
   const prompt = ctx.args.trim();
   if (!prompt) {
     await ctx.reply(
-      "Usage:\n• `bot.paint a cozy cyberpunk alley at night` — create an image\n• reply to a photo with `bot.paint <style/prompt>` — modify that photo\n• or send a photo captioned `bot.paint <prompt>`",
+      "Usage:\n• `bot.paint a cozy cyberpunk alley at night` — create an image\n• reply to a photo with `bot.paint <style/prompt>` — modify that photo\n• or send a photo captioned `bot.paint <prompt>`\n• add `g=4` to a photo edit for a stronger restyle (1=subtle, 4=bold)\n• add `hard` for a full painterly repaint (real Picasso/Monet look, less likeness); tune with `d=0.8`",
     );
     return;
   }

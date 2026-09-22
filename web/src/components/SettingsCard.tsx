@@ -209,6 +209,15 @@ export function SettingsCard({ config, onChange }: Props) {
           <p className="text-xs text-muted-foreground">0.1 keeps the photo, 1.0 fully repaints it (used when a photo is sent).</p>
         </div>
         <div className="space-y-1 pt-2">
+          <p className="text-sm font-medium">Paint guidance (Flux edit strength)</p>
+          <Input
+            type="number"
+            value={config.paintGuidance}
+            onChange={(e) => onChange({ paintGuidance: Number(e.target.value) || 3.5 })}
+          />
+          <p className="text-xs text-muted-foreground">Used for reply-to-photo edits: ~2.5 is subtle, ~3.5–4 restyles boldly (e.g. Picasso/Monet).</p>
+        </div>
+        <div className="space-y-1 pt-2">
           <p className="text-sm font-medium">Ask master prompt</p>
           <textarea
             value={config.askSystemPrompt}

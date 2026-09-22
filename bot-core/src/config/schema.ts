@@ -43,6 +43,9 @@ export const ConfigSchema = z.object({
     .default("different species, hybrid animal, mixed animal, duplicate subject, deformed anatomy, blurry, low quality"),
   // img2img strength: how much a supplied photo is changed (0 = none, 1 = full).
   paintDenoise: z.number().min(0.1).max(1).default(0.5),
+  // Flux Kontext edit strength: higher = follows the edit/style prompt more
+  // strongly (weaker preservation). ~2.5 is subtle, ~3.5-4 restyles boldly.
+  paintGuidance: z.number().min(1).max(10).default(3.5),
 
   // Prepended to every bot reply so it is clearly attributable to the bot.
   botReplyPrefix: z.string().default("🤖 *WhatsApp Bot:*"),

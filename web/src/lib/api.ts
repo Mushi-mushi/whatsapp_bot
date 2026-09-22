@@ -24,6 +24,7 @@ export interface BotConfig {
   paintCfgScale: number;
   paintNegativePrompt: string;
   paintDenoise: number;
+  paintGuidance: number;
   botReplyPrefix: string;
   acknowledgeMedia: boolean;
   respondToOwnCommands: boolean;

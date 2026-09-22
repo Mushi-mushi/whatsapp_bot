@@ -5,6 +5,19 @@ import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
 import { extractCommandToken, normalizeLooseName, normalizeName } from "../router/normalize.js";
 
+// A name matches when the strict (accent/case-insensitive) forms are equal, or the
+// looser emoji/punctuation-stripped forms are, so an approved group like
+// "Fiesta de frutas con IA 🍓" still matches if its emoji were saved corrupted.
+function nameMatches(candidate: string, approved: Iterable<string>): boolean {
+  const strict = normalizeName(candidate);
+  const loose = normalizeLooseName(candidate);
+  for (const entry of approved) {
+    if (normalizeName(entry) === strict) return true;
+    if (loose && normalizeLooseName(entry) === loose) return true;
+  }
+  return false;
+}
+
 // Skip our own outgoing messages, except commands the owner types from the linked
 // phone (when enabled) and answers to an active game in the chat. The bot's own
 // prefixed replies are always ignored to avoid loops.
@@ -33,8 +46,7 @@ export const approvedSenderGuard: Middleware = async (ctx, next) => {
     return;
   }
   const approvedRaw = ctx.config.approvedSenders;
-  const approvedNames = new Set(approvedRaw.map(normalizeName));
-  if (approvedNames.has(normalizeName(ctx.msg.chatName))) {
+  if (nameMatches(ctx.msg.chatName, approvedRaw)) {
     await next();
     return;
   }
