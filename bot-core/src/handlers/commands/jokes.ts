@@ -1,33 +1,18 @@
 import type { Handler } from "../../router/router.js";
+import { tryJson } from "../../util/http.js";
 
 async function fromIcanhazdadjoke(): Promise<string | null> {
-  try {
-    const res = await fetch("https://icanhazdadjoke.com/", {
-      headers: { Accept: "application/json", "User-Agent": "whatsapp-bot (jokes)" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { joke?: string };
-      return data.joke?.trim() || null;
-    }
-  } catch {
-    /* fall through */
-  }
-  return null;
+  const data = await tryJson<{ joke?: string }>("https://icanhazdadjoke.com/", {
+    headers: { Accept: "application/json", "User-Agent": "whatsapp-bot (jokes)" },
+  });
+  return data?.joke?.trim() || null;
 }
 
 async function fromOfficialJokeApi(): Promise<string | null> {
-  try {
-    const res = await fetch("https://official-joke-api.appspot.com/random_joke", {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { setup?: string; punchline?: string };
-      if (data.setup && data.punchline) return `${data.setup}\n${data.punchline}`;
-    }
-  } catch {
-    /* fall through */
-  }
+  const data = await tryJson<{ setup?: string; punchline?: string }>(
+    "https://official-joke-api.appspot.com/random_joke",
+  );
+  if (data?.setup && data.punchline) return `${data.setup}\n${data.punchline}`;
   return null;
 }
 

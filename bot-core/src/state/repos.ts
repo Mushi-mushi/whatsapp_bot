@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.js";
+import type { ChatIdentity } from "../transport/types.js";
 
 const CONFIG_KEY = "config";
 const CONFIG_VERSION_KEY = "config_version";
@@ -109,30 +110,24 @@ export class SeenStore {
 
 export class KnownChatsStore {
   constructor(private readonly db: Database.Database) {
-    // Drop any raw JIDs recorded before chat-name resolution existed.
-    this.db.prepare("DELETE FROM known_chats WHERE chat_name LIKE '%@%'").run();
+    this.db.prepare("INSERT OR IGNORE INTO chat_directory (id, name, updated_at) SELECT jid, name, updated_at FROM contacts").run();
   }
 
-  upsert(names: string[]): void {
+  upsert(chats: ChatIdentity[]): void {
     const stmt = this.db.prepare(
-      "INSERT INTO known_chats (chat_name, updated_at) VALUES (?, ?) ON CONFLICT(chat_name) DO UPDATE SET updated_at = excluded.updated_at",
+      "INSERT INTO chat_directory (id, name, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
     );
     const now = Date.now();
-    const tx = this.db.transaction((list: string[]) => {
-      for (const name of list) {
-        const clean = name.trim();
-        // Skip raw JIDs — only human-readable chat names belong in the picker.
-        if (clean && !clean.includes("@")) stmt.run(clean, now);
+    const tx = this.db.transaction((list: ChatIdentity[]) => {
+      for (const chat of list) {
+        if (chat.id && chat.name.trim()) stmt.run(chat.id, chat.name.trim(), now);
       }
     });
-    tx(names);
+    tx(chats);
   }
 
-  list(): string[] {
-    const rows = this.db
-      .prepare("SELECT chat_name FROM known_chats ORDER BY chat_name COLLATE NOCASE")
-      .all() as { chat_name: string }[];
-    return rows.map((r) => r.chat_name);
+  list(): ChatIdentity[] {
+    return this.db.prepare("SELECT id, name FROM chat_directory ORDER BY name COLLATE NOCASE").all() as ChatIdentity[];
   }
 }
 
@@ -255,17 +250,17 @@ export class TellStore {
       .run(targetNorm, targetName, fromName, message, Date.now());
   }
 
-  // Fetch and clear all pending messages for a recipient (delivered exactly once).
-  takeFor(targetNorm: string): Tell[] {
-    const rows = this.db
-      .prepare("SELECT id, target_name, from_name, message, created_ts FROM tells WHERE target_norm = ? ORDER BY id")
-      .all(targetNorm) as (Tell & { id: number })[];
-    if (rows.length) {
-      this.db
-        .prepare(`DELETE FROM tells WHERE id IN (${rows.map(() => "?").join(",")})`)
-        .run(...rows.map((r) => r.id));
-    }
-    return rows;
+  enqueueFor(targetNorm: string, chatId: string, senderName: string): void {
+    this.db.transaction(() => {
+      const rows = this.db.prepare("SELECT id, from_name, message FROM tells WHERE target_norm = ? ORDER BY id")
+        .all(targetNorm) as (Tell & { id: number })[];
+      const now = Date.now();
+      for (const row of rows) {
+        this.db.prepare("INSERT INTO outbox (chat_id, body, available_at, created_at) VALUES (?, ?, ?, ?)")
+          .run(chatId, `${senderName}, ${row.from_name} said: ${row.message}`, now, now);
+        this.db.prepare("DELETE FROM tells WHERE id = ?").run(row.id);
+      }
+    })();
   }
 }
 

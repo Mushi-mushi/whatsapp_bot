@@ -14,9 +14,12 @@ import {
   TriviaScoreStore,
 } from "./state/repos.js";
 import { RuntimeState } from "./state/runtime.js";
+import { OutboxStore } from "./state/outbox.js";
+import { DeliveryWorker } from "./state/deliveries.js";
 import type { BotConfig } from "./config/schema.js";
 import { BaileysTransport } from "./transport/baileys.js";
 import { Bot } from "./router/router.js";
+import { BackgroundJobs } from "./router/jobs.js";
 import { Context, type Services } from "./router/context.js";
 import {
   activityTracker,
@@ -36,6 +39,7 @@ import { paintImage } from "./handlers/commands/paint.js";
 const AUTH_DIR = process.env.AUTH_DIR ?? "auth";
 const DB_PATH = process.env.DB_PATH ?? "data/bot.db";
 const API_PORT = Number(process.env.API_PORT ?? 5000);
+const API_TOKEN = process.env.API_TOKEN || undefined;
 const PAIRING_NUMBER = process.env.PAIRING_NUMBER || undefined;
 
 async function main(): Promise<void> {
@@ -71,6 +75,7 @@ async function main(): Promise<void> {
 
   // Build the router from config-driven command triggers.
   const bot = new Bot();
+  const jobs = new BackgroundJobs((err) => logger.error({ err }, "background job failed"));
   bot
     .use(ignoreOwn(runtime))
     .use(logging(logger))
@@ -80,8 +85,8 @@ async function main(): Promise<void> {
     .use(activityTracker(seenActivity, tells))
     .use(mediaPolicy);
 
-  bot.on("audio", makeAudioHandler(logger));
-  bot.on("image", paintImage);
+  bot.on("audio", jobs.wrap(makeAudioHandler(logger)));
+  bot.on("image", jobs.wrap(paintImage));
   bot.hears(KARMA_PATTERN, makeKarmaHears(karma));
   bot.fallback(makeFallback({ runtime, sentiment, triviaScores }));
 
@@ -99,30 +104,32 @@ async function main(): Promise<void> {
     bot.clearCommands();
     for (const [trigger, name] of Object.entries(cfg.commands)) {
       const handler = commandRegistry[name];
-      if (handler) bot.command(trigger, handler);
+      if (handler) bot.command(trigger, ["ask", "translate", "tldr", "paint"].includes(name) ? jobs.wrap(handler) : handler);
       else logger.warn({ trigger, name }, "No handler registered for command");
     }
   };
   registerCommands(config);
 
-  transport.onMessage((msg) => {
+  const unsubscribeMessages = transport.onMessage((msg) => {
     // Record the chat name (group subject / DM contact) for the dashboard picker.
-    if (!msg.fromMe && msg.chatName) knownChats.upsert([msg.chatName]);
+    if (!msg.fromMe && msg.chatName) knownChats.upsert([{ id: msg.chatId, name: msg.chatName }]);
     const ctx = new Context(msg, services);
     void bot.handle(ctx).catch((err) => logger.error({ err }, "handler error"));
   });
 
   // Groups discovered on connect (and updates) also feed the picker.
-  transport.onChatsDiscovered((names) => knownChats.upsert(names));
+  const unsubscribeChats = transport.onChatsDiscovered((names) => knownChats.upsert(names));
 
   const { startApi } = await import("./api/server.js");
-  await startApi(
+  const app = await startApi(
     {
       transport,
       configStore,
       knownChats,
       triviaScores,
       logger,
+      apiToken: API_TOKEN,
+      allowInsecureApi: process.env.ALLOW_INSECURE_API === "true",
       onConfigChange: () => {
         config = configStore.load();
         registerCommands(config); // Apply added/removed commands live, no restart needed.
@@ -134,22 +141,46 @@ async function main(): Promise<void> {
   await transport.start();
   logger.info("bot-core started");
 
-  // Deliver due reminders. Persisted in SQLite, so they survive restarts.
-  setInterval(() => {
-    for (const r of reminders.due(Date.now())) {
-      const prefix = config.botReplyPrefix?.trim();
-      const who = r.target_name ? ` ${r.target_name},` : "";
-      const body = `⏰ Reminder:${who} ${r.text}`;
-      void transport
-        .sendText(r.chat_id, prefix ? `${prefix}\n${body}` : body)
-        .catch((err) => logger.error({ err }, "reminder send failed"));
-      reminders.remove(r.id);
+  const deliveries = new DeliveryWorker(new OutboxStore(db), async (chatId, body) => {
+    const prefix = config.botReplyPrefix?.trim();
+    await transport.sendText(chatId, prefix ? `${prefix}\n${body}` : body);
+  }, logger, () => transport.getStatus().state === "open");
+  deliveries.start();
+
+  let shuttingDown = false;
+  const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({ signal }, "shutting down");
+    const deadline = setTimeout(() => {
+      logger.error("Shutdown deadline exceeded; unfinished deliveries retain their leases");
+      process.exit(1);
+    }, 30_000);
+    unsubscribeMessages();
+    unsubscribeChats();
+    await bot.stop();
+    await jobs.stop();
+    await deliveries.stop();
+    runtime.dispose();
+    await transport.stop();
+    try {
+      await app.close();
+    } catch (err) {
+      logger.error({ err }, "error closing API");
     }
-  }, 15_000);
+    try {
+      db.close();
+    } catch (err) {
+      logger.error({ err }, "error closing database");
+    }
+    clearTimeout(deadline);
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error("Fatal:", err);
   process.exit(1);
 });

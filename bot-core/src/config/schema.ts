@@ -58,7 +58,6 @@ export const ConfigSchema = z.object({
   // Let the owner run bot.* commands from their own linked phone (own messages).
   respondToOwnCommands: z.boolean().default(true),
 
-  // Approved chats/senders. Names are matched normalized (accent/emoji-insensitive).
   approvedSenders: z.array(z.string()).default([]),
 
   // trigger -> command name (e.g. "bot.roast" -> "roast", "bot.roast.neg" -> "roast").

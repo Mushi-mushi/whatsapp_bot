@@ -23,6 +23,10 @@ export class Bot {
   private hearsList: HearsEntry[] = [];
   private kindHandlers = new Map<MessageKind, Handler>();
   private fallbackHandler: Handler | null = null;
+  private tails = new Map<string, Promise<void>>();
+  private pendingByChat = new Map<string, number>();
+  private pending = 0;
+  private accepting = true;
 
   use(mw: Middleware): this {
     this.middleware.push(mw);
@@ -57,8 +61,28 @@ export class Bot {
   }
 
   async handle(ctx: Context): Promise<void> {
-    const dispatch = () => this.dispatch(ctx);
-    await this.runMiddleware(ctx, 0, dispatch);
+    const key = ctx.msg.chatId;
+    const count = this.pendingByChat.get(key) ?? 0;
+    if (!this.accepting || this.pending >= 128 || count >= 16) throw new Error("Message queue unavailable");
+    this.pending += 1;
+    this.pendingByChat.set(key, count + 1);
+    const previous = this.tails.get(key) ?? Promise.resolve();
+    const task = previous.catch(() => {}).then(() => this.runMiddleware(ctx, 0, () => this.dispatch(ctx)));
+    this.tails.set(key, task);
+    try {
+      await task;
+    } finally {
+      this.pending -= 1;
+      const remaining = (this.pendingByChat.get(key) ?? 1) - 1;
+      if (remaining) this.pendingByChat.set(key, remaining);
+      else this.pendingByChat.delete(key);
+      if (this.tails.get(key) === task) this.tails.delete(key);
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.accepting = false;
+    await Promise.allSettled(this.tails.values());
   }
 
   private async runMiddleware(

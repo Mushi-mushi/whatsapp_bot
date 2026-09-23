@@ -13,6 +13,8 @@ export function openDatabase(path: string): Database.Database {
 }
 
 function migrate(db: Database.Database): void {
+  const version = db.pragma("user_version", { simple: true }) as number;
+  if (version > 1) throw new Error("Database schema is newer than this application");
   db.exec(`
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
@@ -29,6 +31,12 @@ function migrate(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS known_chats (
       chat_name  TEXT PRIMARY KEY,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_directory (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
 
@@ -98,4 +106,22 @@ function migrate(db: Database.Database): void {
       PRIMARY KEY (chat_id, name_norm)
     );
   `);
+  if (version < 1) {
+    db.transaction(() => {
+      db.exec(`CREATE TABLE outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        available_at INTEGER NOT NULL,
+        lease_until INTEGER,
+        claim_token TEXT,
+        last_error TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_outbox_ready ON outbox(status, available_at);
+      PRAGMA user_version = 1;`);
+    })();
+  }
 }

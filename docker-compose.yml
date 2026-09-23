@@ -11,6 +11,7 @@ services:
       # Set to "true" then re-link once to pull your full contact/chat list into
       # the approved-senders picker. Leave off for normal running.
       SYNC_FULL_HISTORY: ${SYNC_FULL_HISTORY:-false}
+      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env before starting the stack}
       LOG_LEVEL: info
     extra_hosts:
       # Lets the container reach Auralis running on the host.
@@ -20,14 +21,23 @@ services:
       - ./data:/data
     expose:
       - "5000"
+    init: true
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health',{headers:{Authorization:'Bearer '+process.env.API_TOKEN}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
 
   web:
     build: ./web
     restart: always
     depends_on:
-      - bot-core
+      bot-core:
+        condition: service_healthy
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:8080"
 
   # Core ComfyUI (bot.paint backend). Always-on via restart policy; reuses the
   # host model/IO/workflow folders via bind mounts. Set COMFYUI_DIR to your
@@ -36,7 +46,7 @@ services:
     build: ./comfyui
     restart: unless-stopped
     ports:
-      - "8188:8188"
+      - "127.0.0.1:8188:8188"
     volumes:
       - ${COMFYUI_DIR:-C:/Edit/ComfyUI}/models:/app/ComfyUI/models
       - ${COMFYUI_DIR:-C:/Edit/ComfyUI}/input:/app/ComfyUI/input

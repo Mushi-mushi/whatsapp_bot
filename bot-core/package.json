@@ -6,8 +6,11 @@
   "description": "WhatsApp bot core (Baileys transport + typed middleware router).",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:tsx": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
     "test": "vitest run"
   },
   "dependencies": {
@@ -15,17 +18,22 @@
     "@whiskeysockets/baileys": "^6.7.16",
     "better-sqlite3": "^11.8.1",
     "fastify": "^5.2.1",
+    "ipaddr.js": "^2.5.0",
     "pino": "^9.6.0",
     "qrcode": "^1.5.4",
     "sentiment": "^5.0.2",
+    "undici": "^7.29.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.18.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.7",
     "@types/qrcode": "^1.5.5",
+    "eslint": "^9.18.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0",
     "vitest": "^3.0.4"
   }
 }

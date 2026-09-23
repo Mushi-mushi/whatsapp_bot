@@ -55,6 +55,16 @@ export class RuntimeState {
   // Running trivia sessions (token + category + prefetched queue), keyed by chat JID.
   triviaSessions = new Map<string, TriviaSession>();
 
+  dispose(): void {
+    for (const timer of this.tortureTimers.values()) clearInterval(timer);
+    for (const game of this.triviaGames.values()) clearTimeout(game.timer);
+    this.tortureTimers.clear();
+    this.tortureCooldownUntil.clear();
+    this.triviaGames.clear();
+    this.triviaSessions.clear();
+    this.insultGames.clear();
+  }
+
   isSleeping(): boolean {
     return this.siestaUntil != null && Date.now() < this.siestaUntil;
   }

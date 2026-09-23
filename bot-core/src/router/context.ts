@@ -11,14 +11,17 @@ export class Context {
   // Populated by the command matcher: the command trigger and its trailing args.
   public commandTrigger: string | null = null;
   public args = "";
+  private readonly configSnapshot: BotConfig;
 
   constructor(
     public readonly msg: IncomingMessage,
     private readonly services: Services,
-  ) {}
+  ) {
+    this.configSnapshot = services.getConfig();
+  }
 
   get config(): BotConfig {
-    return this.services.getConfig();
+    return this.configSnapshot;
   }
 
   get connection(): ConnectionStatus {

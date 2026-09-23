@@ -20,6 +20,7 @@ export function StatusCard() {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const state = status?.state ?? "connecting";
   const label = STATE_LABEL[state] ?? STATE_LABEL.connecting;
@@ -27,9 +28,12 @@ export function StatusCard() {
   async function requestPairing() {
     if (!phone.trim()) return;
     setLoading(true);
+    setError("");
     try {
       const res = await api.requestPairing(phone.trim());
       setCode(res.code ?? null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Pairing request failed.");
     } finally {
       setLoading(false);
     }
@@ -74,14 +78,16 @@ export function StatusCard() {
             </p>
             <div className="flex gap-2">
               <Input
+                className="min-w-0"
                 placeholder="Phone with country code, e.g. 34600123456"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
               />
-              <Button onClick={requestPairing} disabled={loading || !phone.trim()}>
+              <Button className="shrink-0 whitespace-nowrap" onClick={requestPairing} disabled={loading || !phone.trim()}>
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Get code"}
               </Button>
             </div>
+            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           </div>
         )}
       </CardContent>

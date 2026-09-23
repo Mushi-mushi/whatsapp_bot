@@ -1,6 +1,7 @@
 import type { Handler } from "../../router/router.js";
 import { ollamaChat, ollamaErrorMessage } from "../../util/ollama.js";
 import { decodeEntities, extractReadable, isSafeHttpUrl } from "../../util/net.js";
+import { fetchPublicText } from "../../util/public-http.js";
 
 function readerFallbackUrls(url: string): string[] {
   const stripped = url.replace(/^https?:\/\//i, "");
@@ -15,23 +16,16 @@ async function fetchPage(url: string): Promise<
   | { ok: false; status?: number; timeout?: boolean }
 > {
   try {
-    const res = await fetch(url, {
+    const res = await fetchPublicText(url, {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; whatsapp-bot tldr)",
         Accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
       },
-      signal: AbortSignal.timeout(18_000),
-      redirect: "follow",
+      timeoutMs: 18_000,
     });
     if (!res.ok) return { ok: false, status: res.status };
-    return {
-      ok: true,
-      status: res.status,
-      contentType: res.headers.get("content-type") ?? "",
-      body: (await res.text()).slice(0, 500_000),
-      finalUrl: res.url,
-    };
+    return { ...res, ok: true };
   } catch (err) {
     const timedOut = err instanceof Error && err.name === "TimeoutError";
     return { ok: false, timeout: timedOut };
@@ -117,16 +111,15 @@ async function fetchRedditOembed(postUrl: string): Promise<{
 } | null> {
   try {
     const u = `https://www.reddit.com/oembed?url=${encodeURIComponent(postUrl)}`;
-    const res = await fetch(u, {
+    const res = await fetchPublicText(u, {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; whatsapp-bot tldr)",
         Accept: "application/json,text/plain,*/*",
       },
-      signal: AbortSignal.timeout(10_000),
-      redirect: "follow",
+      timeoutMs: 10_000,
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as {
+    const data = JSON.parse(res.body) as {
       title?: unknown;
       author_name?: unknown;
       provider_name?: unknown;

@@ -19,6 +19,11 @@ export interface IncomingMessage {
 
 export type ConnectionState = "connecting" | "qr" | "pairing" | "open" | "close";
 
+export interface ChatIdentity {
+  id: string;
+  name: string;
+}
+
 export interface ConnectionStatus {
   state: ConnectionState;
   qrDataUrl: string | null;
@@ -28,6 +33,7 @@ export interface ConnectionStatus {
 
 export interface Transport {
   start(): Promise<void>;
+  stop(): Promise<void>;
   sendText(chatId: string, text: string): Promise<void>;
   sendReply(chatId: string, text: string, quoted: WAMessage): Promise<void>;
   sendImage(chatId: string, image: Buffer, caption?: string): Promise<void>;
@@ -37,7 +43,7 @@ export interface Transport {
   requestPairingCode(phoneNumber: string): Promise<string>;
   resyncContacts(): Promise<void>;
   getStatus(): ConnectionStatus;
-  onMessage(cb: (m: IncomingMessage) => void): void;
-  onStatus(cb: (s: ConnectionStatus) => void): void;
-  onChatsDiscovered(cb: (names: string[]) => void): void;
+  onMessage(cb: (m: IncomingMessage) => void): () => void;
+  onStatus(cb: (s: ConnectionStatus) => void): () => void;
+  onChatsDiscovered(cb: (chats: ChatIdentity[]) => void): () => void;
 }

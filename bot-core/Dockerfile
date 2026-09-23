@@ -1,5 +1,5 @@
 # bot-core/Dockerfile
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim AS build
 
 # Build tools for better-sqlite3 native module.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -8,11 +8,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
+RUN npm run build
+RUN npm prune --omit=dev
+
+FROM node:22-bookworm-slim AS runtime
+WORKDIR /app
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/package.json ./package.json
+RUN mkdir -p /data && chown node:node /data
 
 ENV NODE_ENV=production \
     AUTH_DIR=/data/auth \
@@ -20,4 +29,5 @@ ENV NODE_ENV=production \
     API_PORT=5000
 
 EXPOSE 5000
-CMD ["npm", "run", "start"]
+USER node
+CMD ["node", "dist/index.js"]

@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Check, Plus, RefreshCw, Search, X } from "lucide-react";
-import type { BotConfig } from "@/lib/api";
+import type { BotConfig, ChatIdentity } from "@/lib/api";
 
 function normalize(name: string): string {
   return name
@@ -16,7 +16,7 @@ function normalize(name: string): string {
 
 interface Props {
   senders: string[];
-  chats: string[];
+  chats: ChatIdentity[];
   onChange: (senders: string[]) => void;
   onRefreshChats: () => void;
 }
@@ -26,12 +26,12 @@ export function ApprovedSenders({ senders, chats, onChange, onRefreshChats }: Pr
 
   const approvedNorms = useMemo(() => new Set(senders.map(normalize)), [senders]);
   const available = useMemo(
-    () => chats.filter((c) => !approvedNorms.has(normalize(c))),
+    () => chats.filter((c) => !approvedNorms.has(normalize(c.id))),
     [chats, approvedNorms],
   );
   const filtered = useMemo(() => {
     const q = normalize(search);
-    return q ? available.filter((c) => normalize(c).includes(q)) : available;
+    return q ? available.filter((c) => normalize(`${c.name} ${c.id}`).includes(q)) : available;
   }, [available, search]);
   const shown = filtered.slice(0, 50);
 
@@ -65,7 +65,7 @@ export function ApprovedSenders({ senders, chats, onChange, onRefreshChats }: Pr
               className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 py-1 pl-3 pr-1.5 text-sm text-foreground"
             >
               <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
-              <span className="truncate">{name}</span>
+              <span className="truncate">{chats.find((chat) => chat.id === name)?.name ?? name}{!name.includes("@") && !/^\+?[\d ()-]+$/.test(name) ? " (reapproval required)" : ""}</span>
               <button
                 onClick={() => onChange(senders.filter((_, idx) => idx !== i))}
                 className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:bg-destructive/15 hover:text-destructive"
@@ -107,15 +107,15 @@ export function ApprovedSenders({ senders, chats, onChange, onRefreshChats }: Pr
             ) : (
               shown.map((c) => (
                 <button
-                  key={c}
+                  key={c.id}
                   onClick={() => {
-                    add(c);
+                    add(c.id);
                     setSearch("");
                   }}
                   className="group flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition hover:bg-muted"
-                  title={c}
+                  title={`${c.name} (${c.id})`}
                 >
-                  <span className="truncate">{c}</span>
+                  <span className="min-w-0"><span className="block truncate">{c.name}</span><span className="block truncate text-xs text-muted-foreground">{c.id}</span></span>
                   <Plus className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition group-hover:opacity-100" />
                 </button>
               ))

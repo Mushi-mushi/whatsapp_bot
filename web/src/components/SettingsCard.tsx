@@ -31,12 +31,22 @@ export function SettingsCard({ config, onChange }: Props) {
     ? models
     : [config.ollamaModel, ...models].filter(Boolean);
   const [triviaCleared, setTriviaCleared] = useState(false);
+  const [triviaPending, setTriviaPending] = useState(false);
+  const [triviaError, setTriviaError] = useState("");
 
   async function clearTrivia() {
     if (!window.confirm("Clear the trivia leaderboard for all chats? This can't be undone.")) return;
-    await api.resetTriviaScores();
-    setTriviaCleared(true);
-    setTimeout(() => setTriviaCleared(false), 2000);
+    setTriviaPending(true);
+    setTriviaError("");
+    setTriviaCleared(false);
+    try {
+      await api.resetTriviaScores();
+      setTriviaCleared(true);
+    } catch (error) {
+      setTriviaError(error instanceof Error ? error.message : "Could not reset scores.");
+    } finally {
+      setTriviaPending(false);
+    }
   }
 
   return (
@@ -304,10 +314,11 @@ export function SettingsCard({ config, onChange }: Props) {
             <p className="text-sm font-medium">Trivia leaderboard</p>
             <p className="text-xs text-muted-foreground">Reset all trivia scores across chats.</p>
           </div>
-          <Button variant="outline" onClick={clearTrivia}>
+          <Button variant="outline" onClick={clearTrivia} disabled={triviaPending}>
             {triviaCleared ? "Cleared ✓" : "Clear scores"}
           </Button>
         </div>
+        {triviaError && <p role="alert" className="text-sm text-destructive">{triviaError}</p>}
       </CardContent>
     </Card>
   );

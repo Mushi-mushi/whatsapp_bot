@@ -1,33 +1,18 @@
 import type { Handler } from "../../router/router.js";
+import { tryJson } from "../../util/http.js";
 
 async function fromZenQuotes(): Promise<string | null> {
-  try {
-    const res = await fetch("https://zenquotes.io/api/random", {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as Array<{ q?: string; a?: string }>;
-      const item = data[0];
-      if (item?.q) return `"${item.q.trim()}"${item.a ? ` — ${item.a.trim()}` : ""}`;
-    }
-  } catch {
-    /* fall through */
-  }
+  const data = await tryJson<Array<{ q?: string; a?: string }>>("https://zenquotes.io/api/random");
+  const item = data?.[0];
+  if (item?.q) return `"${item.q.trim()}"${item.a ? ` — ${item.a.trim()}` : ""}`;
   return null;
 }
 
 async function fromQuotable(): Promise<string | null> {
-  try {
-    const res = await fetch("https://api.quotable.io/random", {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { content?: string; author?: string };
-      if (data.content) return `"${data.content.trim()}"${data.author ? ` — ${data.author}` : ""}`;
-    }
-  } catch {
-    /* fall through */
-  }
+  const data = await tryJson<{ content?: string; author?: string }>(
+    "https://api.quotable.io/random",
+  );
+  if (data?.content) return `"${data.content.trim()}"${data.author ? ` — ${data.author}` : ""}`;
   return null;
 }
 

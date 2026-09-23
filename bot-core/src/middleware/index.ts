@@ -5,19 +5,6 @@ import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
 import { extractCommandToken, normalizeLooseName, normalizeName } from "../router/normalize.js";
 
-// A name matches when the strict (accent/case-insensitive) forms are equal, or the
-// looser emoji/punctuation-stripped forms are, so an approved group like
-// "Fiesta de frutas con IA 🍓" still matches if its emoji were saved corrupted.
-function nameMatches(candidate: string, approved: Iterable<string>): boolean {
-  const strict = normalizeName(candidate);
-  const loose = normalizeLooseName(candidate);
-  for (const entry of approved) {
-    if (normalizeName(entry) === strict) return true;
-    if (loose && normalizeLooseName(entry) === loose) return true;
-  }
-  return false;
-}
-
 // Skip our own outgoing messages, except commands the owner types from the linked
 // phone (when enabled) and answers to an active game in the chat. The bot's own
 // prefixed replies are always ignored to avoid loops.
@@ -37,28 +24,17 @@ export function ignoreOwn(runtime: RuntimeState): Middleware {
   };
 }
 
-// Only process approved chats. Matches the chat name (group subject / DM contact),
-// or a phone number — robust for LID DMs where the saved name is hidden and only
-// the phone (senderPn) is known. Own commands (fromMe) are always allowed.
 export const approvedSenderGuard: Middleware = async (ctx, next) => {
   if (ctx.msg.fromMe) {
     await next();
     return;
   }
-  const approvedRaw = ctx.config.approvedSenders;
-  if (nameMatches(ctx.msg.chatName, approvedRaw)) {
-    await next();
-    return;
-  }
-  const chatNumber = ctx.msg.chatId.split("@")[0].replace(/\D/g, "");
-  const senderNumber = ctx.msg.senderId.split("@")[0].replace(/\D/g, "");
-  const phoneNumber = ctx.msg.senderPhone;
-  for (const entry of approvedRaw) {
-    const digits = entry.replace(/\D/g, "");
-    if (
-      digits.length >= 6 &&
-      (digits === chatNumber || digits === senderNumber || digits === phoneNumber)
-    ) {
+  for (const entry of ctx.config.approvedSenders) {
+    const phone = ctx.msg.senderPhone;
+    const matchesChat = entry.includes("@") && entry === ctx.msg.chatId;
+    const matchesDm = !ctx.msg.isGroup && /^\d{6,15}$/.test(phone) &&
+      (entry === `${phone}@s.whatsapp.net` || (/^\+?[\d ()-]+$/.test(entry) && entry.replace(/\D/g, "") === phone));
+    if (matchesChat || matchesDm) {
       await next();
       return;
     }
@@ -109,9 +85,7 @@ export function activityTracker(seen: SeenActivityStore, tells: TellStore): Midd
     }
     const keys = [...new Set([strictName, looseName, phone])].filter(Boolean);
     for (const key of keys) {
-      for (const t of tells.takeFor(key)) {
-        await ctx.reply(`📨 ${ctx.msg.senderName}, ${t.from_name} said: ${t.message}`);
-      }
+      tells.enqueueFor(key, ctx.msg.chatId, ctx.msg.senderName);
     }
     await next();
   };
@@ -124,7 +98,6 @@ export function logging(logger: Logger): Middleware {
         chat: ctx.msg.senderName,
         kind: ctx.msg.kind,
         id: ctx.msg.messageId,
-        text: ctx.msg.text?.slice(0, 80),
       },
       "incoming",
     );

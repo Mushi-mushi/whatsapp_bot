@@ -13,7 +13,9 @@ import makeWASocket, {
 import type { Logger } from "pino";
 import QRCode from "qrcode";
 import { rm } from "node:fs/promises";
+import { ContactResolver } from "./contacts.js";
 import type {
+  ChatIdentity,
   ConnectionStatus,
   IncomingMessage,
   MessageKind,
@@ -43,13 +45,13 @@ export class BaileysTransport implements Transport {
   };
   private messageCbs: ((m: IncomingMessage) => void)[] = [];
   private statusCbs: ((s: ConnectionStatus) => void)[] = [];
-  private chatsCbs: ((names: string[]) => void)[] = [];
+  private chatsCbs: ((chats: ChatIdentity[]) => void)[] = [];
   private groupSubjects = new Map<string, string>();
-  private contactNames = new Map<string, string>();
-  private contactByPhone = new Map<string, string>();
-  private contactsHydrated = false;
+  private contacts = new ContactResolver();
   private pairingRequested = false;
-  private reconnectScheduled = false;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private stopped = false;
+  private starting = false;
   private consecutiveLogouts = 0;
   // Recently sent/seen message content, so we can answer decryption retry receipts
   // (otherwise the peer is stuck on "Waiting for this message").
@@ -57,21 +59,23 @@ export class BaileysTransport implements Transport {
 
   constructor(private readonly opts: BaileysOptions) {}
 
-  onMessage(cb: (m: IncomingMessage) => void): void {
+  onMessage(cb: (m: IncomingMessage) => void): () => void {
     this.messageCbs.push(cb);
+    return () => { this.messageCbs = this.messageCbs.filter((listener) => listener !== cb); };
   }
 
-  onStatus(cb: (s: ConnectionStatus) => void): void {
+  onStatus(cb: (s: ConnectionStatus) => void): () => void {
     this.statusCbs.push(cb);
+    return () => { this.statusCbs = this.statusCbs.filter((listener) => listener !== cb); };
   }
 
-  onChatsDiscovered(cb: (names: string[]) => void): void {
+  onChatsDiscovered(cb: (chats: ChatIdentity[]) => void): () => void {
     this.chatsCbs.push(cb);
+    return () => { this.chatsCbs = this.chatsCbs.filter((listener) => listener !== cb); };
   }
 
-  private emitChats(names: string[]): void {
-    const clean = names.map((n) => n.trim()).filter(Boolean);
-    if (clean.length) for (const cb of this.chatsCbs) cb(clean);
+  private emitChats(chats: ChatIdentity[]): void {
+    if (chats.length) for (const cb of this.chatsCbs) cb(chats);
   }
 
   getStatus(): ConnectionStatus {
@@ -94,26 +98,26 @@ export class BaileysTransport implements Transport {
   // Schedule a single reconnect, coalescing overlapping close events so we never
   // spin up multiple concurrent sockets.
   private scheduleReconnect(delayMs = 2000): void {
-    if (this.reconnectScheduled) return;
-    this.reconnectScheduled = true;
-    setTimeout(() => {
-      this.reconnectScheduled = false;
-      void this.start();
+    if (this.stopped || this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.start().catch((err) => {
+        this.opts.logger.error({ err }, "reconnect failed");
+        this.scheduleReconnect(Math.min(delayMs * 2, 30_000));
+      });
     }, delayMs);
   }
 
   async start(): Promise<void> {
+    if (this.stopped || this.starting) return;
+    this.starting = true;
+    try {
     // Hydrate the persisted contact directory once so DM names resolve after restarts.
-    if (!this.contactsHydrated && this.opts.loadContacts) {
-      for (const r of this.opts.loadContacts()) {
-        if (r.jid && r.name) this.contactNames.set(r.jid, r.name);
-        if (r.phone) this.contactByPhone.set(r.phone.replace(/\D/g, ""), r.name);
-      }
-      this.contactsHydrated = true;
-    }
+    this.contacts.hydrate(this.opts.loadContacts);
 
     const { state, saveCreds } = await useMultiFileAuthState(this.opts.authDir);
     const { version } = await fetchLatestBaileysVersion();
+    if (this.stopped) return;
 
     const sock = makeWASocket({
       version,
@@ -145,6 +149,7 @@ export class BaileysTransport implements Transport {
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", async (update) => {
+      if (this.stopped || this.sock !== sock) return;
       const { connection, lastDisconnect, qr } = update;
       if (qr && !this.opts.pairingNumber) {
         this.setStatus({ state: "qr", qrDataUrl: await QRCode.toDataURL(qr) });
@@ -187,6 +192,7 @@ export class BaileysTransport implements Transport {
     });
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
+      if (this.stopped || this.sock !== sock) return;
       // "notify" = new incoming message. "append" = a message added to a chat,
       // which is how our OWN messages typed on the phone reach the linked device.
       // Handle both so self-commands work; guard "append" by recency + dedupe so
@@ -208,7 +214,7 @@ export class BaileysTransport implements Transport {
       for (const g of updates) {
         if (g.id && g.subject) {
           this.groupSubjects.set(g.id, g.subject);
-          this.emitChats([g.subject]);
+          this.emitChats([{ id: g.id, name: g.subject }]);
         }
       }
     });
@@ -221,50 +227,44 @@ export class BaileysTransport implements Transport {
     sock.ev.on("contacts.upsert", (contacts) => this.ingestContacts(contacts));
     sock.ev.on("contacts.update", (contacts) => this.ingestContacts(contacts));
     sock.ev.on("chats.upsert", (chats) => this.ingestChats(chats));
+    } finally {
+      this.starting = false;
+    }
   }
 
-  private contactDisplayName(c: Partial<Contact>): string | null {
-    const name = (c.name || c.notify || c.verifiedName || "").trim();
-    return name || null;
+  async stop(): Promise<void> {
+    this.stopped = true;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    const socket = this.sock;
+    this.sock = null;
+    this.messageCbs = [];
+    this.chatsCbs = [];
+    this.statusCbs = [];
+    socket?.end(new Error("Bot shutting down"));
   }
 
   private ingestContacts(contacts: Partial<Contact>[]): void {
-    const names: string[] = [];
-    const records: { jid: string; phone: string | null; name: string }[] = [];
-    for (const c of contacts) {
-      const name = this.contactDisplayName(c);
-      if (!c.id || !name) continue;
-      const phone = c.id.endsWith("@s.whatsapp.net")
-        ? c.id.split("@")[0].split(":")[0].replace(/\D/g, "")
-        : null;
-      this.contactNames.set(c.id, name);
-      if (phone) this.contactByPhone.set(phone, name);
-      records.push({ jid: c.id, phone, name });
-      // A contact's LID (privacy identity) also maps to the same saved name.
-      const lid = (c as { lid?: string }).lid;
-      if (lid) {
-        this.contactNames.set(lid, name);
-        records.push({ jid: lid, phone, name });
-      }
-      if (!c.id.endsWith("@g.us")) names.push(name);
-    }
+    if (this.stopped) return;
+    const { records } = this.contacts.ingest(contacts);
     if (records.length) this.opts.persistContacts?.(records);
-    this.emitChats(names);
+    this.emitChats(records.map((record) => ({ id: record.jid, name: record.name })));
   }
 
   private ingestChats(chats: Chat[]): void {
-    const names: string[] = [];
+    if (this.stopped) return;
+    const names: ChatIdentity[] = [];
     for (const chat of chats) {
       if (!chat.id) continue;
       if (chat.id.endsWith("@g.us")) {
         const subject = chat.name?.trim() || this.groupSubjects.get(chat.id);
         if (subject) {
           this.groupSubjects.set(chat.id, subject);
-          names.push(subject);
+          names.push({ id: chat.id, name: subject });
         }
       } else {
-        const name = this.contactNames.get(chat.id) || chat.name?.trim();
-        if (name) names.push(name);
+        const name = this.contacts.nameForJid(chat.id) || chat.name?.trim();
+        if (name) names.push({ id: chat.id, name });
       }
     }
     this.emitChats(names);
@@ -273,11 +273,11 @@ export class BaileysTransport implements Transport {
   private async prefetchGroups(): Promise<void> {
     try {
       const groups = await this.sock!.groupFetchAllParticipating();
-      const names: string[] = [];
+      const names: ChatIdentity[] = [];
       for (const g of Object.values(groups)) {
         if (g.id && g.subject) {
           this.groupSubjects.set(g.id, g.subject);
-          names.push(g.subject);
+          names.push({ id: g.id, name: g.subject });
         }
       }
       this.emitChats(names);
@@ -292,7 +292,7 @@ export class BaileysTransport implements Transport {
     try {
       const meta = await this.sock!.groupMetadata(jid);
       this.groupSubjects.set(jid, meta.subject);
-      this.emitChats([meta.subject]);
+      this.emitChats([{ id: jid, name: meta.subject }]);
       return meta.subject;
     } catch {
       return jid;
@@ -340,11 +340,13 @@ export class BaileysTransport implements Transport {
     // the profile name, so phone-based lookup wins for the real saved name.
     const chatName = isGroup
       ? await this.resolveGroupSubject(chatId)
-      : (senderPhone ? this.contactByPhone.get(senderPhone) : undefined) ??
-        (phoneJid ? this.contactNames.get(phoneJid) : undefined) ??
-        this.contactNames.get(chatId) ??
-        raw.pushName ??
-        senderId;
+      : this.contacts.resolveDmName({
+          chatId,
+          phoneJid,
+          senderPhone,
+          pushName: raw.pushName,
+          senderId,
+        });
 
     return {
       chatId,
@@ -390,25 +392,22 @@ export class BaileysTransport implements Transport {
   }
 
   async downloadAudio(raw: WAMessage): Promise<Buffer> {
-    if (!this.sock) throw new Error("Transport not started");
-    const buffer = (await downloadMediaMessage(
-      raw,
-      "buffer",
-      {},
-      { logger: this.opts.logger, reuploadRequest: this.sock.updateMediaMessage },
-    )) as Buffer;
-    return buffer;
+    return this.downloadMedia(raw);
   }
 
   async downloadImage(raw: WAMessage): Promise<Buffer> {
+    return this.downloadMedia(raw);
+  }
+
+  // Shared media download used by audio/image (and quoted-image) handlers.
+  private async downloadMedia(raw: WAMessage): Promise<Buffer> {
     if (!this.sock) throw new Error("Transport not started");
-    const buffer = (await downloadMediaMessage(
+    return (await downloadMediaMessage(
       raw,
       "buffer",
       {},
       { logger: this.opts.logger, reuploadRequest: this.sock.updateMediaMessage },
     )) as Buffer;
-    return buffer;
   }
 
   // Download an image the message is replying to (quoted). Returns null when the
@@ -427,13 +426,7 @@ export class BaileysTransport implements Transport {
       },
       message: quoted,
     } as WAMessage;
-    const buffer = (await downloadMediaMessage(
-      synthetic,
-      "buffer",
-      {},
-      { logger: this.opts.logger, reuploadRequest: this.sock.updateMediaMessage },
-    )) as Buffer;
-    return buffer;
+    return this.downloadMedia(synthetic);
   }
 
   async requestPairingCode(phoneNumber: string): Promise<string> {
