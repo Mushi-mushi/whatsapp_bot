@@ -48,6 +48,14 @@ export class Context {
     );
   }
 
+  async sendVideo(video: Buffer, caption?: string): Promise<void> {
+    await this.services.transport.sendVideo(
+      this.msg.chatId,
+      video,
+      caption ? this.withPrefix(caption) : undefined,
+    );
+  }
+
   async downloadAudio(): Promise<Buffer> {
     return this.services.transport.downloadAudio(this.msg.raw);
   }

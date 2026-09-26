@@ -97,5 +97,6 @@ export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
     "bot.roll": "roll",
     "bot.trivia": "trivia",
     "bot.paint": "paint",
+    "bot.film": "film",
   },
 });

@@ -33,6 +33,7 @@ import { tldr } from "./tldr.js";
 import { roll } from "./roll.js";
 import { makeTrivia } from "./trivia.js";
 import { paint } from "./paint.js";
+import { film } from "./film.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
@@ -72,6 +73,7 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     tldr,
     roll,
     paint,
+    film,
     trivia: makeTrivia(deps.runtime, deps.triviaScores),
   };
 }

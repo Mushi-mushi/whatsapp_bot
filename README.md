@@ -88,8 +88,29 @@ at stronger denoising. `pixelate p=24` remains a deterministic filter.
 Paint is local-only. The installed Wan video models do not provide a verified
 still-image paint workflow, so `wan` returns an unsupported-model message for
 both text and photos. No paid Wan partner API is called, and no other model is
-silently substituted. Video generation is outside `bot.paint`; `bot.film` is not
-implemented yet. MiniMax is not integrated.
+silently substituted. Video generation uses `bot.film`; it is intentionally
+separate from `bot.paint`.
+
+## Film Models
+
+`bot.film <prompt>` generates a short local video with Wan 2.2 image-to-video
+nodes and local ComfyUI `SaveVideo` output (mp4/h264). `bot.film minimax <prompt>`
+switches to a local MiniMax H3 workflow using `minimax_h3_fl2va_pruned_int8_convrot.safetensors`.
+You can also use `bot.film model=minimax <prompt>`.
+
+Replying to a photo with `bot.film <prompt>` anchors the first frame to that
+image for both Wan and MiniMax workflows. Output clips are sent back as videos
+in WhatsApp.
+
+Required local files for MiniMax mode:
+
+| Resource | Folder under ComfyUI models | Filename |
+| --- | --- | --- |
+| MiniMax H3 UNet | diffusion_models | minimax_h3_fl2va_pruned_int8_convrot.safetensors |
+| MiniMax H3 text encoder | text_encoders | qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors |
+| MiniMax H3 video VAE | vae | minimax_h3_video_vae_fp16.safetensors |
+
+These workflows are local-only and do not call cloud partner APIs.
 
 Local smoke checks cover RealVisXL, Hunyuan DiT 1.2, DreamShaper 8,
 Juggernaut XL Lightning, Pony Diffusion XL, and Flux, using text and source images.

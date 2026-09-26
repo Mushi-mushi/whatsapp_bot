@@ -29,6 +29,7 @@ describe("ConfigStore.load", () => {
     expect(cfg.commands["bot.jokes"]).toBe("jokes");
     // Missing default commands backfilled.
     expect(cfg.commands["bot.paint"]).toBe("paint");
+    expect(cfg.commands["bot.film"]).toBe("film");
     expect(cfg.commands["bot.status"]).toBe("status");
   });
 

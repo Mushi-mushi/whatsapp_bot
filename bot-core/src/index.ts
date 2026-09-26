@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     bot.clearCommands();
     for (const [trigger, name] of Object.entries(cfg.commands)) {
       const handler = commandRegistry[name];
-      if (handler) bot.command(trigger, ["ask", "translate", "tldr", "paint"].includes(name) ? jobs.wrap(handler) : handler);
+      if (handler) bot.command(trigger, ["ask", "translate", "tldr", "paint", "film"].includes(name) ? jobs.wrap(handler) : handler);
       else logger.warn({ trigger, name }, "No handler registered for command");
     }
   };

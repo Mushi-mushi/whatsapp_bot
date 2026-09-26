@@ -382,6 +382,12 @@ export class BaileysTransport implements Transport {
     if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
   }
 
+  async sendVideo(chatId: string, video: Buffer, caption?: string): Promise<void> {
+    if (!this.sock) throw new Error("Transport not started");
+    const sent = await this.sock.sendMessage(chatId, { video, caption, mimetype: "video/mp4" });
+    if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
+  }
+
   // Bounded message-content cache used to answer decryption retry receipts.
   private cacheMessage(id: string, content: WAMessageContent): void {
     this.messageCache.set(id, content);

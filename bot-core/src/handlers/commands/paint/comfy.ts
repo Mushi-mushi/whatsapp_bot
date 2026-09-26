@@ -6,8 +6,19 @@ export interface ComfyImageRef {
   type: string;
 }
 
+export interface ComfyVideoRef {
+  filename: string;
+  subfolder: string;
+  type: string;
+}
+
 interface HistoryEntry {
-  outputs?: Record<string, { images?: ComfyImageRef[] }>;
+  outputs?: Record<string, {
+    images?: ComfyImageRef[];
+    gifs?: ComfyVideoRef[];
+    videos?: ComfyVideoRef[];
+    animated?: boolean[];
+  }>;
   status?: { status_str?: string };
 }
 
@@ -75,6 +86,37 @@ export async function waitForImage(
   throw new Error("timed out waiting for the image");
 }
 
+// Poll history until the prompt produces a video-like output.
+export async function waitForVideo(
+  base: string,
+  promptId: string,
+  timeoutMs: number,
+): Promise<ComfyVideoRef> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await fetch(`${base}/history/${promptId}`, { signal: AbortSignal.timeout(10_000) });
+    if (res.ok) {
+      const hist = (await res.json()) as Record<string, HistoryEntry>;
+      const entry = hist[promptId];
+      if (entry?.outputs) {
+        for (const out of Object.values(entry.outputs)) {
+          const video = out.videos?.find((v) => v.type === "output") ?? out.videos?.[0]
+            ?? out.gifs?.find((v) => v.type === "output") ?? out.gifs?.[0];
+          if (video) return video;
+          const animatedImage = (out.animated?.some(Boolean)
+            ? out.images?.find((i) => /\.(?:mp4|webm|mkv)$/i.test(i.filename))
+            : undefined)
+            ?? out.images?.find((i) => /\.(?:mp4|webm|mkv)$/i.test(i.filename));
+          if (animatedImage) return animatedImage;
+        }
+        if (entry.status?.status_str === "error") throw new Error("generation failed in ComfyUI");
+      }
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+  throw new Error("timed out waiting for the video");
+}
+
 export async function fetchImage(base: string, ref: ComfyImageRef): Promise<Buffer> {
   const params = new URLSearchParams({
     filename: ref.filename,
@@ -83,5 +125,16 @@ export async function fetchImage(base: string, ref: ComfyImageRef): Promise<Buff
   });
   const res = await fetch(`${base}/view?${params.toString()}`, { signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new Error(`fetch image failed (${res.status})`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+export async function fetchVideo(base: string, ref: ComfyVideoRef): Promise<Buffer> {
+  const params = new URLSearchParams({
+    filename: ref.filename,
+    subfolder: ref.subfolder ?? "",
+    type: ref.type ?? "output",
+  });
+  const res = await fetch(`${base}/view?${params.toString()}`, { signal: AbortSignal.timeout(60_000) });
+  if (!res.ok) throw new Error(`fetch video failed (${res.status})`);
   return Buffer.from(await res.arrayBuffer());
 }
