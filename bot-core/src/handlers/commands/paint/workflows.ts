@@ -4,6 +4,56 @@ import type { BotConfig } from "../../../config/schema.js";
 // [nodeId, outputIndex] wires one node's output into another.
 export type Workflow = Record<string, unknown>;
 
+export const RETROANIME_PRESET = {
+  checkpoint: "lyhAnime_korIl01.safetensors",
+  negativePrompt: "photo, deformed, black and white, realism, disfigured, low contrast",
+  loras: [
+    { name: "RetroAnimeFluxV1.safetensors", strength: 0.45 },
+    { name: "RM_Artistify_v1.0M.safetensors", strength: 0.65 },
+    { name: "Classic_Anime_Colors.safetensors", strength: 0.4 },
+  ],
+} as const;
+
+export function buildRetroAnimeWorkflow(
+  prompt: string,
+  seed: number,
+  source?: { imageName: string; denoise: number },
+): Workflow {
+  const text = `anime artwork, ${prompt}${/\bCAICO\b/i.test(prompt) ? "" : ", CAICO"}, anime style, key visual, vibrant, studio anime, highly detailed`;
+  const workflow: Workflow = {
+    "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: RETROANIME_PRESET.checkpoint } },
+    "12": { class_type: "DualCLIPLoader", inputs: {
+      clip_name1: "clip_l.safetensors", clip_name2: "t5xxl_fp16.safetensors", type: "flux", device: "default",
+    } },
+    "13": { class_type: "VAELoader", inputs: { vae_name: "ae.safetensors" } },
+    "5": source
+      ? { class_type: "VAEEncode", inputs: { pixels: ["11", 0], vae: ["13", 0] } }
+      : { class_type: "EmptySD3LatentImage", inputs: { width: 672, height: 1200, batch_size: 1 } },
+    "6": { class_type: "CLIPTextEncode", inputs: { text, clip: ["22", 1] } },
+    "7": { class_type: "CLIPTextEncode", inputs: { text: RETROANIME_PRESET.negativePrompt, clip: ["22", 1] } },
+    "10": { class_type: "FluxGuidance", inputs: { conditioning: ["6", 0], guidance: 3.5 } },
+    "3": { class_type: "KSampler", inputs: {
+      seed, steps: 20, cfg: 1, sampler_name: "euler", scheduler: "beta", denoise: source?.denoise ?? 1,
+      model: ["22", 0], positive: ["10", 0], negative: ["7", 0], latent_image: ["5", 0],
+    } },
+    "8": { class_type: "VAEDecode", inputs: { samples: ["3", 0], vae: ["13", 0] } },
+    "9": { class_type: "SaveImage", inputs: { filename_prefix: "bot", images: ["8", 0] } },
+    ...(source ? { "11": { class_type: "LoadImage", inputs: { image: source.imageName } } } : {}),
+  };
+  RETROANIME_PRESET.loras.forEach((lora, index) => {
+    const previous = String(19 + index);
+    workflow[String(20 + index)] = {
+      class_type: "LoraLoader",
+      inputs: {
+        model: [index === 0 ? "4" : previous, 0],
+        clip: index === 0 ? ["12", 0] : [previous, 1],
+        lora_name: lora.name, strength_model: lora.strength, strength_clip: lora.strength,
+      },
+    };
+  });
+  return workflow;
+}
+
 export const AMANESSE_PRESET = {
   checkpoint: "amanesseWorks_v20.safetensors",
   negativePrompt: "lowres, worst quality, bad quality, bad anatomy, bad eyes, bad hands, missing fingers, bad feet, missing toes, 4 toes, artifact, signature, watermark, simple background, nsfw, nude",

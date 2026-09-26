@@ -8,6 +8,7 @@ import {
   buildKontextWorkflow,
   buildPixelateWorkflow,
   buildRepaintPrompt,
+  buildRetroAnimeWorkflow,
   buildWorkflow,
   type Workflow,
 } from "./paint/workflows.js";
@@ -64,6 +65,10 @@ async function repaint(
       await runAndSend(ctx, base, buildAmanesseWorkflow(ctx.config, text, seed, { imageName: name, denoise }), restyle.text);
       return;
     }
+    if (parsed.model === "retroanime") {
+      await runAndSend(ctx, base, buildRetroAnimeWorkflow(text, seed, { imageName: name, denoise }), restyle.text);
+      return;
+    }
     await runAndSend(
       ctx,
       base,
@@ -90,7 +95,7 @@ export const paint: Handler = async (ctx) => {
   const prompt = ctx.args.trim();
   if (!prompt) {
     await ctx.reply(
-      "Usage:\n• `bot.paint <prompt>` — create an image with the default checkpoint\n• `bot.paint sdxl|flux|hunyuan|pony <prompt>` — select a local model\n• `bot.paint amanesse <prompt>` — Amanesse + five-LoRA illustration preset\n• `bot.paint model=yourModel.safetensors <prompt>` — choose a compatible checkpoint (quote filenames containing spaces)\n• reply to a photo or caption one with `bot.paint <edit>` — Flux Kontext edit\n• include a model selector to repaint with that model; tune strength with `d=0.7`\n• `hard` uses stronger denoising (default 0.7)\n• `g=4` tunes Flux guidance\n• `pixelate p=24` applies a deterministic photo filter\n• Wan video models are not supported for local paint; cloud APIs are disabled.",
+      "Usage:\n• `bot.paint <prompt>` — create an image with the default checkpoint\n• `bot.paint sdxl|flux|hunyuan|pony <prompt>` — select a local model\n• `bot.paint amanesse <prompt>` — Amanesse + five-LoRA illustration preset\n• `bot.paint retroanime <prompt>` — Retro Anime Flux + three-LoRA style preset\n• `bot.paint model=yourModel.safetensors <prompt>` — choose a compatible checkpoint (quote filenames containing spaces)\n• reply to a photo or caption one with `bot.paint <edit>` — Flux Kontext edit\n• include a model selector to repaint with that model; tune strength with `d=0.7`\n• `hard` uses stronger denoising (default 0.7)\n• `g=4` tunes Flux guidance (presets use fixed settings)\n• `pixelate p=24` applies a deterministic photo filter\n• Wan video models are not supported for local paint; cloud APIs are disabled.",
     );
     return;
   }
@@ -124,6 +129,8 @@ export const paint: Handler = async (ctx) => {
     }
     if (model === "amanesse") {
       await runAndSend(ctx, base, buildAmanesseWorkflow(cfg, text, seed), text);
+    } else if (model === "retroanime") {
+      await runAndSend(ctx, base, buildRetroAnimeWorkflow(text, seed), text);
     } else if (model === "flux" || checkpoint === cfg.paintFluxCheckpoint) {
       const { guidance, text: fluxText } = parseGuidance(text, cfg.paintGuidance);
       await runAndSend(ctx, base, buildFluxWorkflow(cfg, fluxText, seed, guidance), fluxText);

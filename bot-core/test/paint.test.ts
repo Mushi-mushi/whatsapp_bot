@@ -27,6 +27,43 @@ function context(prompt: string, photo: boolean) {
 describe("paint model routing", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it.each(["retroanime", "model=retroanime"])("uses %s for text and both photo paths", async (selector) => {
+    for (const mode of ["text", "reply", "caption"]) {
+      vi.clearAllMocks();
+      const ctx = context(`${selector} a mountain village${mode === "text" ? "" : " d=0.6"}`, mode === "reply");
+      await (mode === "caption" ? paintImage : paint)(ctx as unknown as Context);
+      expect(ctx.reply).not.toHaveBeenCalled();
+      expect(ctx.sendImage).toHaveBeenCalledOnce();
+      const workflow = vi.mocked(comfy.queuePrompt).mock.calls[0][1];
+      expect(workflow["4"]).toEqual({ class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "lyhAnime_korIl01.safetensors" } });
+      expect(workflow["12"]).toEqual({ class_type: "DualCLIPLoader", inputs: {
+        clip_name1: "clip_l.safetensors", clip_name2: "t5xxl_fp16.safetensors", type: "flux", device: "default",
+      } });
+      expect(workflow["13"]).toEqual({ class_type: "VAELoader", inputs: { vae_name: "ae.safetensors" } });
+      const loras = [["RetroAnimeFluxV1.safetensors", 0.45], ["RM_Artistify_v1.0M.safetensors", 0.65], ["Classic_Anime_Colors.safetensors", 0.4]] as const;
+      loras.forEach(([name, strength], index) => {
+        expect(workflow[String(20 + index)]).toEqual({ class_type: "LoraLoader", inputs: {
+          model: [index === 0 ? "4" : String(19 + index), 0],
+          clip: index === 0 ? ["12", 0] : [String(19 + index), 1],
+          lora_name: name, strength_model: strength, strength_clip: strength,
+        } });
+      });
+      expect(workflow["3"]).toEqual({ class_type: "KSampler", inputs: {
+        seed: expect.any(Number), steps: 20, cfg: 1, sampler_name: "euler", scheduler: "beta",
+        denoise: mode === "text" ? 1 : 0.6, model: ["22", 0], positive: ["10", 0], negative: ["7", 0], latent_image: ["5", 0],
+      } });
+      expect(workflow["6"]).toMatchObject({ inputs: { clip: ["22", 1], text: expect.stringContaining("CAICO") } });
+      expect(workflow["7"]).toMatchObject({ inputs: { clip: ["22", 1], text: "photo, deformed, black and white, realism, disfigured, low contrast" } });
+      expect(workflow["10"]).toEqual({ class_type: "FluxGuidance", inputs: { conditioning: ["6", 0], guidance: 3.5 } });
+      expect(workflow["8"]).toEqual({ class_type: "VAEDecode", inputs: { samples: ["3", 0], vae: ["13", 0] } });
+      expect(workflow["5"]).toEqual(mode === "text"
+        ? { class_type: "EmptySD3LatentImage", inputs: { width: 672, height: 1200, batch_size: 1 } }
+        : { class_type: "VAEEncode", inputs: { pixels: ["11", 0], vae: ["13", 0] } });
+      if (mode !== "text") expect(workflow["11"]).toEqual({ class_type: "LoadImage", inputs: { image: "source.png" } });
+      expect(Object.keys(workflow)).toHaveLength(mode === "text" ? 13 : 14);
+    }
+  });
+
   it.each(["amanesse", "model=amanesse"])("uses the full %s preset for text and both photo paths", async (selector) => {
     for (const mode of ["text", "reply", "caption"]) {
       vi.clearAllMocks();

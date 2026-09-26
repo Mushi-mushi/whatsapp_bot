@@ -64,6 +64,12 @@ describe("parseRestyle", () => {
 });
 
 describe("parseModel", () => {
+  it.each(["retroanime", "RETROANIME", "model=retroanime", "ckpt=retroanime"])("resolves %s as a preset", (selector) => {
+    expect(parseModel(`${selector} a village`)).toEqual({
+      model: "retroanime", text: "a village", selected: true, checkpoint: null,
+    });
+  });
+
   it.each(["amanesse", "AMANESSE", "model=amanesse", "ckpt=amanesse"])("resolves %s as a preset", (selector) => {
     expect(parseModel(`${selector} a village`)).toEqual({
       model: "amanesse", text: "a village", selected: true, checkpoint: null,

@@ -40,17 +40,17 @@ export function parseRestyle(prompt: string): { hard: boolean; denoise: number |
 // - `flux`/`flux1` selects Flux.
 // - `sdxl` forces SDXL default checkpoint.
 export function parseModel(prompt: string): {
-  model: "flux" | "sdxl" | "wan" | "amanesse";
+  model: "flux" | "sdxl" | "wan" | "amanesse" | "retroanime";
   text: string;
   checkpoint: string | null;
   selected: boolean;
 } {
   let text = prompt;
-  let model: "flux" | "sdxl" | "wan" | "amanesse" = "sdxl";
+  let model: "flux" | "sdxl" | "wan" | "amanesse" | "retroanime" = "sdxl";
   let checkpoint: string | null = null;
 
   const explicit = text.match(/(?:^|\s)(?:model|ckpt|checkpoint)\s*=\s*(?:"([^"]+)"|'([^']+)'|(\S+))/i);
-  const selected = explicit !== null || /^\s*(?:pony|amanesse)\b/i.test(text) || /\b(?:flux1?|wan(?:2(?:\.5)?)?|hunyuan|sdxl)\b/i.test(text);
+  const selected = explicit !== null || /^\s*(?:pony|amanesse|retroanime)\b/i.test(text) || /\b(?:flux1?|wan(?:2(?:\.5)?)?|hunyuan|sdxl)\b/i.test(text);
   if (explicit) {
     const chosen = (explicit[1] ?? explicit[2] ?? explicit[3]).trim();
     const chosenLower = chosen.toLowerCase();
@@ -65,9 +65,14 @@ export function parseModel(prompt: string): {
       checkpoint = "ponyDiffusionV6XL_v6StartWithThisOne.safetensors";
     } else if (chosenLower === "amanesse") {
       model = "amanesse";
+    } else if (chosenLower === "retroanime") {
+      model = "retroanime";
     } else if (chosenLower !== "sdxl") {
       checkpoint = chosen;
     }
+  } else if (/^\s*retroanime\b/i.test(text)) {
+    model = "retroanime";
+    text = text.replace(/^\s*retroanime\b/i, "");
   } else if (/^\s*amanesse\b/i.test(text)) {
     model = "amanesse";
     text = text.replace(/^\s*amanesse\b/i, "");

@@ -130,6 +130,46 @@ Missing resources cause generation to fail rather than use another model.
 Both text generation and photo editing were tested locally at full preset settings;
 identical results to the Civitai reference are not guaranteed.
 
+### Retro Anime Style Preset
+
+`bot.paint retroanime <prompt>` (or `bot.paint model=retroanime <prompt>`) uses
+the local style stack from [Civitai image 142849835](https://civitai.com/images/142849835).
+Reply to or caption a photo with the same selector to repaint it, for example
+`bot.paint retroanime snowy mountain village d=0.6`.
+
+| Resource | Version ID | Folder under ComfyUI models | Filename | Strength |
+| --- | --- | --- | --- | --- |
+| lyh_anime kor-il01 (Flux.1 D) | 990743 | checkpoints | lyhAnime_korIl01.safetensors | Base model |
+| Retro Anime Flux Style v1.0 | 806265 | loras | RetroAnimeFluxV1.safetensors | 0.45 |
+| RandomMaxx Artistify v1.0M | 1075587 | loras | RM_Artistify_v1.0M.safetensors | 0.65 |
+| Retro Anime and Comic Vibrant Colors v1.0 | 1191560 | loras | Classic_Anime_Colors.safetensors | 0.4 |
+
+All four installed files were SHA256-verified against the published versions.
+The diffusion-only checkpoint uses separate `text_encoders/clip_l.safetensors`,
+`text_encoders/t5xxl_fp16.safetensors`, and `vae/ae.safetensors`.
+Both model and CLIP LoRA strengths use the values above.
+
+Text generation fixes 672x1200, Euler / Beta, 20 steps, CFG 1, and Flux guidance
+3.5. The preset wraps your prompt with anime style descriptors and adds the
+`CAICO` trigger unless already present, using a fresh seed. It encodes the
+reference negative prompt: `photo, deformed, black and white, realism,
+disfigured, low contrast`. At CFG 1 this does not provide traditional negative
+guidance. Inline `g=` and dashboard sampling defaults do not override preset
+settings; saved dashboard configuration is unchanged.
+
+Photo edits use this same model and LoRA stack with the source latent, keeping
+source dimensions subject to VAE alignment. Denoising uses the configured value,
+or an explicit `d=` / `hard` override. This img2img adaptation can preserve
+unwanted source details at low denoising or change identity at high denoising;
+it is not an instruction-tuned editor. Pixelation remains a separate filter.
+
+This is the **style-only** recipe: it does not include the reference's 1.35x
+hi-res pass, 4x-AnimeSharp upscaler, alternate hi-res prompt, or ADetailer passes.
+Selecting the raw checkpoint filename does not activate this preset. Missing
+resources fail generation rather than substitute another model. Full-setting
+text and image-edit renders were tested locally; matching the reference image
+exactly is not guaranteed.
+
 ## Development And Checks
 
 Use Node 22. In both `bot-core` and `web`, run `npm ci`.
