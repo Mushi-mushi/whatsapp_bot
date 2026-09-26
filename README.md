@@ -68,6 +68,68 @@ Test restoration into a separate directory, without simultaneously connecting
 two bot instances with the same WhatsApp credentials. Restore a matching
 application/database version; newer database versions fail closed.
 
+## Paint Models
+
+`bot.paint <prompt>` generates a still image with the configured default
+checkpoint. Select a local model with `bot.paint sdxl <prompt>`,
+`bot.paint flux <prompt>`, `bot.paint hunyuan <prompt>` (Hunyuan DiT 1.2),
+or `bot.paint pony <prompt>` (Pony Diffusion V6 XL). `model=pony` also works.
+For other compatible checkpoints, use `bot.paint model=filename.safetensors <prompt>`;
+quote filenames containing spaces. SD1.5/SDXL checkpoints use the
+standard workflow, while the configured Flux checkpoint uses a Flux workflow.
+Arbitrary model architectures are not interchangeable with these checkpoints.
+
+Reply to a photo, or caption a photo, with the same command to modify it.
+Explicit model selections use that checkpoint for image-to-image generation.
+`d=0.7` controls denoising: higher values change the source more. Without a model
+selector, photo edits use Flux Kontext; `hard` instead uses the default checkpoint
+at stronger denoising. `pixelate p=24` remains a deterministic filter.
+
+Paint is local-only. The installed Wan video models do not provide a verified
+still-image paint workflow, so `wan` returns an unsupported-model message for
+both text and photos. No paid Wan partner API is called, and no other model is
+silently substituted. Video generation is outside `bot.paint`; `bot.film` is not
+implemented yet. MiniMax is not integrated.
+
+Local smoke checks cover RealVisXL, Hunyuan DiT 1.2, DreamShaper 8,
+Juggernaut XL Lightning, Pony Diffusion XL, and Flux, using text and source images.
+Sampling steps, resolution, and CFG still need tuning for each checkpoint;
+successful execution does not guarantee good results at arbitrary settings.
+
+### Amanesse Illustration Preset
+
+`bot.paint amanesse <prompt>` (or `bot.paint model=amanesse <prompt>`) uses the
+local resource stack from [Civitai image 143239787](https://civitai.com/images/143239787).
+It also works when replying to or captioning a photo, for example
+`bot.paint amanesse autumn colors and red roofs d=0.5`.
+
+The preset uses these exact Civitai versions and ComfyUI filenames:
+
+| Resource | Version ID | Folder under ComfyUI models | Filename | Strength |
+| --- | --- | --- | --- | --- |
+| Amanesse Works v2.0 | 2414241 | checkpoints | amanesseWorks_v20.safetensors | Base model |
+| 96YOTTEA WAI | 1082928 | loras | 96YOTTEA-WAI.safetensors | 0.5 |
+| Rapscallion Illustrious | 1169143 | loras | Rapscallion_Illustrious.safetensors | 0.1 |
+| People's Works v8 Illus v2 stable | 2034730 | loras | ppw_v8_Illuv2stable_128.safetensors | 0.4 |
+| Venus Body ILXL v2 | 2244224 | loras | venus_body_ILXL_v2.safetensors | 2.5 |
+| Niji illustrious v3.0 | 2336579 | loras | niji_and_midj_mix217.safetensors | 0.4 |
+
+All six installed files were SHA256-verified against the published versions.
+Both model and CLIP LoRA strengths use the values above. The preset fixes
+DPM++ 2M / Karras, 30 steps, CFG 7, CLIP skip 2, and the reference negative
+prompt; text generation uses 832x1216. It adds the `Rapscallionstyle` trigger
+unless already present, retaining your own prompt and generating a fresh seed.
+These settings do not modify the dashboard's saved defaults.
+
+Photo edits keep the source dimensions (subject to VAE alignment) and use the
+configured denoise unless `d=` or `hard` overrides it. This is an img2img
+adaptation, not the reference's original text-only workflow: stronger denoising
+can change identity and composition. Pixelation remains a separate filter.
+Selecting the raw checkpoint filename does not apply the five-LoRA preset.
+Missing resources cause generation to fail rather than use another model.
+Both text generation and photo editing were tested locally at full preset settings;
+identical results to the Civitai reference are not guaranteed.
+
 ## Development And Checks
 
 Use Node 22. In both `bot-core` and `web`, run `npm ci`.

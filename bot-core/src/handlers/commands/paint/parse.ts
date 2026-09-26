@@ -34,15 +34,57 @@ export function parseRestyle(prompt: string): { hard: boolean; denoise: number |
   return { hard, denoise, text: collapse(text) };
 }
 
-// Model selector: "flux"/"flux1" → Flux, else SDXL (the "sdxl" keyword is stripped).
-export function parseModel(prompt: string): { model: "flux" | "sdxl"; text: string } {
+// Model selector:
+// - `model=<checkpoint>` / `ckpt=<checkpoint>` / `checkpoint=<checkpoint>` picks
+//   an explicit txt2img/img2img checkpoint.
+// - `flux`/`flux1` selects Flux.
+// - `sdxl` forces SDXL default checkpoint.
+export function parseModel(prompt: string): {
+  model: "flux" | "sdxl" | "wan" | "amanesse";
+  text: string;
+  checkpoint: string | null;
+  selected: boolean;
+} {
   let text = prompt;
-  let model: "flux" | "sdxl" = "sdxl";
-  if (/\bflux1?\b/i.test(text)) {
+  let model: "flux" | "sdxl" | "wan" | "amanesse" = "sdxl";
+  let checkpoint: string | null = null;
+
+  const explicit = text.match(/(?:^|\s)(?:model|ckpt|checkpoint)\s*=\s*(?:"([^"]+)"|'([^']+)'|(\S+))/i);
+  const selected = explicit !== null || /^\s*(?:pony|amanesse)\b/i.test(text) || /\b(?:flux1?|wan(?:2(?:\.5)?)?|hunyuan|sdxl)\b/i.test(text);
+  if (explicit) {
+    const chosen = (explicit[1] ?? explicit[2] ?? explicit[3]).trim();
+    const chosenLower = chosen.toLowerCase();
+    text = text.replace(explicit[0], "");
+    if (/^flux1?$/.test(chosenLower)) {
+      model = "flux";
+    } else if (/^wan(?:2(?:\.5)?)?$/.test(chosenLower) || chosenLower === "wan2.5-t2i-preview") {
+      model = "wan";
+    } else if (chosenLower === "hunyuan") {
+      checkpoint = "hunyuan_dit_1.2.safetensors";
+    } else if (chosenLower === "pony") {
+      checkpoint = "ponyDiffusionV6XL_v6StartWithThisOne.safetensors";
+    } else if (chosenLower === "amanesse") {
+      model = "amanesse";
+    } else if (chosenLower !== "sdxl") {
+      checkpoint = chosen;
+    }
+  } else if (/^\s*amanesse\b/i.test(text)) {
+    model = "amanesse";
+    text = text.replace(/^\s*amanesse\b/i, "");
+  } else if (/^\s*pony\b/i.test(text)) {
+    checkpoint = "ponyDiffusionV6XL_v6StartWithThisOne.safetensors";
+    text = text.replace(/^\s*pony\b/i, "");
+  } else if (/\bflux1?\b/i.test(text)) {
     model = "flux";
     text = text.replace(/\bflux1?\b/i, "");
+  } else if (/\bwan(?:2(?:\.5)?)?\b/i.test(text)) {
+    model = "wan";
+    text = text.replace(/\bwan(?:2(?:\.5)?)?\b/i, "");
+  } else if (/\bhunyuan\b/i.test(text)) {
+    checkpoint = "hunyuan_dit_1.2.safetensors";
+    text = text.replace(/\bhunyuan\b/i, "");
   } else if (/\bsdxl\b/i.test(text)) {
     text = text.replace(/\bsdxl\b/i, "");
   }
-  return { model, text: collapse(text) };
+  return { model, text: collapse(text), checkpoint, selected };
 }

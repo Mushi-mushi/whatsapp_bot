@@ -2,6 +2,7 @@ import type { Handler } from "../../router/router.js";
 import { extractCommandToken } from "../../router/normalize.js";
 import { parseGuidance, parseModel, parsePixelate, parseRestyle } from "./paint/parse.js";
 import {
+  buildAmanesseWorkflow,
   buildFluxWorkflow,
   buildImg2ImgWorkflow,
   buildKontextWorkflow,
@@ -36,19 +37,41 @@ async function repaint(
   seed: number,
   source: Buffer,
 ): Promise<void> {
-  const name = await uploadImage(base, source, `bot-src-${seed}.png`);
-  // "pixelate"/"8-bit" is a filter, not a style — apply it deterministically.
-  const pix = parsePixelate(prompt);
-  if (pix.pixelate) {
-    await runAndSend(ctx, base, buildPixelateWorkflow(name, pix.factor), prompt);
+  const parsed = parseModel(prompt);
+  if (parsed.model === "wan") {
+    await ctx.reply("Wan is not available for local still-image editing in this bot. Your installed Wan models are video models. Choose sdxl, hunyuan, flux, or a compatible checkpoint.");
     return;
   }
-  const restyle = parseRestyle(prompt);
-  // "hard"/"strong" → SDXL img2img (real repaint); otherwise Flux Kontext edit.
-  if (restyle.hard) {
-    const denoise = restyle.denoise ?? 0.7;
+  const usesFlux = parsed.model === "flux" || parsed.checkpoint === ctx.config.paintFluxCheckpoint;
+  if (!parsed.text) {
+    await ctx.reply("Add an image description or edit instruction after the model selector.");
+    return;
+  }
+  const promptBody = parsed.text;
+  const name = await uploadImage(base, source, `bot-src-${seed}.png`);
+  // "pixelate"/"8-bit" is a filter, not a style — apply it deterministically.
+  const pix = parsePixelate(promptBody);
+  if (pix.pixelate) {
+    await runAndSend(ctx, base, buildPixelateWorkflow(name, pix.factor), promptBody);
+    return;
+  }
+  const restyle = parseRestyle(promptBody);
+  if (parsed.selected || restyle.hard) {
+    const denoise = restyle.denoise ?? (restyle.hard ? 0.7 : ctx.config.paintDenoise);
     const stylePrompt = buildRepaintPrompt(restyle.text);
-    await runAndSend(ctx, base, buildImg2ImgWorkflow(ctx.config, stylePrompt, seed, name, denoise), restyle.text);
+    const { guidance, text } = parseGuidance(stylePrompt, ctx.config.paintGuidance);
+    if (parsed.model === "amanesse") {
+      await runAndSend(ctx, base, buildAmanesseWorkflow(ctx.config, text, seed, { imageName: name, denoise }), restyle.text);
+      return;
+    }
+    await runAndSend(
+      ctx,
+      base,
+      usesFlux
+        ? buildFluxWorkflow(ctx.config, text, seed, guidance, { imageName: name, denoise })
+        : buildImg2ImgWorkflow(ctx.config, text, seed, name, denoise, parsed.checkpoint ?? undefined),
+      restyle.text,
+    );
     return;
   }
   const { guidance, text } = parseGuidance(restyle.text, ctx.config.paintGuidance);
@@ -67,7 +90,7 @@ export const paint: Handler = async (ctx) => {
   const prompt = ctx.args.trim();
   if (!prompt) {
     await ctx.reply(
-      "Usage:\n• `bot.paint a cozy cyberpunk alley at night` — create an image (SDXL)\n• add `flux` for far better complex-scene prompts, e.g. `bot.paint flux thor smashing the sagrada familia in a storm`\n• reply to a photo with `bot.paint <style/prompt>` — modify that photo\n• or send a photo captioned `bot.paint <prompt>`\n• add `g=4` to a photo edit for a stronger restyle (1=subtle, 4=bold)\n• add `hard` for a full painterly repaint (real Picasso/Monet look, less likeness); tune with `d=0.8`\n• reply to a photo with `bot.paint pixelate` for a real 8-bit blocky look (tune with `p=24`)",
+      "Usage:\n• `bot.paint <prompt>` — create an image with the default checkpoint\n• `bot.paint sdxl|flux|hunyuan|pony <prompt>` — select a local model\n• `bot.paint amanesse <prompt>` — Amanesse + five-LoRA illustration preset\n• `bot.paint model=yourModel.safetensors <prompt>` — choose a compatible checkpoint (quote filenames containing spaces)\n• reply to a photo or caption one with `bot.paint <edit>` — Flux Kontext edit\n• include a model selector to repaint with that model; tune strength with `d=0.7`\n• `hard` uses stronger denoising (default 0.7)\n• `g=4` tunes Flux guidance\n• `pixelate p=24` applies a deterministic photo filter\n• Wan video models are not supported for local paint; cloud APIs are disabled.",
     );
     return;
   }
@@ -80,7 +103,8 @@ export const paint: Handler = async (ctx) => {
   try {
     quoted = await ctx.getQuotedImage();
   } catch {
-    quoted = null;
+    await ctx.reply("Couldn't download the quoted photo. Please resend it or try again; no new image was generated.");
+    return;
   }
   if (quoted) {
     try {
@@ -93,12 +117,20 @@ export const paint: Handler = async (ctx) => {
   }
 
   try {
-    const { model, text } = parseModel(prompt);
-    if (model === "flux") {
+    const { model, text, checkpoint } = parseModel(prompt);
+    if (!text) {
+      await ctx.reply("Add an image description after the model selector.");
+      return;
+    }
+    if (model === "amanesse") {
+      await runAndSend(ctx, base, buildAmanesseWorkflow(cfg, text, seed), text);
+    } else if (model === "flux" || checkpoint === cfg.paintFluxCheckpoint) {
       const { guidance, text: fluxText } = parseGuidance(text, cfg.paintGuidance);
       await runAndSend(ctx, base, buildFluxWorkflow(cfg, fluxText, seed, guidance), fluxText);
+    } else if (model === "wan") {
+      await ctx.reply("Wan is not available for local still-image generation in this bot. The Wan text-to-image node uses a paid cloud API, which is disabled. Choose sdxl, hunyuan, flux, or a compatible checkpoint.");
     } else {
-      await runAndSend(ctx, base, buildWorkflow(cfg, text, seed), text);
+      await runAndSend(ctx, base, buildWorkflow(cfg, text, seed, checkpoint ?? undefined), text);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

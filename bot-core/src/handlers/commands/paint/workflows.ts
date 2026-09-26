@@ -4,8 +4,72 @@ import type { BotConfig } from "../../../config/schema.js";
 // [nodeId, outputIndex] wires one node's output into another.
 export type Workflow = Record<string, unknown>;
 
+export const AMANESSE_PRESET = {
+  checkpoint: "amanesseWorks_v20.safetensors",
+  negativePrompt: "lowres, worst quality, bad quality, bad anatomy, bad eyes, bad hands, missing fingers, bad feet, missing toes, 4 toes, artifact, signature, watermark, simple background, nsfw, nude",
+  loras: [
+    { name: "96YOTTEA-WAI.safetensors", strength: 0.5 },
+    { name: "Rapscallion_Illustrious.safetensors", strength: 0.1 },
+    { name: "ppw_v8_Illuv2stable_128.safetensors", strength: 0.4 },
+    { name: "venus_body_ILXL_v2.safetensors", strength: 2.5 },
+    { name: "niji_and_midj_mix217.safetensors", strength: 0.4 },
+  ],
+} as const;
+
+export function buildAmanesseWorkflow(
+  cfg: BotConfig,
+  prompt: string,
+  seed: number,
+  source?: { imageName: string; denoise: number },
+): Workflow {
+  const settings = {
+    ...cfg,
+    paintCheckpoint: AMANESSE_PRESET.checkpoint,
+    paintWidth: 832,
+    paintHeight: 1216,
+    paintSteps: 30,
+    paintCfgScale: 7,
+    paintSampler: "dpmpp_2m",
+    paintScheduler: "karras",
+    paintNegativePrompt: AMANESSE_PRESET.negativePrompt,
+  };
+  const text = /\bRapscallionstyle\b/i.test(prompt) ? prompt : `Rapscallionstyle, ${prompt}`;
+  const workflow = source
+    ? buildImg2ImgWorkflow(settings, text, seed, source.imageName, source.denoise)
+    : buildWorkflow(settings, text, seed);
+  let model: [string, number] = ["4", 0];
+  let clip: [string, number] = ["4", 1];
+  AMANESSE_PRESET.loras.forEach((lora, index) => {
+    const nodeId = String(20 + index);
+    workflow[nodeId] = {
+      class_type: "LoraLoader",
+      inputs: { model, clip, lora_name: lora.name, strength_model: lora.strength, strength_clip: lora.strength },
+    };
+    model = [nodeId, 0];
+    clip = [nodeId, 1];
+  });
+  workflow["25"] = { class_type: "CLIPSetLastLayer", inputs: { clip, stop_at_clip_layer: -2 } };
+  workflow["6"] = { class_type: "CLIPTextEncode", inputs: { text, clip: ["25", 0] } };
+  workflow["7"] = { class_type: "CLIPTextEncode", inputs: { text: settings.paintNegativePrompt, clip: ["25", 0] } };
+  workflow["3"] = {
+    class_type: "KSampler",
+    inputs: {
+      seed, steps: 30, cfg: 7, sampler_name: "dpmpp_2m", scheduler: "karras",
+      denoise: source?.denoise ?? 1, model, positive: ["6", 0], negative: ["7", 0],
+      latent_image: [source ? "11" : "5", 0],
+    },
+  };
+  return workflow;
+}
+
 // SDXL txt2img.
-export function buildWorkflow(cfg: BotConfig, prompt: string, seed: number): Workflow {
+export function buildWorkflow(
+  cfg: BotConfig,
+  prompt: string,
+  seed: number,
+  checkpointOverride?: string,
+): Workflow {
+  const checkpoint = checkpointOverride?.trim() || cfg.paintCheckpoint;
   return {
     "3": {
       class_type: "KSampler",
@@ -22,7 +86,7 @@ export function buildWorkflow(cfg: BotConfig, prompt: string, seed: number): Wor
         latent_image: ["5", 0],
       },
     },
-    "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: cfg.paintCheckpoint } },
+    "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: checkpoint } },
     "5": {
       class_type: "EmptyLatentImage",
       inputs: { width: cfg.paintWidth, height: cfg.paintHeight, batch_size: 1 },
@@ -42,10 +106,14 @@ export function buildFluxWorkflow(
   prompt: string,
   seed: number,
   guidance: number,
+  source?: { imageName: string; denoise: number },
 ): Workflow {
   return {
     "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: cfg.paintFluxCheckpoint } },
-    "5": {
+    "5": source ? {
+      class_type: "VAEEncode",
+      inputs: { pixels: ["11", 0], vae: ["4", 2] },
+    } : {
       class_type: "EmptySD3LatentImage",
       inputs: { width: cfg.paintWidth, height: cfg.paintHeight, batch_size: 1 },
     },
@@ -60,7 +128,7 @@ export function buildFluxWorkflow(
         cfg: 1,
         sampler_name: "euler",
         scheduler: "simple",
-        denoise: 1,
+        denoise: source?.denoise ?? 1,
         model: ["4", 0],
         positive: ["10", 0],
         negative: ["7", 0],
@@ -69,6 +137,7 @@ export function buildFluxWorkflow(
     },
     "8": { class_type: "VAEDecode", inputs: { samples: ["3", 0], vae: ["4", 2] } },
     "9": { class_type: "SaveImage", inputs: { filename_prefix: "bot", images: ["8", 0] } },
+    ...(source ? { "11": { class_type: "LoadImage", inputs: { image: source.imageName } } } : {}),
   };
 }
 
@@ -82,7 +151,9 @@ export function buildImg2ImgWorkflow(
   seed: number,
   imageName: string,
   denoise: number,
+  checkpointOverride?: string,
 ): Workflow {
+  const checkpoint = checkpointOverride?.trim() || cfg.paintCheckpoint;
   return {
     "3": {
       class_type: "KSampler",
@@ -99,7 +170,7 @@ export function buildImg2ImgWorkflow(
         latent_image: ["11", 0],
       },
     },
-    "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: cfg.paintCheckpoint } },
+    "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: checkpoint } },
     "6": { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["4", 1] } },
     "7": { class_type: "CLIPTextEncode", inputs: { text: cfg.paintNegativePrompt, clip: ["4", 1] } },
     "8": { class_type: "VAEDecode", inputs: { samples: ["3", 0], vae: ["4", 2] } },

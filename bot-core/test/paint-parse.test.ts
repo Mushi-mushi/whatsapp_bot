@@ -64,16 +64,75 @@ describe("parseRestyle", () => {
 });
 
 describe("parseModel", () => {
+  it.each(["amanesse", "AMANESSE", "model=amanesse", "ckpt=amanesse"])("resolves %s as a preset", (selector) => {
+    expect(parseModel(`${selector} a village`)).toEqual({
+      model: "amanesse", text: "a village", selected: true, checkpoint: null,
+    });
+  });
+
+  it.each(["pony", "PONY", "model=pony", "ckpt=pony"])("resolves %s to the installed Pony checkpoint", (selector) => {
+    expect(parseModel(`${selector} a castle`)).toEqual({
+      model: "sdxl", text: "a castle", selected: true,
+      checkpoint: "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
+    });
+  });
+
+  it("leaves pony subjects in ordinary prompts untouched", () => {
+    expect(parseModel("a pony in a field")).toEqual({
+      model: "sdxl", text: "a pony in a field", checkpoint: null, selected: false,
+    });
+  });
+
   it("defaults to sdxl", () => {
-    expect(parseModel("a castle")).toEqual({ model: "sdxl", text: "a castle" });
+    expect(parseModel("a castle")).toEqual({ model: "sdxl", text: "a castle", checkpoint: null, selected: false });
   });
 
   it("selects flux and strips the keyword", () => {
-    expect(parseModel("flux a castle")).toEqual({ model: "flux", text: "a castle" });
+    expect(parseModel("flux a castle")).toEqual({ model: "flux", text: "a castle", checkpoint: null, selected: true });
     expect(parseModel("flux1 a castle").model).toBe("flux");
   });
 
   it("strips an explicit sdxl keyword", () => {
-    expect(parseModel("sdxl a castle")).toEqual({ model: "sdxl", text: "a castle" });
+    expect(parseModel("sdxl a castle")).toEqual({ model: "sdxl", text: "a castle", checkpoint: null, selected: true });
+  });
+
+  it("accepts explicit checkpoint overrides", () => {
+    expect(parseModel("model=JuggernautXL_v9.safetensors a castle")).toEqual({
+      model: "sdxl",
+      text: "a castle",
+      checkpoint: "JuggernautXL_v9.safetensors",
+      selected: true,
+    });
+    expect(parseModel("ckpt=myModel.safetensors dreamy photo").checkpoint).toBe("myModel.safetensors");
+  });
+
+  it("supports model=flux as an explicit selector", () => {
+    expect(parseModel("model=flux a castle")).toEqual({
+      model: "flux",
+      text: "a castle",
+      checkpoint: null,
+      selected: true,
+    });
+  });
+
+  it("supports hunyuan selector", () => {
+    expect(parseModel("hunyuan a castle")).toEqual({
+      model: "sdxl",
+      text: "a castle",
+      checkpoint: "hunyuan_dit_1.2.safetensors",
+      selected: true,
+    });
+    expect(parseModel("model=hunyuan a castle").checkpoint).toBe("hunyuan_dit_1.2.safetensors");
+  });
+
+  it("supports wan selector", () => {
+    expect(parseModel("wan a castle")).toEqual({ model: "wan", text: "a castle", checkpoint: null, selected: true });
+    expect(parseModel("model=wan2.5 a castle").model).toBe("wan");
+  });
+
+  it("preserves quoted checkpoint filenames with spaces", () => {
+    expect(parseModel('model="folder/My Model.safetensors" a castle')).toMatchObject({
+      checkpoint: "folder/My Model.safetensors", text: "a castle", selected: true,
+    });
   });
 });
