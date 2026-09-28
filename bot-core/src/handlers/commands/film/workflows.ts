@@ -40,8 +40,8 @@ export function buildWanFilmWorkflow(
   source?: { imageName: string; size?: SourceDimensions },
 ): Workflow {
   const sized = source?.size
-    ? fitToAspect(source.size, 640, 640 * 1024)
-    : { width: 640, height: 640 };
+    ? fitToAspect(source.size, 480, 832 * 480, 16)
+    : { width: 832, height: 480 };
   return {
     "1": {
       class_type: "CLIPLoader",
@@ -79,15 +79,15 @@ export function buildWanFilmWorkflow(
         model: ["8", 0],
         add_noise: "enable",
         noise_seed: seed,
-        steps: 12,
+        steps: 20,
         cfg: 1,
         sampler_name: "euler",
-        scheduler: "simple",
+        scheduler: "beta",
         positive: ["5", 0],
         negative: ["5", 1],
         latent_image: ["5", 2],
         start_at_step: 0,
-        end_at_step: 6,
+        end_at_step: 10,
         return_with_leftover_noise: "enable",
       },
     },
@@ -97,15 +97,15 @@ export function buildWanFilmWorkflow(
         model: ["9", 0],
         add_noise: "disable",
         noise_seed: seed,
-        steps: 12,
+        steps: 20,
         cfg: 1,
         sampler_name: "euler",
-        scheduler: "simple",
+        scheduler: "beta",
         positive: ["5", 0],
         negative: ["5", 1],
         latent_image: ["10", 0],
-        start_at_step: 6,
-        end_at_step: 12,
+        start_at_step: 10,
+        end_at_step: 20,
         return_with_leftover_noise: "disable",
       },
     },
@@ -113,6 +113,48 @@ export function buildWanFilmWorkflow(
     "13": { class_type: "CreateVideo", inputs: { images: ["12", 0], fps: 24 } },
     "14": { class_type: "SaveVideo", inputs: { video: ["13", 0], filename_prefix: "bot-film", format: "mp4", codec: "h264" } },
     ...(source ? { "15": { class_type: "LoadImage", inputs: { image: source.imageName } } } : {}),
+  };
+}
+
+export function buildWanTextFilmWorkflow(
+  prompt: string,
+  seed: number,
+): Workflow {
+  return {
+    "1": {
+      class_type: "UNETLoader",
+      inputs: { unet_name: "wan2.1_t2v_1.3b_fp16.safetensors", weight_dtype: "default" },
+    },
+    "2": {
+      class_type: "CLIPLoader",
+      inputs: { clip_name: "umt5_xxl_fp8_e4m3fn_scaled.safetensors", type: "wan", device: "default" },
+    },
+    "3": { class_type: "VAELoader", inputs: { vae_name: "wan_2.1_vae.safetensors" } },
+    "4": { class_type: "CLIPTextEncode", inputs: { text: addMotionBias(prompt), clip: ["2", 0] } },
+    "5": { class_type: "CLIPTextEncode", inputs: { text: FILM_NEGATIVE, clip: ["2", 0] } },
+    "6": {
+      class_type: "EmptyHunyuanLatentVideo",
+      inputs: { width: 832, height: 480, length: 65, batch_size: 1 },
+    },
+    "7": { class_type: "ModelSamplingSD3", inputs: { model: ["1", 0], shift: 8 } },
+    "8": {
+      class_type: "KSampler",
+      inputs: {
+        seed,
+        steps: 30,
+        cfg: 6,
+        sampler_name: "uni_pc",
+        scheduler: "simple",
+        denoise: 1,
+        model: ["7", 0],
+        positive: ["4", 0],
+        negative: ["5", 0],
+        latent_image: ["6", 0],
+      },
+    },
+    "9": { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+    "10": { class_type: "CreateVideo", inputs: { images: ["9", 0], fps: 16 } },
+    "11": { class_type: "SaveVideo", inputs: { video: ["10", 0], filename_prefix: "bot-film", format: "mp4", codec: "h264" } },
   };
 }
 

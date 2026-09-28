@@ -1,7 +1,7 @@
 import type { Handler } from "../../router/router.js";
 import { fetchVideo, queuePrompt, uploadImage, waitForVideo } from "./paint/comfy.js";
 import { parseFilmModel } from "./film/parse.js";
-import { buildMiniMaxFilmWorkflow, buildWanFilmWorkflow } from "./film/workflows.js";
+import { buildMiniMaxFilmWorkflow, buildWanFilmWorkflow, buildWanTextFilmWorkflow } from "./film/workflows.js";
 
 interface SourceDimensions {
   width: number;
@@ -62,7 +62,8 @@ async function runAndSendVideo(
   await ctx.sendVideo(video, `🎬 ${prompt.slice(0, 180)}`);
 }
 
-// bot.film <prompt> — generate a short local video with Wan (default) or MiniMax.
+// bot.film <prompt> — generate a short local video.
+// Text-only prompts default to Wan text-to-video for speed.
 export const film: Handler = async (ctx) => {
   const cfg = ctx.config;
   if (!cfg.paintEnabled) {
@@ -73,7 +74,7 @@ export const film: Handler = async (ctx) => {
   const prompt = ctx.args.trim();
   if (!prompt) {
     await ctx.reply(
-      "Usage:\n• `bot.film <prompt>` — generate a short Wan video\n• `bot.film minimax <prompt>` — generate a short MiniMax H3 video\n• `bot.film model=minimax <prompt>` — explicit selector form\n• reply to a photo with `bot.film <prompt>` — image-to-video anchor\nAll film workflows run locally on your configured ComfyUI backend.",
+      "Usage:\n• `bot.film <prompt>` — generate a short Wan text-to-video clip (default)\n• `bot.film minimax <prompt>` — explicit MiniMax H3\n• `bot.film wan <prompt>` — explicit Wan text-to-video\n• reply to a photo with `bot.film wan <prompt>` — Wan image-to-video anchor\n• `bot.film model=minimax <prompt>` — explicit selector form\nAll film workflows run locally on your configured ComfyUI backend.",
     );
     return;
   }
@@ -102,9 +103,13 @@ export const film: Handler = async (ctx) => {
       sourceSize = parseImageSize(quoted) ?? undefined;
     }
 
+    // Default text-only prompts use Wan text-to-video for speed; quoted-image
+    // Wan keeps the i2v path, and MiniMax remains opt-in.
     const workflow = parsed.model === "minimax"
       ? buildMiniMaxFilmWorkflow(parsed.text, seed, sourceName ? { imageName: sourceName, size: sourceSize } : undefined)
-      : buildWanFilmWorkflow(parsed.text, seed, sourceName ? { imageName: sourceName, size: sourceSize } : undefined);
+      : sourceName
+        ? buildWanFilmWorkflow(parsed.text, seed, { imageName: sourceName, size: sourceSize })
+        : buildWanTextFilmWorkflow(parsed.text, seed);
 
     await runAndSendVideo(ctx, base, workflow, parsed.text);
   } catch (err) {

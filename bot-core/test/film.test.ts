@@ -24,20 +24,23 @@ function context(prompt: string, photo: boolean) {
 describe("film command", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("uses Wan by default and sends a video", async () => {
+  it("uses Wan text-to-video by default for text-only prompts", async () => {
     const ctx = context("a paper airplane flying over a city skyline", false);
     await film(ctx as unknown as Context);
     expect(ctx.reply).not.toHaveBeenCalled();
     expect(ctx.sendVideo).toHaveBeenCalledOnce();
     const workflow = vi.mocked(comfy.queuePrompt).mock.calls[0][1];
     expect(workflow["1"]).toEqual({
-      class_type: "CLIPLoader",
-      inputs: { clip_name: "umt5_xxl_fp8_e4m3fn_scaled.safetensors", type: "wan", device: "default" },
+      class_type: "UNETLoader",
+      inputs: { unet_name: "wan2.1_t2v_1.3b_fp16.safetensors", weight_dtype: "default" },
     });
-    expect(workflow["5"]).toMatchObject({ inputs: { width: 640, height: 640, length: 81 } });
-    expect(workflow["14"]).toEqual({
+    expect(workflow["6"]).toMatchObject({
+      class_type: "EmptyHunyuanLatentVideo",
+      inputs: { width: 832, height: 480, length: 65, batch_size: 1 },
+    });
+    expect(workflow["11"]).toEqual({
       class_type: "SaveVideo",
-      inputs: { video: ["13", 0], filename_prefix: "bot-film", format: "mp4", codec: "h264" },
+      inputs: { video: ["10", 0], filename_prefix: "bot-film", format: "mp4", codec: "h264" },
     });
   });
 
@@ -63,6 +66,22 @@ describe("film command", () => {
     const workflow = vi.mocked(comfy.queuePrompt).mock.calls[0][1];
     expect(workflow["15"]).toEqual({ class_type: "LoadImage", inputs: { image: "source.png" } });
     expect(workflow["5"]).toMatchObject({ inputs: { start_image: ["15", 0] } });
+  });
+
+  it("uses Wan text-to-video for explicit Wan text-only prompts", async () => {
+    const ctx = context("wan a fox running in the snow", false);
+    await film(ctx as unknown as Context);
+    expect(ctx.reply).not.toHaveBeenCalled();
+    expect(comfy.queuePrompt).toHaveBeenCalledOnce();
+    const workflow = vi.mocked(comfy.queuePrompt).mock.calls[0][1];
+    expect(workflow["1"]).toEqual({
+      class_type: "UNETLoader",
+      inputs: { unet_name: "wan2.1_t2v_1.3b_fp16.safetensors", weight_dtype: "default" },
+    });
+    expect(workflow["6"]).toMatchObject({
+      class_type: "EmptyHunyuanLatentVideo",
+      inputs: { width: 832, height: 480, length: 65, batch_size: 1 },
+    });
   });
 
   it("rejects selector-only prompts", async () => {
