@@ -105,6 +105,15 @@ function migrate(db: Database.Database): void {
       correct   INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (chat_id, name_norm)
     );
+
+    CREATE TABLE IF NOT EXISTS trivia_trophies (
+      chat_id   TEXT NOT NULL,
+      period    TEXT NOT NULL,
+      name_norm TEXT NOT NULL,
+      name      TEXT NOT NULL,
+      score     INTEGER NOT NULL,
+      PRIMARY KEY (chat_id, period, name_norm)
+    );
   `);
   if (version < 1) {
     db.transaction(() => {

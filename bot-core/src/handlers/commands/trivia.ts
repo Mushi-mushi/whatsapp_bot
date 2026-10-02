@@ -269,11 +269,28 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
 
     if (sub === "scores" || sub === "score" || sub === "leaderboard") {
       const top = scores.top(chatId);
+      const trophies = new Map(scores.trophies(chatId, 100).map((t) => [t.name.toLowerCase(), t.trophies]));
       await ctx.reply(
         top.length
-          ? "🏆 Trivia leaderboard:\n" +
-              top.map((r, i) => `${i + 1}. ${r.name}: ${r.correct}`).join("\n")
-          : "No trivia scores here yet. Play with `bot.trivia`!",
+          ? "🏆 Trivia leaderboard (this month):\n" +
+              top
+                .map((r, i) => {
+                  const n = trophies.get(r.name.toLowerCase()) ?? 0;
+                  return `${i + 1}. ${r.name}: ${r.correct}${n ? ` ${"🏆".repeat(Math.min(n, 5))}${n > 5 ? `x${n}` : ""}` : ""}`;
+                })
+                .join("\n")
+          : "No trivia scores here yet this month. Play with `bot.trivia`!",
+      );
+      return;
+    }
+
+    if (sub === "trophies" || sub === "winners" || sub === "hall") {
+      const history = scores.history(chatId);
+      await ctx.reply(
+        history.length
+          ? "🏆 Monthly trivia winners:\n" +
+              history.map((h) => `${h.period}: ${h.name} (${h.score})`).join("\n")
+          : "No monthly winners yet — the first trophy is awarded when the month ends.",
       );
       return;
     }

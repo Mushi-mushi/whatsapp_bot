@@ -90,6 +90,19 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     return { ok: true };
   });
 
+  // Award trophies for a month (default: last month) from the current scores, then reset them.
+  app.post<{ Body?: { period?: string } }>("/api/trivia/close-month", async (req, reply) => {
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const period = req.body?.period ?? `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+      reply.code(400);
+      return { ok: false, error: "period must be YYYY-MM" };
+    }
+    deps.triviaScores.closeMonth(period, now.getTime());
+    return { ok: true, period };
+  });
+
   // Re-pull the WhatsApp address book + chats on the live session (no re-link).
   app.post("/api/resync", async (_req, reply) => {
     try {

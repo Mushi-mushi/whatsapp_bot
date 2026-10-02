@@ -334,11 +334,57 @@ export interface TriviaScore {
   correct: number;
 }
 
+export interface TriviaTrophy {
+  name: string;
+  trophies: number;
+}
+
+const TRIVIA_PERIOD_KEY = "trivia_period";
+
+function monthKey(now: number): string {
+  const d = new Date(now);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export class TriviaScoreStore {
   constructor(private readonly db: Database.Database) {}
 
+  // Lazily closes out the previous month: awards a trophy to each chat's top
+  // scorer (ties share it; needs a positive score), then resets the scores.
+  private rollover(now: number): void {
+    const current = monthKey(now);
+    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(TRIVIA_PERIOD_KEY) as
+      | { value: string }
+      | undefined;
+    if (row?.value === current) return;
+    this.closeMonth(row?.value, now);
+  }
+
+  // Awards trophies for `period` (if given) from the current scores, resets them,
+  // and marks the month containing `now` as the active one.
+  closeMonth(period: string | undefined, now = Date.now()): void {
+    this.db.transaction(() => {
+      if (period) {
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO trivia_trophies (chat_id, period, name_norm, name, score)
+             SELECT s.chat_id, ?, s.name_norm, s.name, s.correct FROM trivia_scores s
+             WHERE s.correct > 0 AND s.correct = (
+               SELECT MAX(correct) FROM trivia_scores WHERE chat_id = s.chat_id
+             )`,
+          )
+          .run(period);
+        this.db.prepare("DELETE FROM trivia_scores").run();
+      }
+      this.db
+        .prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run(TRIVIA_PERIOD_KEY, monthKey(now));
+    })();
+  }
+
   // Adjust a player's score by delta (negative for a wrong answer). Returns the new total.
-  add(chatId: string, nameNorm: string, name: string, delta: number): number {
+  add(chatId: string, nameNorm: string, name: string, delta: number, now = Date.now()): number {
+    this.rollover(now);
     this.db
       .prepare(
         `INSERT INTO trivia_scores (chat_id, name_norm, name, correct) VALUES (?, ?, ?, ?)
@@ -351,10 +397,31 @@ export class TriviaScoreStore {
     return row.correct;
   }
 
-  top(chatId: string, limit = 5): TriviaScore[] {
+  top(chatId: string, limit = 5, now = Date.now()): TriviaScore[] {
+    this.rollover(now);
     return this.db
       .prepare("SELECT name, correct FROM trivia_scores WHERE chat_id = ? ORDER BY correct DESC LIMIT ?")
       .all(chatId, limit) as TriviaScore[];
+  }
+
+  // Trophy count per player in a chat, most trophies first.
+  trophies(chatId: string, limit = 5): TriviaTrophy[] {
+    return this.db
+      .prepare(
+        `SELECT MAX(name) AS name, COUNT(*) AS trophies FROM trivia_trophies
+         WHERE chat_id = ? GROUP BY name_norm ORDER BY trophies DESC, name LIMIT ?`,
+      )
+      .all(chatId, limit) as TriviaTrophy[];
+  }
+
+  // Past monthly winners in a chat, newest first.
+  history(chatId: string, months = 6): { period: string; name: string; score: number }[] {
+    return this.db
+      .prepare(
+        `SELECT period, name, score FROM trivia_trophies WHERE chat_id = ?
+         ORDER BY period DESC, score DESC LIMIT ?`,
+      )
+      .all(chatId, months) as { period: string; name: string; score: number }[];
   }
 
   clearAll(): void {
