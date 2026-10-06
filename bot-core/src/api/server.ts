@@ -114,6 +114,18 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     }
   });
 
+  // Wipe the current WhatsApp session and reconnect so a fresh QR / pairing code
+  // is issued. Recovery path when the link goes stale (device logged out).
+  app.post("/api/relink", async (_req, reply) => {
+    try {
+      await deps.transport.relink();
+      return { ok: true };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: String(err) };
+    }
+  });
+
   // List models available on the configured local Ollama instance.
   app.get("/api/ollama/models", async (_req, reply) => {
     const base = deps.configStore.load().ollamaBaseUrl.replace(/\/+$/, "");

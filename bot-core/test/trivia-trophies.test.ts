@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openDatabase } from "../src/state/db.js";
 import { TriviaScoreStore } from "../src/state/repos.js";
 
@@ -26,6 +29,28 @@ describe("TriviaScoreStore monthly rollover", () => {
 
     expect(store.trophies("c").map((t) => t.name).sort()).toEqual(["Ann", "Bob"]);
     expect(store.trophies("d")).toEqual([]);
+  });
+
+  it("keeps lifetime totals across resets", () => {
+    const store = new TriviaScoreStore(openDatabase(":memory:"));
+    store.add("c", "ann", "Ann", 3, jan);
+    store.add("c", "ann", "Ann", -1, jan);
+    store.add("c", "ann", "Ann", 1, feb);
+
+    expect(store.top("c", 5, feb)).toEqual([{ name: "Ann", correct: 1 }]);
+    expect(store.allTime("c")).toEqual([{ name: "Ann", total: 3 }]);
+  });
+
+  it("seeds lifetime totals from existing scores and trophies", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "trivia-")), "bot.db");
+    const db = openDatabase(path);
+    db.prepare("INSERT INTO trivia_scores VALUES ('c','ann','Ann',2)").run();
+    db.prepare("INSERT INTO trivia_trophies VALUES ('c','2026-09','ann','Ann',5)").run();
+    db.exec("DELETE FROM trivia_totals");
+    db.close();
+
+    const store = new TriviaScoreStore(openDatabase(path));
+    expect(store.allTime("c")).toEqual([{ name: "Ann", total: 7 }]);
   });
 
   it("accumulates trophies across months", () => {

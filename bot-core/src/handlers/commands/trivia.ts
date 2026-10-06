@@ -270,16 +270,28 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
     if (sub === "scores" || sub === "score" || sub === "leaderboard") {
       const top = scores.top(chatId);
       const trophies = new Map(scores.trophies(chatId, 100).map((t) => [t.name.toLowerCase(), t.trophies]));
+      const totals = new Map(scores.allTime(chatId, 100).map((t) => [t.name.toLowerCase(), t.total]));
       await ctx.reply(
         top.length
           ? "🏆 Trivia leaderboard (this month):\n" +
               top
                 .map((r, i) => {
                   const n = trophies.get(r.name.toLowerCase()) ?? 0;
-                  return `${i + 1}. ${r.name}: ${r.correct}${n ? ` ${"🏆".repeat(Math.min(n, 5))}${n > 5 ? `x${n}` : ""}` : ""}`;
+                  const total = totals.get(r.name.toLowerCase()) ?? r.correct;
+                  return `${i + 1}. ${r.name}: ${r.correct} (all-time ${total})${n ? ` ${"🏆".repeat(Math.min(n, 5))}${n > 5 ? `x${n}` : ""}` : ""}`;
                 })
                 .join("\n")
           : "No trivia scores here yet this month. Play with `bot.trivia`!",
+      );
+      return;
+    }
+
+    if (sub === "alltime" || sub === "all-time" || sub === "overall") {
+      const top = scores.allTime(chatId);
+      await ctx.reply(
+        top.length
+          ? "🌟 All-time trivia leaderboard:\n" + top.map((r, i) => `${i + 1}. ${r.name}: ${r.total}`).join("\n")
+          : "No trivia scores here yet. Play with `bot.trivia`!",
       );
       return;
     }

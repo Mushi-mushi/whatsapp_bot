@@ -391,10 +391,23 @@ export class TriviaScoreStore {
          ON CONFLICT(chat_id, name_norm) DO UPDATE SET correct = correct + excluded.correct, name = excluded.name`,
       )
       .run(chatId, nameNorm, name, delta);
+    this.db
+      .prepare(
+        `INSERT INTO trivia_totals (chat_id, name_norm, name, total) VALUES (?, ?, ?, ?)
+         ON CONFLICT(chat_id, name_norm) DO UPDATE SET total = total + excluded.total, name = excluded.name`,
+      )
+      .run(chatId, nameNorm, name, delta);
     const row = this.db
       .prepare("SELECT correct FROM trivia_scores WHERE chat_id = ? AND name_norm = ?")
       .get(chatId, nameNorm) as { correct: number };
     return row.correct;
+  }
+
+  // Lifetime scores (never reset), best first.
+  allTime(chatId: string, limit = 5): { name: string; total: number }[] {
+    return this.db
+      .prepare("SELECT name, total FROM trivia_totals WHERE chat_id = ? ORDER BY total DESC LIMIT ?")
+      .all(chatId, limit) as { name: string; total: number }[];
   }
 
   top(chatId: string, limit = 5, now = Date.now()): TriviaScore[] {

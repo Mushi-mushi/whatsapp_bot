@@ -106,6 +106,14 @@ function migrate(db: Database.Database): void {
       PRIMARY KEY (chat_id, name_norm)
     );
 
+    CREATE TABLE IF NOT EXISTS trivia_totals (
+      chat_id   TEXT NOT NULL,
+      name_norm TEXT NOT NULL,
+      name      TEXT NOT NULL,
+      total     INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (chat_id, name_norm)
+    );
+
     CREATE TABLE IF NOT EXISTS trivia_trophies (
       chat_id   TEXT NOT NULL,
       period    TEXT NOT NULL,
@@ -114,6 +122,17 @@ function migrate(db: Database.Database): void {
       score     INTEGER NOT NULL,
       PRIMARY KEY (chat_id, period, name_norm)
     );
+  `);
+  // One-time seed for totals introduced after scores already existed.
+  db.exec(`
+    INSERT INTO trivia_totals (chat_id, name_norm, name, total)
+    SELECT chat_id, name_norm, MAX(name), SUM(score) FROM (
+      SELECT chat_id, name_norm, name, correct AS score FROM trivia_scores
+      UNION ALL
+      SELECT chat_id, name_norm, name, score FROM trivia_trophies
+    )
+    WHERE NOT EXISTS (SELECT 1 FROM trivia_totals)
+    GROUP BY chat_id, name_norm;
   `);
   if (version < 1) {
     db.transaction(() => {

@@ -16,7 +16,7 @@ async function setup(apiToken: string | undefined = "test-token") {
     triviaScores: new TriviaScoreStore(db), logger: pino({ level: "silent" }),
     onConfigChange: vi.fn(),
     transport: {
-      getStatus: () => ({ state: "open" }),
+      getStatus: () => ({ state: "open", health: "online", qrDataUrl: null, pairingCode: null, me: null, lastActivityAt: null }),
       onStatus: (listener: (status: unknown) => void) => {
         listeners.add(listener);
         return () => { listeners.delete(listener); };

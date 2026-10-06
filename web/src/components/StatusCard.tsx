@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useStatusStream } from "@/lib/useStatusStream";
-import { Loader2, QrCode, Smartphone, Wifi, WifiOff } from "lucide-react";
+import { AlertTriangle, Loader2, QrCode, Smartphone, Wifi, WifiOff } from "lucide-react";
 
-const STATE_LABEL: Record<string, { text: string; variant: "success" | "muted" | "destructive" | "default" }> = {
+const STATE_LABEL: Record<string, { text: string; variant: "success" | "muted" | "destructive" | "default" | "warning" }> = {
   open: { text: "Connected", variant: "success" },
   connecting: { text: "Connecting", variant: "default" },
   qr: { text: "Scan QR", variant: "default" },
@@ -20,10 +20,14 @@ export function StatusCard() {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [relinking, setRelinking] = useState(false);
   const [error, setError] = useState("");
 
   const state = status?.state ?? "connecting";
-  const label = STATE_LABEL[state] ?? STATE_LABEL.connecting;
+  const stale = state === "open" && status?.health === "stale";
+  const label = stale
+    ? { text: "Needs re-link", variant: "warning" as const }
+    : STATE_LABEL[state] ?? STATE_LABEL.connecting;
 
   async function requestPairing() {
     if (!phone.trim()) return;
@@ -39,11 +43,27 @@ export function StatusCard() {
     }
   }
 
+  async function relink() {
+    if (!window.confirm(
+      "Re-link the WhatsApp device? This logs out the current session and shows a new QR code / pairing code to scan.",
+    )) return;
+    setRelinking(true);
+    setError("");
+    try {
+      await api.relink();
+      setCode(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Re-link failed.");
+    } finally {
+      setRelinking(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2">
-          {state === "open" ? <Wifi className="h-4 w-4 text-emerald-400" /> : <WifiOff className="h-4 w-4" />}
+          {state === "open" && !stale ? <Wifi className="h-4 w-4 text-emerald-400" /> : <WifiOff className="h-4 w-4" />}
           Connection
         </CardTitle>
         <Badge variant={label.variant}>{label.text}</Badge>
@@ -51,8 +71,23 @@ export function StatusCard() {
       <CardContent className="space-y-4">
         {status?.me && <p className="text-sm text-muted-foreground">Linked as {status.me}</p>}
 
-        {state === "open" && (
+        {state === "open" && !stale && (
           <p className="text-sm text-emerald-400">The bot is online and listening. 🎉</p>
+        )}
+
+        {stale && (
+          <div className="space-y-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+            <p className="flex items-start gap-2 text-sm text-amber-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                The link looks stale — WhatsApp may have logged this device out.
+                Incoming messages aren't arriving. Re-link the device to fix it.
+              </span>
+            </p>
+            <Button variant="destructive" onClick={relink} disabled={relinking}>
+              {relinking ? <Loader2 className="h-4 w-4 animate-spin" /> : "Re-link device"}
+            </Button>
+          </div>
         )}
 
         {state === "qr" && status?.qrDataUrl && (
@@ -87,9 +122,10 @@ export function StatusCard() {
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Get code"}
               </Button>
             </div>
-            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           </div>
         )}
+
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       </CardContent>
     </Card>
   );

@@ -19,6 +19,10 @@ export interface IncomingMessage {
 
 export type ConnectionState = "connecting" | "qr" | "pairing" | "open" | "close";
 
+// Liveness of an "open" socket. WhatsApp can silently drop a linked device: the
+// socket stays "open" but queries hang and no messages arrive. "stale" marks that.
+export type ConnectionHealth = "online" | "stale" | "unknown";
+
 export interface ChatIdentity {
   id: string;
   name: string;
@@ -26,9 +30,11 @@ export interface ChatIdentity {
 
 export interface ConnectionStatus {
   state: ConnectionState;
+  health: ConnectionHealth;
   qrDataUrl: string | null;
   pairingCode: string | null;
   me: string | null;
+  lastActivityAt: number | null;
 }
 
 export interface Transport {
@@ -43,6 +49,7 @@ export interface Transport {
   downloadQuotedImage(raw: WAMessage): Promise<Buffer | null>;
   requestPairingCode(phoneNumber: string): Promise<string>;
   resyncContacts(): Promise<void>;
+  relink(): Promise<void>;
   getStatus(): ConnectionStatus;
   onMessage(cb: (m: IncomingMessage) => void): () => void;
   onStatus(cb: (s: ConnectionStatus) => void): () => void;

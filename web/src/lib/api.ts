@@ -35,6 +35,7 @@ export interface BotConfig {
 }
 
 export type ConnectionState = "connecting" | "qr" | "pairing" | "open" | "close";
+export type ConnectionHealth = "online" | "stale" | "unknown";
 
 export interface ChatIdentity {
   id: string;
@@ -43,9 +44,11 @@ export interface ChatIdentity {
 
 export interface Status {
   state: ConnectionState;
+  health: ConnectionHealth;
   qrDataUrl: string | null;
   pairingCode: string | null;
   me: string | null;
+  lastActivityAt: number | null;
 }
 
 const TOKEN_KEY = "apiToken";
@@ -122,4 +125,8 @@ export const api = {
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ phoneNumber }),
     }).then(json<{ ok: boolean; code?: string; error?: string }>),
+  relink: () =>
+    fetch("/api/relink", { method: "POST", headers: authHeaders() }).then(
+      json<{ ok: boolean; error?: string }>,
+    ),
 };

@@ -39,9 +39,11 @@ export class BaileysTransport implements Transport {
   private sock: WASocket | null = null;
   private status: ConnectionStatus = {
     state: "connecting",
+    health: "unknown",
     qrDataUrl: null,
     pairingCode: null,
     me: null,
+    lastActivityAt: null,
   };
   private messageCbs: ((m: IncomingMessage) => void)[] = [];
   private statusCbs: ((s: ConnectionStatus) => void)[] = [];
@@ -53,6 +55,9 @@ export class BaileysTransport implements Transport {
   private stopped = false;
   private starting = false;
   private consecutiveLogouts = 0;
+  private healthTimer?: ReturnType<typeof setInterval>;
+  private healthFailures = 0;
+  private lastActivityAt: number | null = null;
   // Recently sent/seen message content, so we can answer decryption retry receipts
   // (otherwise the peer is stuck on "Waiting for this message").
   private messageCache = new Map<string, WAMessageContent>();
@@ -93,6 +98,72 @@ export class BaileysTransport implements Transport {
     } catch (err) {
       this.opts.logger.error({ err }, "Failed to clear auth dir");
     }
+  }
+
+  // Any inbound socket traffic proves the link is alive; clears a prior stale flag.
+  private noteInbound(): void {
+    this.lastActivityAt = Date.now();
+    this.healthFailures = 0;
+    if (this.status.state === "open" && this.status.health !== "online") {
+      this.setStatus({ health: "online", lastActivityAt: this.lastActivityAt });
+    } else {
+      this.status.lastActivityAt = this.lastActivityAt;
+    }
+  }
+
+  private startHealthMonitor(): void {
+    this.stopHealthMonitor();
+    this.healthTimer = setInterval(() => void this.probeHealth(), 60_000);
+    this.healthTimer.unref?.();
+  }
+
+  private stopHealthMonitor(): void {
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthTimer = undefined;
+    }
+  }
+
+  // Active liveness check: WhatsApp can drop a linked device silently (socket
+  // stays "open" but queries hang and no messages arrive). Probe with a cheap
+  // query and flag the session "stale" after repeated failures so the dashboard
+  // can prompt a re-link.
+  private async probeHealth(): Promise<void> {
+    const sock = this.sock;
+    if (this.stopped || this.status.state !== "open" || !sock) return;
+    const me = sock.user?.id;
+    const number = me ? me.split(":")[0].split("@")[0].replace(/\D/g, "") : "";
+    if (!number) return;
+    try {
+      const res = await this.withTimeout(sock.onWhatsApp(number), 20_000);
+      if (res && res.length) {
+        this.healthFailures = 0;
+        this.setStatus({ health: "online", lastActivityAt: Date.now() });
+      } else {
+        this.registerHealthFailure();
+      }
+    } catch (err) {
+      this.opts.logger.warn({ err }, "health probe failed");
+      this.registerHealthFailure();
+    }
+  }
+
+  private registerHealthFailure(): void {
+    this.healthFailures += 1;
+    if (this.healthFailures >= 2 && this.status.health !== "stale") {
+      this.opts.logger.error("WhatsApp link appears stale — re-link the device from the dashboard.");
+      this.setStatus({ health: "stale" });
+    }
+  }
+
+  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("probe timed out")), ms);
+      promise.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (err) => { clearTimeout(timer); reject(err); },
+      );
+    });
   }
 
   // Schedule a single reconnect, coalescing overlapping close events so we never
@@ -152,22 +223,29 @@ export class BaileysTransport implements Transport {
       if (this.stopped || this.sock !== sock) return;
       const { connection, lastDisconnect, qr } = update;
       if (qr && !this.opts.pairingNumber) {
-        this.setStatus({ state: "qr", qrDataUrl: await QRCode.toDataURL(qr) });
+        this.stopHealthMonitor();
+        this.setStatus({ state: "qr", health: "unknown", qrDataUrl: await QRCode.toDataURL(qr) });
       }
       if (connection === "open") {
         this.consecutiveLogouts = 0;
+        this.healthFailures = 0;
+        this.lastActivityAt = Date.now();
         this.setStatus({
           state: "open",
+          health: "online",
           qrDataUrl: null,
           pairingCode: null,
           me: sock.user?.id ?? null,
+          lastActivityAt: this.lastActivityAt,
         });
+        this.startHealthMonitor();
         void this.prefetchGroups();
       } else if (connection === "close") {
         const statusCode = (lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)
           ?.output?.statusCode;
         const loggedOut = statusCode === DisconnectReason.loggedOut;
-        this.setStatus({ state: "close" });
+        this.stopHealthMonitor();
+        this.setStatus({ state: "close", health: "unknown" });
         if (loggedOut) {
           this.consecutiveLogouts += 1;
           // A single 401 is frequently transient (WhatsApp rejecting a rapid
@@ -193,6 +271,7 @@ export class BaileysTransport implements Transport {
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (this.stopped || this.sock !== sock) return;
+      this.noteInbound();
       // "notify" = new incoming message. "append" = a message added to a chat,
       // which is how our OWN messages typed on the phone reach the linked device.
       // Handle both so self-commands work; guard "append" by recency + dedupe so
@@ -236,6 +315,7 @@ export class BaileysTransport implements Transport {
     this.stopped = true;
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
+    this.stopHealthMonitor();
     const socket = this.sock;
     this.sock = null;
     this.messageCbs = [];
@@ -450,5 +530,36 @@ export class BaileysTransport implements Transport {
       ["critical_unblock_low", "regular_high", "regular_low", "regular"],
       false,
     );
+  }
+
+  // Operator-triggered recovery: tear down the current socket, wipe the stored
+  // credentials, and reconnect so WhatsApp issues a fresh QR / pairing code.
+  // Used when the link goes "stale" (device silently logged out).
+  async relink(): Promise<void> {
+    this.opts.logger.warn("Re-link requested — clearing session and reconnecting.");
+    const socket = this.sock;
+    this.sock = null;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    this.stopHealthMonitor();
+    try {
+      socket?.end(new Error("Re-linking"));
+    } catch {
+      // socket may already be closed
+    }
+    this.pairingRequested = false;
+    this.consecutiveLogouts = 0;
+    this.healthFailures = 0;
+    this.lastActivityAt = null;
+    await this.clearAuth();
+    this.setStatus({
+      state: "connecting",
+      health: "unknown",
+      qrDataUrl: null,
+      pairingCode: null,
+      me: null,
+      lastActivityAt: null,
+    });
+    await this.start();
   }
 }
