@@ -14,6 +14,7 @@ import { jokes } from "./jokes.js";
 import { help } from "./help.js";
 import { status } from "./status.js";
 import { weather } from "./weather.js";
+import { meteo } from "./meteo.js";
 import { fact } from "./fact.js";
 import { eightball } from "./eightball.js";
 import { quote } from "./quote.js";
@@ -54,6 +55,7 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     help,
     status,
     weather,
+    meteo,
     fact,
     eightball,
     quote,

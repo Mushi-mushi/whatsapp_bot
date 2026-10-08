@@ -77,6 +77,7 @@ export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
     "bot.status": "status",
     "bot.help": "help",
     "bot.weather": "weather",
+    "bot.meteo": "meteo",
     "bot.fact": "fact",
     "bot.8ball": "eightball",
     "bot.quote": "quote",
