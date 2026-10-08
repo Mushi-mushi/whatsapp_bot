@@ -15,9 +15,12 @@ export type OllamaResult =
 export async function ollamaChat(
   cfg: BotConfig,
   messages: OllamaMessage[],
-  opts: { numPredict?: number; timeoutMs?: number } = {},
+  opts: { numPredict?: number; numCtx?: number; timeoutMs?: number } = {},
 ): Promise<OllamaResult> {
   const numPredict = opts.numPredict ?? 512;
+  // Keep the default context small so short commands (e.g. bot.ask) stay light;
+  // callers with long inputs (e.g. bot.tldr) opt into a bigger window.
+  const numCtx = opts.numCtx ?? 4096;
   const timeoutMs = opts.timeoutMs ?? cfg.ollamaTimeoutSeconds * 1000;
   const base = cfg.ollamaBaseUrl.replace(/\/+$/, "");
   try {
@@ -31,8 +34,7 @@ export async function ollamaChat(
         // answer directly instead of burning the token budget on hidden thoughts.
         think: false,
         messages,
-        // num_ctx large enough to fit long inputs (e.g. bot.tldr) without truncation.
-        options: { num_predict: numPredict, num_ctx: 8192 },
+        options: { num_predict: numPredict, num_ctx: numCtx },
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });

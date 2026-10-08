@@ -244,7 +244,7 @@ export const tldr: Handler = async (ctx) => {
       { role: "user", content: `${title ? `Title: ${title}\n\n` : ""}${text.slice(0, 15000)}` },
     ],
     // Summarizing a long page is prefill-heavy; give it extra headroom.
-    { numPredict: 350, timeoutMs: 180_000 },
+    { numPredict: 350, numCtx: 8192, timeoutMs: 180_000 },
   );
   if (!r.ok) {
     await ctx.reply(ollamaErrorMessage(r, cfg.ollamaModel));
