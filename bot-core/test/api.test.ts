@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import { createApi, type ApiDeps } from "../src/api/server.js";
 import { openDatabase } from "../src/state/db.js";
-import { ConfigStore, KnownChatsStore, TriviaScoreStore } from "../src/state/repos.js";
+import { ConfigStore, KnownChatsStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
+import { BackgroundJobs } from "../src/router/jobs.js";
+import { ProfileService } from "../src/handlers/profiles/service.js";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -10,10 +12,15 @@ afterEach(async () => { for (const close of cleanup.splice(0)) await close(); })
 async function setup(apiToken: string | undefined = "test-token") {
   const db = openDatabase(":memory:");
   const listeners = new Set<(status: unknown) => void>();
+  const logger = pino({ level: "silent" });
+  const userMemory = new UserMemoryStore(db);
+  const userProfiles = new UserProfileStore(db);
+  const configStore = new ConfigStore(db);
+  const profiler = new ProfileService(userMemory, userProfiles, new BackgroundJobs(() => {}), () => configStore.load(), logger);
   const deps: ApiDeps = {
     apiToken,
-    configStore: new ConfigStore(db), knownChats: new KnownChatsStore(db),
-    triviaScores: new TriviaScoreStore(db), logger: pino({ level: "silent" }),
+    configStore, knownChats: new KnownChatsStore(db),
+    triviaScores: new TriviaScoreStore(db), userMemory, userProfiles, profiler, logger,
     onConfigChange: vi.fn(),
     transport: {
       getStatus: () => ({ state: "open", health: "online", qrDataUrl: null, pairingCode: null, me: null, lastActivityAt: null }),

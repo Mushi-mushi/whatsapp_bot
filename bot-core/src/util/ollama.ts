@@ -10,8 +10,9 @@ export type OllamaResult =
   | { ok: false; reason: "notfound" | "timeout" | "unreachable" | "error"; status?: number };
 
 // Single place that talks to the local Ollama /api/chat endpoint (non-streaming).
-// numPredict caps output tokens; timeoutMs overrides the config timeout for heavy
-// jobs (e.g. summarizing a long page).
+// numPredict caps output tokens; timeoutMs is treated as an INACTIVITY timeout —
+// the request is aborted only if Ollama produces no new output for that long, so a
+// slow-but-progressing answer (contended GPU, long generation) isn't killed early.
 export async function ollamaChat(
   cfg: BotConfig,
   messages: OllamaMessage[],
@@ -23,30 +24,67 @@ export async function ollamaChat(
   const numCtx = opts.numCtx ?? 4096;
   const timeoutMs = opts.timeoutMs ?? cfg.ollamaTimeoutSeconds * 1000;
   const base = cfg.ollamaBaseUrl.replace(/\/+$/, "");
+  const controller = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const resetIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  };
   try {
+    resetIdle();
     const res = await fetch(`${base}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: cfg.ollamaModel,
-        stream: false,
+        stream: true,
+        // Configurable model-retention window (default = Ollama's own 5m).
+        keep_alive: cfg.ollamaKeepAlive,
         // Disable the reasoning phase on "thinking" models (e.g. GLM) so they
         // answer directly instead of burning the token budget on hidden thoughts.
         think: false,
         messages,
         options: { num_predict: numPredict, num_ctx: numCtx },
       }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: controller.signal,
     });
     if (!res.ok) {
       return { ok: false, reason: res.status === 404 ? "notfound" : "error", status: res.status };
     }
-    const data = (await res.json()) as { message?: { content?: string } };
-    const content = data.message?.content?.trim();
-    return content ? { ok: true, content } : { ok: false, reason: "error" };
-  } catch (err) {
-    const timedOut = err instanceof Error && err.name === "TimeoutError";
+    if (!res.body) return { ok: false, reason: "error" };
+
+    // Ollama streams newline-delimited JSON; accumulate message.content chunks and
+    // reset the inactivity timer on each one so a slow stream stays alive.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let content = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resetIdle();
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line) continue;
+        const chunk = JSON.parse(line) as { message?: { content?: string }; done?: boolean };
+        content += chunk.message?.content ?? "";
+      }
+    }
+
+    const trimmed = content.trim();
+    return trimmed ? { ok: true, content: trimmed } : { ok: false, reason: "error" };
+  } catch {
+    // A timeout aborts via controller; anything else means the stream dropped.
     return { ok: false, reason: timedOut ? "timeout" : "unreachable" };
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
   }
 }
 

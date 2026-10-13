@@ -9,9 +9,10 @@ vi.mock("./lib/api", async (original) => ({
   api: { getConfig: vi.fn(), getChats: vi.fn(), saveConfig: vi.fn() },
 }));
 vi.mock("@/components/StatusCard", () => ({ StatusCard: () => null }));
+vi.mock("@/lib/useStatusStream", () => ({ useStatusStream: () => null }));
 vi.mock("@/components/ApprovedSenders", () => ({ ApprovedSenders: () => null }));
-vi.mock("@/components/SettingsCard", () => ({
-  SettingsCard: ({ config, onChange }: { config: BotConfig; onChange: (patch: Partial<BotConfig>) => void }) =>
+vi.mock("@/components/GeneralCard", () => ({
+  GeneralCard: ({ config, onChange }: { config: BotConfig; onChange: (patch: Partial<BotConfig>) => void }) =>
     <input aria-label="Prefix" value={config.botReplyPrefix} onChange={(event) => onChange({ botReplyPrefix: event.target.value })} />,
 }));
 
@@ -35,6 +36,12 @@ function mount() {
   return client;
 }
 
+// The prefix field lives on the General tab; the app opens on Connection.
+async function openPrefix() {
+  fireEvent.click(await screen.findByRole("button", { name: /General/ }));
+  return (await screen.findByLabelText("Prefix")) as HTMLInputElement;
+}
+
 describe("configuration editor", () => {
   it("shows failed loading and a retry action", async () => {
     vi.mocked(api.getConfig).mockRejectedValue(new Error("offline"));
@@ -45,7 +52,7 @@ describe("configuration editor", () => {
 
   it("preserves dirty edits when cached server configuration changes", async () => {
     const client = mount();
-    const input = await screen.findByLabelText("Prefix") as HTMLInputElement;
+    const input = await openPrefix();
     fireEvent.change(input, { target: { value: "unsaved" } });
     act(() => client.setQueryData(["config"], { config: { ...config, botReplyPrefix: "remote" }, revision: "second" }));
     expect(input.value).toBe("unsaved");
@@ -54,7 +61,7 @@ describe("configuration editor", () => {
   it("preserves edits and displays a rejected save", async () => {
     vi.mocked(api.saveConfig).mockRejectedValue(new Error("Configuration changed elsewhere"));
     mount();
-    const input = await screen.findByLabelText("Prefix") as HTMLInputElement;
+    const input = await openPrefix();
     fireEvent.change(input, { target: { value: "unsaved" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect((await screen.findByRole("alert")).textContent).toContain("changed elsewhere");
@@ -65,7 +72,7 @@ describe("configuration editor", () => {
   it("does not reload when discarding edits is cancelled", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(false);
     mount();
-    fireEvent.change(await screen.findByLabelText("Prefix"), { target: { value: "unsaved" } });
+    fireEvent.change(await openPrefix(), { target: { value: "unsaved" } });
     fireEvent.click(screen.getByRole("button", { name: "Reload" }));
     expect(api.getConfig).toHaveBeenCalledTimes(1);
   });
@@ -73,7 +80,7 @@ describe("configuration editor", () => {
   it("uses the saved revision and clears dirty state after success", async () => {
     vi.mocked(api.saveConfig).mockResolvedValue({ config: { ...config, botReplyPrefix: "saved" }, revision: "second" });
     mount();
-    fireEvent.change(await screen.findByLabelText("Prefix"), { target: { value: "saved" } });
+    fireEvent.change(await openPrefix(), { target: { value: "saved" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull());
     expect((screen.getByLabelText("Prefix") as HTMLInputElement).value).toBe("saved");

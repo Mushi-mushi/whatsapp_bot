@@ -8,7 +8,15 @@ export interface BotConfig {
   ollamaBaseUrl: string;
   ollamaModel: string;
   ollamaTimeoutSeconds: number;
+  ollamaKeepAlive: string;
   askSystemPrompt: string;
+  userMemoryEnabled: boolean;
+  userMemoryLimit: number;
+  userMemoryContext: number;
+  profileRefreshEvery: number;
+  profileMaxAgeDays: number;
+  profileSampleSize: number;
+  profileShortMaxChars: number;
   redditClientId: string;
   redditClientSecret: string;
   redditUserAgent: string;
@@ -95,6 +103,18 @@ export interface ConfigSnapshot {
   revision: string;
 }
 
+export interface ProfileSummary {
+  sender_key: string;
+  name: string;
+  short: string;
+  updated_at: number;
+  messageCount: number;
+}
+
+export interface ProfileDetail extends ProfileSummary {
+  deep: string;
+}
+
 export const api = {
   getConfig: async (): Promise<ConfigSnapshot> => {
     const response = await fetch("/api/config", { headers: authHeaders(), cache: "no-store" });
@@ -115,8 +135,35 @@ export const api = {
     fetch("/api/ollama/models", { headers: authHeaders() }).then(
       json<{ ok: boolean; models: string[] }>,
     ),
+  getComfyStatus: async (): Promise<{ reachable: boolean; version?: string | null }> => {
+    try {
+      const res = await fetch("/api/comfyui/status", { headers: authHeaders() });
+      if (res.status === 401) throw new ApiError(401, "unauthorized");
+      const data = (await res.json().catch(() => ({}))) as { reachable?: boolean; version?: string | null };
+      return { reachable: !!data.reachable, version: data.version };
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      return { reachable: false };
+    }
+  },
   resetTriviaScores: () =>
     fetch("/api/trivia/reset", { method: "POST", headers: authHeaders() }).then(
+      json<{ ok: boolean }>,
+    ),
+  getProfiles: () =>
+    fetch("/api/profiles", { headers: authHeaders() }).then(
+      json<{ profiles: ProfileSummary[] }>,
+    ),
+  getProfile: (key: string) =>
+    fetch(`/api/profiles/${encodeURIComponent(key)}`, { headers: authHeaders() }).then(
+      json<ProfileDetail>,
+    ),
+  refreshProfile: (key: string) =>
+    fetch(`/api/profiles/${encodeURIComponent(key)}/refresh`, { method: "POST", headers: authHeaders() }).then(
+      json<{ ok: boolean; profile?: ProfileDetail; error?: string }>,
+    ),
+  deleteProfile: (key: string) =>
+    fetch(`/api/profiles/${encodeURIComponent(key)}`, { method: "DELETE", headers: authHeaders() }).then(
       json<{ ok: boolean }>,
     ),
   requestPairing: (phoneNumber: string) =>

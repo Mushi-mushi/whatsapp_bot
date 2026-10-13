@@ -2,12 +2,14 @@ import type { Handler } from "../../router/router.js";
 import type { RuntimeState } from "../../state/runtime.js";
 import type {
   ComplaintStore,
+  DuelWinStore,
   KarmaStore,
   RemindersStore,
   SeenActivityStore,
   SentimentStore,
   TellStore,
   TriviaScoreStore,
+  UserMemoryStore,
 } from "../../state/repos.js";
 import { roast } from "./roast.js";
 import { jokes } from "./jokes.js";
@@ -24,7 +26,8 @@ import { makeScore } from "./score.js";
 import { makeTopNegative, makeTopPositive } from "./top.js";
 import { makeTorture } from "./torture.js";
 import { makeInsults } from "./insults.js";
-import { ask } from "./ask.js";
+import { makeAsk } from "./ask.js";
+import { makeProfile } from "./profile.js";
 import { makeSeen } from "./seen.js";
 import { makeTell } from "./tell.js";
 import { makeRemind } from "./remind.js";
@@ -35,6 +38,7 @@ import { roll } from "./roll.js";
 import { makeTrivia } from "./trivia.js";
 import { paint } from "./paint.js";
 import { film } from "./film.js";
+import type { ProfileService } from "../profiles/service.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
@@ -45,6 +49,9 @@ export interface CommandDeps {
   karma: KarmaStore;
   reminders: RemindersStore;
   triviaScores: TriviaScoreStore;
+  duelScores: DuelWinStore;
+  userMemory: UserMemoryStore;
+  profiler: ProfileService;
 }
 
 // Command name (config value) -> handler. Add new commands here.
@@ -66,7 +73,8 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     top_negative: makeTopNegative(deps.sentiment),
     torture: makeTorture(deps.runtime),
     insults: makeInsults(deps.runtime),
-    ask,
+    ask: makeAsk(deps.userMemory, deps.profiler),
+    profile: makeProfile(deps.userMemory, deps.profiler),
     seen: makeSeen(deps.seenActivity),
     tell: makeTell(deps.tells),
     remind: makeRemind(deps.reminders),
@@ -76,6 +84,6 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     roll,
     paint,
     film,
-    trivia: makeTrivia(deps.runtime, deps.triviaScores),
+    trivia: makeTrivia(deps.runtime, deps.triviaScores, deps.duelScores),
   };
 }

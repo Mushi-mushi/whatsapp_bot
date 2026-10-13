@@ -1,12 +1,30 @@
 import type { Handler } from "../../router/router.js";
 import type { BotConfig } from "../../config/schema.js";
-import type { RuntimeState, TriviaGame, TriviaSession } from "../../state/runtime.js";
-import type { TriviaScoreStore } from "../../state/repos.js";
+import type { RuntimeState, TriviaGame, TriviaSession, TriviaDuel } from "../../state/runtime.js";
+import type { TriviaScoreStore, DuelWinStore } from "../../state/repos.js";
+import { normalizeName } from "../../router/normalize.js";
 import { decodeEntities } from "../../util/net.js";
 import { ollamaChat } from "../../util/ollama.js";
 
 const LABELS = ["A", "B", "C", "D", "E", "F"];
 const TIMEOUT_MS = 90_000;
+// Short pause between a finished question and the next one. During this gap no
+// question is active, so a lagged answer to the previous question is dropped
+// instead of being judged against the next one.
+const NEXT_QUESTION_DELAY_MS = 1200;
+// Classic multi-correct: once the first correct answer lands, keep the question
+// open this long so other players can still answer it for a point. Kept short so
+// latecomers can't just copy the first answer.
+const CLASSIC_COLLECT_MS = 3000;
+// Ignore answers sent (phone clock) this far before the current question appeared
+// — WhatsApp lag can surface a late answer to an already-answered/skipped question.
+const STALE_ANSWER_GRACE_MS = 1500;
+// Duel (race) tuning.
+const DUEL_TARGET_MIN = 5;
+const DUEL_TARGET_MAX = 20;
+const DUEL_TARGET_DEFAULT = 10;
+const DUEL_LOBBY_MS = 30_000;
+const DUEL_QUESTION_TIMEOUT_MS = 45_000;
 const OPENTDB = "https://opentdb.com";
 const BATCH = 20;
 type TriviaLanguage = "en" | "es";
@@ -198,6 +216,24 @@ export function clearTrivia(game: TriviaGame): void {
   if (game.timer) clearTimeout(game.timer);
 }
 
+// Pull the next prepared question from a session's queue, refilling from opentdb
+// (and translating to Spanish when requested) as needed. Returns null if unavailable.
+async function nextPrepared(
+  session: TriviaSession,
+  cfg: BotConfig,
+): Promise<{ question: string; options: string[]; correct: string } | null> {
+  if (session.queue.length === 0) {
+    // One retry covers a token reset (exhausted) or a transient hiccup.
+    if (!(await refillQueue(session)) && !(await refillQueue(session))) return null;
+  }
+  const q = session.queue.shift()!;
+  if (session.language === "es" && cfg.askEnabled) {
+    const translated = await translateQuestionToSpanish(cfg, q.question, q.options, q.correct);
+    if (translated) return translated;
+  }
+  return { question: q.question, options: q.options, correct: q.correct };
+}
+
 // Take the next prefetched question (refilling from opentdb as needed), arm its
 // timeout, and post it. Used to start a session and to continue after a correct
 // answer or a skip. Returns false if unavailable.
@@ -215,37 +251,20 @@ export async function startQuestion(
     runtime.triviaSessions.set(chatId, session);
   }
 
-  if (session.queue.length === 0) {
-    // One retry covers a token reset (exhausted) or a transient hiccup.
-    if (!(await refillQueue(session))) {
-      if (!(await refillQueue(session))) {
-        await reply("Trivia is unavailable right now — try again in a moment.");
-        return false;
-      }
-    }
-  }
-
-  const q = session.queue.shift()!;
-  let question = q.question;
-  let options = q.options;
-  let correct = q.correct;
-  if (session.language === "es" && cfg.askEnabled) {
-    const translated = await translateQuestionToSpanish(cfg, q.question, q.options, q.correct);
-    if (translated) {
-      question = translated.question;
-      options = translated.options;
-      correct = translated.correct;
-    }
+  const prepared = await nextPrepared(session, cfg);
+  if (!prepared) {
+    await reply("Trivia is unavailable right now — try again in a moment.");
+    return false;
   }
 
   const game: TriviaGame = {
-    question,
-    options,
-    correct,
+    ...prepared,
     askedAt: Date.now(),
     language: session.language,
     categoryId: session.category?.id,
     categoryName: session.category?.name,
+    mode: "classic",
+    answered: new Set(),
   };
   // Expire the session if nobody answers correctly in time.
   game.timer = setTimeout(() => {
@@ -260,12 +279,253 @@ export async function startQuestion(
   return true;
 }
 
-export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Handler {
+// Post the next question after a short gap (see NEXT_QUESTION_DELAY_MS). Scheduled
+// off the handler so messages arriving in the gap see no active game and are
+// dropped. Skips if the session was stopped (or restarted) during the gap.
+export function scheduleNextQuestion(
+  runtime: RuntimeState,
+  chatId: string,
+  reply: (text: string) => Promise<void>,
+  cfg: BotConfig,
+  category?: Category,
+  language: TriviaLanguage = "en",
+): void {
+  const session = runtime.triviaSessions.get(chatId);
+  setTimeout(() => {
+    // A stop/restart during the gap replaces or clears the session — don't revive it.
+    if (runtime.triviaSessions.get(chatId) !== session) return;
+    void startQuestion(runtime, chatId, reply, cfg, category, language).catch(() => {});
+  }, NEXT_QUESTION_DELAY_MS);
+}
+
+// ---------------------------------------------------------------------------
+// Duel mode: a bounded "first to N correct" race with a join lobby. Only the
+// fastest correct answer scores each question (speed matters); no wrong penalty.
+// ---------------------------------------------------------------------------
+
+function duelStandings(duel: TriviaDuel): string {
+  return [...duel.players.values()]
+    .sort((a, b) => b.score - a.score)
+    .map((p) => `${p.name} ${p.score}/${duel.target}`)
+    .join(" · ");
+}
+
+// Tear down a duel (any phase) and its active question + timers.
+export function endDuel(runtime: RuntimeState, chatId: string): void {
+  const duel = runtime.triviaDuels.get(chatId);
+  if (duel) {
+    clearTimeout(duel.lobbyTimer);
+    for (const t of duel.countdownTimers) clearTimeout(t);
+  }
+  runtime.triviaDuels.delete(chatId);
+  const game = runtime.triviaGames.get(chatId);
+  if (game?.mode === "duel") {
+    clearTimeout(game.timer);
+    clearTimeout(game.closeTimer);
+    runtime.triviaGames.delete(chatId);
+  }
+}
+
+// Post the next duel question (refilling the duel's own session). Ends the duel
+// if questions are unavailable.
+export async function startDuelQuestion(
+  runtime: RuntimeState,
+  chatId: string,
+  reply: (text: string) => Promise<void>,
+  cfg: BotConfig,
+  duel: TriviaDuel,
+): Promise<boolean> {
+  const prepared = await nextPrepared(duel.session, cfg);
+  if (!prepared) {
+    await reply("Trivia is unavailable right now — the duel can't continue. Try again later.");
+    endDuel(runtime, chatId);
+    return false;
+  }
+  const game: TriviaGame = {
+    ...prepared,
+    askedAt: Date.now(),
+    language: duel.language,
+    categoryId: duel.category?.id,
+    categoryName: duel.category?.name,
+    mode: "duel",
+    answered: new Set(),
+  };
+  // Nobody answered in time → reveal and move on (the duel continues).
+  game.timer = setTimeout(() => {
+    if (runtime.triviaGames.get(chatId) !== game) return;
+    runtime.triviaGames.delete(chatId);
+    void reply(`⏰ Nobody got it — the answer was "${game.correct}". Next up…`);
+    scheduleNextDuelQuestion(runtime, chatId, reply, cfg);
+  }, DUEL_QUESTION_TIMEOUT_MS);
+  runtime.triviaGames.set(chatId, game);
+  await reply(renderQuestion(game));
+  return true;
+}
+
+// Post the next duel question after the inter-question gap (see scheduleNextQuestion).
+export function scheduleNextDuelQuestion(
+  runtime: RuntimeState,
+  chatId: string,
+  reply: (text: string) => Promise<void>,
+  cfg: BotConfig,
+): void {
+  const duel = runtime.triviaDuels.get(chatId);
+  setTimeout(() => {
+    const d = runtime.triviaDuels.get(chatId);
+    if (!d || d !== duel || d.phase !== "running") return; // stopped during the gap
+    void startDuelQuestion(runtime, chatId, reply, cfg, d).catch(() => {});
+  }, NEXT_QUESTION_DELAY_MS);
+}
+
+// Close the lobby and start the race (or cancel if too few joined). Runs a short
+// 5→0 countdown, then posts the first question.
+export async function beginDuel(
+  runtime: RuntimeState,
+  chatId: string,
+  reply: (text: string) => Promise<void>,
+  cfg: BotConfig,
+): Promise<void> {
+  const duel = runtime.triviaDuels.get(chatId);
+  if (!duel || duel.phase !== "lobby") return;
+  if (duel.players.size < 2) {
+    runtime.triviaDuels.delete(chatId);
+    await reply("⌛ Not enough players joined — duel cancelled. Start again with `bot.trivia duel`.");
+    return;
+  }
+  duel.phase = "running";
+  await reply(
+    `🏁 Duel on! First to ${duel.target}. Players: ${[...duel.players.values()].map((p) => p.name).join(", ")}`,
+  );
+  for (const [ms, msg] of [
+    [0, "5…"],
+    [2000, "3…"],
+    [4000, "1…"],
+  ] as const) {
+    duel.countdownTimers.push(setTimeout(() => void reply(msg), ms));
+  }
+  duel.countdownTimers.push(
+    setTimeout(() => {
+      if (runtime.triviaDuels.get(chatId) !== duel || duel.phase !== "running") return;
+      void reply("GO! 🏁");
+      void startDuelQuestion(runtime, chatId, reply, cfg, duel).catch(() => {});
+    }, 5000),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Answer handling (shared by classic + duel), dispatched from the fallback.
+// ---------------------------------------------------------------------------
+
+export interface TriviaAnswerCtx {
+  runtime: RuntimeState;
+  scores: TriviaScoreStore;
+  duelScores: DuelWinStore;
+  chatId: string;
+  senderName: string;
+  text: string;
+  sentAt: number; // phone send-time (ms) of the answer, for the stale guard
+  cfg: BotConfig;
+  reply: (text: string) => Promise<void>;
+}
+
+// Judge an incoming message against the chat's active question. Returns true if it
+// was consumed as a trivia answer (so the fallback stops), false to let other
+// handlers run (not an answer, stale, or a non-participant in a duel).
+export async function handleTriviaAnswer(c: TriviaAnswerCtx): Promise<boolean> {
+  const { runtime, chatId } = c;
+  const game = runtime.triviaGames.get(chatId);
+  if (!game) return false;
+  // Ignore answers sent before this question appeared (lag / already-answered / skipped).
+  if (c.sentAt > 0 && c.sentAt < game.askedAt - STALE_ANSWER_GRACE_MS) return false;
+
+  const nameNorm = normalizeName(c.senderName);
+  if (game.mode === "duel") return handleDuelAttempt(c, game, nameNorm);
+
+  // Classic: one attempt per player; every correct answerer scores.
+  if (game.answered.has(nameNorm)) return true;
+  const result = checkTriviaAnswer(game, c.text);
+  if (!result) return false;
+  game.answered.add(nameNorm);
+  if (result.correct) {
+    const points = c.scores.add(chatId, nameNorm, c.senderName, 1);
+    await c.reply(`✅ Correct, ${c.senderName}! (+1 → ${points})`);
+    // First correct answer opens a short window so stragglers can still score.
+    if (!game.closeTimer) {
+      clearTimeout(game.timer);
+      const category = game.categoryId
+        ? { id: game.categoryId, name: game.categoryName ?? "" }
+        : undefined;
+      game.closeTimer = setTimeout(() => {
+        if (runtime.triviaGames.get(chatId) !== game) return;
+        runtime.triviaGames.delete(chatId);
+        void c.reply(`⏱️ The answer was "${game.correct}". Next up…`);
+        scheduleNextQuestion(runtime, chatId, c.reply, c.cfg, category, game.language);
+      }, CLASSIC_COLLECT_MS);
+    }
+  } else {
+    const points = c.scores.add(chatId, nameNorm, c.senderName, -1);
+    await c.reply(`❌ Not that one, ${c.senderName} — that's -1 (now ${points}).`);
+  }
+  return true;
+}
+
+async function handleDuelAttempt(
+  c: TriviaAnswerCtx,
+  game: TriviaGame,
+  nameNorm: string,
+): Promise<boolean> {
+  const duel = c.runtime.triviaDuels.get(c.chatId);
+  if (!duel || duel.phase !== "running") return false;
+  const player = duel.players.get(nameNorm);
+  if (!player) return false; // not a participant — let other handlers run
+  if (game.answered.has(nameNorm)) return true; // one shot per question (no brute force)
+  const result = checkTriviaAnswer(game, c.text);
+  if (!result) return false;
+  game.answered.add(nameNorm);
+  if (!result.correct) return true; // no penalty, consumed silently
+
+  // Fastest correct answer takes the question.
+  player.score += 1;
+  clearTimeout(game.timer);
+  c.runtime.triviaGames.delete(c.chatId);
+  if (player.score >= duel.target) {
+    const wins = c.duelScores.add(c.chatId, nameNorm, player.name);
+    await c.reply(
+      `🏆 ${player.name} wins the duel! (${player.score}/${duel.target})\n` +
+        `Final: ${duelStandings(duel)}\n` +
+        `${player.name} now has ${wins} duel win${wins === 1 ? "" : "s"} this month.`,
+    );
+    endDuel(c.runtime, c.chatId);
+    return true;
+  }
+  await c.reply(`✅ ${player.name} takes it — ${player.score}/${duel.target}. Next up…\n${duelStandings(duel)}`);
+  scheduleNextDuelQuestion(c.runtime, c.chatId, c.reply, c.cfg);
+  return true;
+}
+
+export function makeTrivia(
+  runtime: RuntimeState,
+  scores: TriviaScoreStore,
+  duelScores: DuelWinStore,
+): Handler {
   return async (ctx) => {
     const chatId = ctx.msg.chatId;
     const sub = ctx.args.trim().toLowerCase();
     const reply = (t: string) => ctx.reply(t);
     const active = runtime.triviaGames.get(chatId);
+
+    if (sub === "help" || sub === "commands" || sub === "?") {
+      await ctx.reply(
+        "🧩 *Trivia help*\n" +
+          "• `bot.trivia` — start a quiz (everyone who answers right scores)\n" +
+          "• `bot.trivia <category>` — e.g. `bot.trivia science` (`bot.trivia categories` to list)\n" +
+          "• add `es` for Spanish, e.g. `bot.trivia film es`\n" +
+          "• `bot.trivia skip` / `bot.trivia stop`\n" +
+          `• \`bot.trivia duel [${DUEL_TARGET_MIN}-${DUEL_TARGET_MAX}]\` — race mode; others join with \`bot.trivia accept\`\n` +
+          "• `bot.trivia scores` · `bot.trivia alltime` · `bot.trivia trophies` · `bot.trivia duels`",
+      );
+      return;
+    }
 
     if (sub === "scores" || sub === "score" || sub === "leaderboard") {
       const top = scores.top(chatId);
@@ -307,7 +567,48 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
       return;
     }
 
+    if (sub === "duels" || sub === "duelstats" || sub === "duelscores") {
+      const top = duelScores.top(chatId);
+      const trophies = new Map(duelScores.trophies(chatId, 100).map((t) => [t.name.toLowerCase(), t.trophies]));
+      const totals = new Map(duelScores.allTime(chatId, 100).map((t) => [t.name.toLowerCase(), t.total]));
+      await ctx.reply(
+        top.length
+          ? "⚔️ Duel wins (this month):\n" +
+              top
+                .map((r, i) => {
+                  const n = trophies.get(r.name.toLowerCase()) ?? 0;
+                  const total = totals.get(r.name.toLowerCase()) ?? r.wins;
+                  return `${i + 1}. ${r.name}: ${r.wins} (all-time ${total})${n ? ` ${"🏆".repeat(Math.min(n, 5))}${n > 5 ? `x${n}` : ""}` : ""}`;
+                })
+                .join("\n")
+          : "No duels won here yet this month. Start one with `bot.trivia duel`!",
+      );
+      return;
+    }
+
+    if (sub === "accept" || sub === "join") {
+      const duel = runtime.triviaDuels.get(chatId);
+      if (!duel || duel.phase !== "lobby") {
+        await ctx.reply("No duel is forming here right now. Start one with `bot.trivia duel`.");
+        return;
+      }
+      const nameNorm = normalizeName(ctx.msg.senderName);
+      if (duel.players.has(nameNorm)) {
+        await ctx.reply(`${ctx.msg.senderName}, you're already in the duel.`);
+        return;
+      }
+      duel.players.set(nameNorm, { name: ctx.msg.senderName, score: 0 });
+      await ctx.reply(`✋ ${ctx.msg.senderName} joined the duel! (${duel.players.size} players in)`);
+      return;
+    }
+
     if (sub === "stop") {
+      const duel = runtime.triviaDuels.get(chatId);
+      if (duel) {
+        endDuel(runtime, chatId);
+        await ctx.reply("🛑 Duel cancelled.");
+        return;
+      }
       if (!active) {
         await ctx.reply("No trivia running here.");
         return;
@@ -331,7 +632,7 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
       clearTrivia(active);
       runtime.triviaGames.delete(chatId);
       await ctx.reply(`⏭️ Skipped — the answer was "${active.correct}". Next up…`);
-      await startQuestion(runtime, chatId, reply, ctx.config, category, language);
+      scheduleNextQuestion(runtime, chatId, reply, ctx.config, category, language);
       return;
     }
 
@@ -342,8 +643,66 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
       return;
     }
 
+    const subParts = sub.split(/\s+/).filter(Boolean);
+    if (["duel", "challenge", "race"].includes(subParts[0] ?? "")) {
+      if (active || runtime.triviaDuels.has(chatId)) {
+        await ctx.reply("A game is already running here — `bot.trivia stop` to end it first.");
+        return;
+      }
+      let target = DUEL_TARGET_DEFAULT;
+      let category: Category | undefined;
+      let language: TriviaLanguage = "en";
+      for (const part of subParts.slice(1)) {
+        const n = Number(part);
+        if (Number.isInteger(n) && n > 0) {
+          target = Math.min(DUEL_TARGET_MAX, Math.max(DUEL_TARGET_MIN, n));
+          continue;
+        }
+        const lang = resolveLanguage(part);
+        if (lang) {
+          language = lang;
+          continue;
+        }
+        const cat = resolveCategory(part);
+        if (cat) {
+          category = cat;
+          continue;
+        }
+        await ctx.reply(
+          `Unknown duel option "${part}". Usage: \`bot.trivia duel [${DUEL_TARGET_MIN}-${DUEL_TARGET_MAX}] [category] [en|es]\`.`,
+        );
+        return;
+      }
+      if (language === "es" && !ctx.config.askEnabled) {
+        await ctx.reply("Spanish trivia needs AI features enabled in Settings (used to translate questions).");
+        return;
+      }
+      const hostName = ctx.msg.senderName;
+      const duel: TriviaDuel = {
+        target,
+        phase: "lobby",
+        hostName,
+        players: new Map([[normalizeName(hostName), { name: hostName, score: 0 }]]),
+        session: { token: await requestToken(), category, language, queue: [] },
+        category,
+        language,
+        countdownTimers: [],
+      };
+      runtime.triviaDuels.set(chatId, duel);
+      await ctx.reply(
+        `⚔️ ${hostName} started a trivia duel — first to ${target}${category ? ` — ${category.name}` : ""} (${languageLabel(language)})!\n` +
+          `Type \`bot.trivia accept\` to join. The race starts in ${DUEL_LOBBY_MS / 1000}s (need 2+ players).`,
+      );
+      duel.lobbyTimer = setTimeout(() => void beginDuel(runtime, chatId, reply, ctx.config), DUEL_LOBBY_MS);
+      return;
+    }
+
     if (active) {
       await ctx.reply(`A question is already open here:\n${renderQuestion(active)}`);
+      return;
+    }
+    if (runtime.triviaDuels.has(chatId)) {
+      await ctx.reply("A duel is in progress here — `bot.trivia stop` to end it, or `bot.trivia accept` to join.");
       return;
     }
 
@@ -376,7 +735,7 @@ export function makeTrivia(runtime: RuntimeState, scores: TriviaScoreStore): Han
     }
 
     await ctx.reply(
-      `🧩 Trivia time${category ? ` — ${category.name}` : ""} (${languageLabel(language)})! Reply with the letter or the answer. A correct answer brings the next question. \`bot.trivia stop\` to end, \`bot.trivia skip\` to skip.`,
+      `🧩 Trivia time${category ? ` — ${category.name}` : ""} (${languageLabel(language)})! Reply with the letter or the answer. Every correct answer scores a point. \`bot.trivia stop\` to end, \`bot.trivia skip\` to skip, \`bot.trivia duel [${DUEL_TARGET_MIN}-${DUEL_TARGET_MAX}]\` for a race.`,
     );
     // Fresh session — drop any old token/queue so we start with a new pool.
     runtime.triviaSessions.delete(chatId);

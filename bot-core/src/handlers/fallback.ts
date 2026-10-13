@@ -1,15 +1,19 @@
 import type { Handler } from "../router/router.js";
 import type { RuntimeState } from "../state/runtime.js";
-import type { SentimentStore, TriviaScoreStore } from "../state/repos.js";
+import type { SentimentStore, TriviaScoreStore, DuelWinStore, UserMemoryStore } from "../state/repos.js";
+import type { ProfileService } from "./profiles/service.js";
 import { analyzeSentiment } from "../analyzers/sentiment.js";
-import { normalizeName } from "../router/normalize.js";
+import { senderKey } from "./commands/user-context.js";
 import { checkComeback } from "./insults/game.js";
-import { checkTriviaAnswer, clearTrivia, startQuestion } from "./commands/trivia.js";
+import { handleTriviaAnswer } from "./commands/trivia.js";
 
 export interface FallbackDeps {
   runtime: RuntimeState;
   sentiment: SentimentStore;
   triviaScores: TriviaScoreStore;
+  duelScores: DuelWinStore;
+  userMemory: UserMemoryStore;
+  profiler: ProfileService;
 }
 
 // Handles free-form (non-command) text: active games, static keyword replies,
@@ -19,50 +23,21 @@ export function makeFallback(deps: FallbackDeps): Handler {
     const text = ctx.text.trim();
     if (!text) return;
 
-    // 1) Active trivia question — a correct answer scores + ends it; a wrong
-    // attempt keeps it open; anything unrecognizable falls through.
-    const trivia = deps.runtime.triviaGames.get(ctx.msg.chatId);
-    if (trivia) {
-      const result = checkTriviaAnswer(trivia, text);
-      if (result) {
-        if (result.correct) {
-          clearTrivia(trivia);
-          deps.runtime.triviaGames.delete(ctx.msg.chatId);
-          const points = deps.triviaScores.add(
-            ctx.msg.chatId,
-            normalizeName(ctx.msg.senderName),
-            ctx.msg.senderName,
-            1,
-          );
-          await ctx.reply(
-            `✅ Correct, ${ctx.msg.senderName}! The answer is "${trivia.correct}". (${points} point${points === 1 || points === -1 ? "" : "s"}) Next up…`,
-          );
-          // Continuous quiz: roll straight into the next question, same category.
-          const category = trivia.categoryId
-            ? { id: trivia.categoryId, name: trivia.categoryName ?? "" }
-            : undefined;
-          await startQuestion(
-            deps.runtime,
-            ctx.msg.chatId,
-            (t) => ctx.reply(t),
-            ctx.config,
-            category,
-            trivia.language,
-          );
-        } else {
-          const points = deps.triviaScores.add(
-            ctx.msg.chatId,
-            normalizeName(ctx.msg.senderName),
-            ctx.msg.senderName,
-            -1,
-          );
-          await ctx.reply(
-            `❌ Not that one, ${ctx.msg.senderName} — that's -1 (now ${points}). Keep trying!`,
-          );
-        }
-        return;
-      }
-    }
+    // 1) Active trivia question (classic or duel). Returns true when the message
+    // was consumed as an answer; stale/non-answer/non-participant messages fall
+    // through to the handlers below.
+    const consumed = await handleTriviaAnswer({
+      runtime: deps.runtime,
+      scores: deps.triviaScores,
+      duelScores: deps.duelScores,
+      chatId: ctx.msg.chatId,
+      senderName: ctx.msg.senderName,
+      text,
+      sentAt: ctx.msg.timestamp,
+      cfg: ctx.config,
+      reply: (t) => ctx.reply(t),
+    });
+    if (consumed) return;
 
     // 2) Active insult duel in this chat — treat the message as a comeback.
     const game = deps.runtime.insultGames.get(ctx.msg.chatId);
@@ -83,5 +58,19 @@ export function makeFallback(deps: FallbackDeps): Handler {
     // 4) Passive sentiment logging (no reply).
     const { label, polarity } = analyzeSentiment(text);
     deps.sentiment.log(ctx.msg.senderName || ctx.msg.chatName || "unknown", label, polarity, text);
+
+    // 5) Passive per-user memory: remember substantial free-form chatter so
+    // bot.ask / bot.profile can personalise. Keyed by a stable identity (phone/
+    // jid), not display name. Skips very short noise (e.g. "ok").
+    const cfg = ctx.config;
+    if (cfg.userMemoryEnabled && !ctx.msg.fromMe && text.length >= 6) {
+      const name = ctx.msg.senderName?.trim();
+      const key = senderKey(ctx.msg);
+      if (key && name) {
+        deps.userMemory.record(key, name, ctx.msg.chatName || null, text, cfg.userMemoryLimit);
+        // Rebuild the personality profile in the background when it goes stale.
+        deps.profiler.maybeRefresh(key, name);
+      }
+    }
   };
 }

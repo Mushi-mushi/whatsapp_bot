@@ -72,6 +72,27 @@ function migrate(db: Database.Database): void {
       chat_name TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS user_messages (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_key TEXT NOT NULL,
+      name_norm  TEXT NOT NULL,
+      name       TEXT NOT NULL,
+      chat_name  TEXT,
+      message    TEXT NOT NULL,
+      ts         INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_messages_key ON user_messages (sender_key, id);
+    CREATE INDEX IF NOT EXISTS idx_user_messages_name ON user_messages (name_norm, id);
+
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      sender_key       TEXT PRIMARY KEY,
+      name             TEXT NOT NULL,
+      deep             TEXT NOT NULL,
+      short            TEXT NOT NULL,
+      last_profiled_id INTEGER NOT NULL DEFAULT 0,
+      updated_at       INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS tells (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       target_norm TEXT NOT NULL,
@@ -115,6 +136,31 @@ function migrate(db: Database.Database): void {
     );
 
     CREATE TABLE IF NOT EXISTS trivia_trophies (
+      chat_id   TEXT NOT NULL,
+      period    TEXT NOT NULL,
+      name_norm TEXT NOT NULL,
+      name      TEXT NOT NULL,
+      score     INTEGER NOT NULL,
+      PRIMARY KEY (chat_id, period, name_norm)
+    );
+
+    CREATE TABLE IF NOT EXISTS duel_wins (
+      chat_id   TEXT NOT NULL,
+      name_norm TEXT NOT NULL,
+      name      TEXT NOT NULL,
+      wins      INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (chat_id, name_norm)
+    );
+
+    CREATE TABLE IF NOT EXISTS duel_totals (
+      chat_id   TEXT NOT NULL,
+      name_norm TEXT NOT NULL,
+      name      TEXT NOT NULL,
+      total     INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (chat_id, name_norm)
+    );
+
+    CREATE TABLE IF NOT EXISTS duel_trophies (
       chat_id   TEXT NOT NULL,
       period    TEXT NOT NULL,
       name_norm TEXT NOT NULL,

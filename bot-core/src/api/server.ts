@@ -4,7 +4,8 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
 import { redactSecrets, restoreSecrets } from "../config/secrets.js";
-import type { ConfigStore, KnownChatsStore, TriviaScoreStore } from "../state/repos.js";
+import type { ConfigStore, KnownChatsStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
+import type { ProfileService } from "../handlers/profiles/service.js";
 import type { Transport } from "../transport/types.js";
 
 export interface ApiDeps {
@@ -12,6 +13,9 @@ export interface ApiDeps {
   configStore: ConfigStore;
   knownChats: KnownChatsStore;
   triviaScores: TriviaScoreStore;
+  userMemory: UserMemoryStore;
+  userProfiles: UserProfileStore;
+  profiler: ProfileService;
   onConfigChange: () => void;
   logger: Logger;
   apiToken?: string;
@@ -84,6 +88,48 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
 
   app.get("/api/chats", async () => ({ chats: deps.knownChats.list() }));
 
+  // Learned personality profiles (deep dossier + short briefing) per user.
+  app.get("/api/profiles", async () => {
+    const profiles = deps.userProfiles.list().map((p) => ({
+      ...p,
+      messageCount: deps.userMemory.countSince(p.sender_key, 0),
+    }));
+    return { profiles };
+  });
+
+  app.get<{ Params: { key: string } }>("/api/profiles/:key", async (req, reply) => {
+    const profile = deps.userProfiles.get(req.params.key);
+    if (!profile) {
+      reply.code(404);
+      return { ok: false, error: "No profile for that user yet." };
+    }
+    return { ...profile, messageCount: deps.userMemory.countSince(profile.sender_key, 0) };
+  });
+
+  // Force an immediate rebuild (two LLM calls; the /api route allows long reads).
+  app.post<{ Params: { key: string } }>("/api/profiles/:key/refresh", async (req, reply) => {
+    const key = req.params.key;
+    const name = deps.userProfiles.get(key)?.name ?? deps.userMemory.recentFor(key, 1)[0]?.name ?? key;
+    try {
+      const profile = await deps.profiler.refresh(key, name);
+      if (!profile) {
+        reply.code(422);
+        return { ok: false, error: "Not enough messages to build a profile yet." };
+      }
+      return { ok: true, profile: { ...profile, messageCount: deps.userMemory.countSince(key, 0) } };
+    } catch (err) {
+      reply.code(502);
+      return { ok: false, error: String(err) };
+    }
+  });
+
+  // Forget a user: drop their profile and recorded messages.
+  app.delete<{ Params: { key: string } }>("/api/profiles/:key", async (req) => {
+    deps.userProfiles.forget(req.params.key);
+    deps.userMemory.forget(req.params.key);
+    return { ok: true };
+  });
+
   // Wipe the trivia leaderboard (all chats).
   app.post("/api/trivia/reset", async () => {
     deps.triviaScores.clearAll();
@@ -127,8 +173,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   });
 
   // List models available on the configured local Ollama instance.
-  app.get("/api/ollama/models", async (_req, reply) => {
-    const base = deps.configStore.load().ollamaBaseUrl.replace(/\/+$/, "");
+  app.get("/api/ollama/models", async (_req, reply) => {    const base = deps.configStore.load().ollamaBaseUrl.replace(/\/+$/, "");
     try {
       const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) {
@@ -141,6 +186,23 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     } catch (err) {
       reply.code(502);
       return { ok: false, models: [] as string[], error: String(err) };
+    }
+  });
+
+  // Reachability check for the configured ComfyUI backend (bot.paint / bot.film).
+  app.get("/api/comfyui/status", async (_req, reply) => {
+    const base = deps.configStore.load().paintBaseUrl.replace(/\/+$/, "");
+    try {
+      const res = await fetch(`${base}/system_stats`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) {
+        reply.code(502);
+        return { ok: false, reachable: false };
+      }
+      const data = (await res.json()) as { system?: { comfyui_version?: string } };
+      return { ok: true, reachable: true, version: data?.system?.comfyui_version ?? null };
+    } catch (err) {
+      reply.code(502);
+      return { ok: false, reachable: false, error: String(err) };
     }
   });
 

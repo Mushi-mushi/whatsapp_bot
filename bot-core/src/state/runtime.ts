@@ -20,6 +20,13 @@ export interface TriviaGame {
   categoryId?: number; // opentdb category id the session is locked to
   categoryName?: string;
   timer?: ReturnType<typeof setTimeout>;
+  // "classic" awards every correct answerer; "duel" is a race (first correct only).
+  mode: "classic" | "duel";
+  // name_norm of players who already answered this question (one attempt each).
+  answered: Set<string>;
+  // Classic collection window: once the first correct answer lands, this timer
+  // closes the question so stragglers can still score before it advances.
+  closeTimer?: ReturnType<typeof setTimeout>;
 }
 
 export interface TriviaQuestion {
@@ -35,6 +42,26 @@ export interface TriviaSession {
   category?: { id: number; name: string };
   language: "en" | "es";
   queue: TriviaQuestion[];
+}
+
+export interface DuelPlayer {
+  name: string;
+  score: number;
+}
+
+// A trivia duel: a bounded "first to target correct answers" race with a join
+// lobby. Lives in runtime.triviaDuels; the active question (when running) is the
+// matching runtime.triviaGames entry with mode:"duel".
+export interface TriviaDuel {
+  target: number;
+  phase: "lobby" | "running";
+  hostName: string;
+  players: Map<string, DuelPlayer>; // name_norm -> player
+  session: TriviaSession;
+  category?: { id: number; name: string };
+  language: "en" | "es";
+  lobbyTimer?: ReturnType<typeof setTimeout>;
+  countdownTimers: ReturnType<typeof setTimeout>[];
 }
 
 export class RuntimeState {
@@ -55,13 +82,24 @@ export class RuntimeState {
   // Running trivia sessions (token + category + prefetched queue), keyed by chat JID.
   triviaSessions = new Map<string, TriviaSession>();
 
+  // Active trivia duels (lobby or running), keyed by chat JID.
+  triviaDuels = new Map<string, TriviaDuel>();
+
   dispose(): void {
     for (const timer of this.tortureTimers.values()) clearInterval(timer);
-    for (const game of this.triviaGames.values()) clearTimeout(game.timer);
+    for (const game of this.triviaGames.values()) {
+      clearTimeout(game.timer);
+      clearTimeout(game.closeTimer);
+    }
+    for (const duel of this.triviaDuels.values()) {
+      clearTimeout(duel.lobbyTimer);
+      for (const t of duel.countdownTimers) clearTimeout(t);
+    }
     this.tortureTimers.clear();
     this.tortureCooldownUntil.clear();
     this.triviaGames.clear();
     this.triviaSessions.clear();
+    this.triviaDuels.clear();
     this.insultGames.clear();
   }
 

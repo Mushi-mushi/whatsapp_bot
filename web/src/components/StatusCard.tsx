@@ -3,8 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api } from "@/lib/api";
-import { useStatusStream } from "@/lib/useStatusStream";
+import { api, type Status } from "@/lib/api";
 import { AlertTriangle, Loader2, QrCode, Smartphone, Wifi, WifiOff } from "lucide-react";
 
 const STATE_LABEL: Record<string, { text: string; variant: "success" | "muted" | "destructive" | "default" | "warning" }> = {
@@ -15,8 +14,7 @@ const STATE_LABEL: Record<string, { text: string; variant: "success" | "muted" |
   close: { text: "Disconnected", variant: "destructive" },
 };
 
-export function StatusCard() {
-  const status = useStatusStream();
+export function StatusCard({ status }: { status: Status | null }) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

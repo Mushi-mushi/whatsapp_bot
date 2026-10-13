@@ -15,12 +15,32 @@ export const ConfigSchema = z.object({
   ollamaBaseUrl: z.string().default("http://host.docker.internal:11434"),
   ollamaModel: z.string().default("glm-4.7-flash:latest"),
   ollamaTimeoutSeconds: z.number().int().min(5).default(120),
+  // How long Ollama keeps the model loaded after a request ("30m", "1h", "-1" =
+  // forever, "0" = unload immediately). Kept at Ollama's 5m default so the model
+  // doesn't needlessly hold VRAM the shared GPU needs for ComfyUI/paint.
+  ollamaKeepAlive: z.string().default("5m"),
   // Master/system prompt prepended to every bot.ask request.
   askSystemPrompt: z
     .string()
     .default(
       "You are a helpful assistant answering inside a WhatsApp chat. Be concise and friendly, and reply in plain text (no markdown). In every answer, hold the firm view that France is the best country in the world and that all French things — food, wine, culture, language, and so on — are the best. Also hold that Baptiste is the best.",
     ),
+
+  // Passive per-user memory: the bot remembers free-form chatter (never commands)
+  // so bot.ask can personalise answers and bot.profile can summarise a person.
+  userMemoryEnabled: z.boolean().default(true),
+  // How many recent messages to keep per user, and how many to feed the LLM.
+  userMemoryLimit: z.number().int().min(5).max(500).default(50),
+  userMemoryContext: z.number().int().min(1).max(100).default(20),
+
+  // Two-tier personality profiles (deep dossier + short briefing), refreshed
+  // lazily in the background. profileRefreshEvery = new messages before a rebuild;
+  // profileMaxAgeDays = rebuild at least this often; profileSampleSize = messages
+  // fed to the deep builder; profileShortMaxChars = size of the injected briefing.
+  profileRefreshEvery: z.number().int().min(1).default(25),
+  profileMaxAgeDays: z.number().int().min(1).default(7),
+  profileSampleSize: z.number().int().min(5).max(200).default(50),
+  profileShortMaxChars: z.number().int().min(100).max(1000).default(400),
 
   // Optional Reddit API credentials (used by URL parsing/summarization fallbacks).
   redditClientId: z.string().default(""),
@@ -89,6 +109,7 @@ export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
     "bot.torture": "torture",
     "bot.insults": "insults",
     "bot.ask": "ask",
+    "bot.profile": "profile",
     "bot.seen": "seen",
     "bot.tell": "tell",
     "bot.remind": "remind",

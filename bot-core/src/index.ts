@@ -12,6 +12,9 @@ import {
   SentimentStore,
   TellStore,
   TriviaScoreStore,
+  DuelWinStore,
+  UserMemoryStore,
+  UserProfileStore,
 } from "./state/repos.js";
 import { RuntimeState } from "./state/runtime.js";
 import { OutboxStore } from "./state/outbox.js";
@@ -31,6 +34,7 @@ import {
   siestaGuard,
 } from "./middleware/index.js";
 import { buildCommandRegistry } from "./handlers/commands/index.js";
+import { ProfileService } from "./handlers/profiles/service.js";
 import { KARMA_PATTERN, makeKarmaHears } from "./handlers/commands/karma.js";
 import { makeAudioHandler } from "./handlers/audio.js";
 import { makeFallback } from "./handlers/fallback.js";
@@ -57,6 +61,9 @@ async function main(): Promise<void> {
   const karma = new KarmaStore(db);
   const reminders = new RemindersStore(db);
   const triviaScores = new TriviaScoreStore(db);
+  const duelScores = new DuelWinStore(db);
+  const userMemory = new UserMemoryStore(db);
+  const userProfiles = new UserProfileStore(db);
   const runtime = new RuntimeState();
 
   // Cached config, refreshed when the API saves changes.
@@ -76,6 +83,7 @@ async function main(): Promise<void> {
   // Build the router from config-driven command triggers.
   const bot = new Bot();
   const jobs = new BackgroundJobs((err) => logger.error({ err }, "background job failed"));
+  const profiler = new ProfileService(userMemory, userProfiles, jobs, getConfig, logger);
   bot
     .use(ignoreOwn(runtime))
     .use(logging(logger))
@@ -88,7 +96,7 @@ async function main(): Promise<void> {
   bot.on("audio", jobs.wrap(makeAudioHandler(logger)));
   bot.on("image", jobs.wrap(paintImage));
   bot.hears(KARMA_PATTERN, makeKarmaHears(karma));
-  bot.fallback(makeFallback({ runtime, sentiment, triviaScores }));
+  bot.fallback(makeFallback({ runtime, sentiment, triviaScores, duelScores, userMemory, profiler }));
 
   const commandRegistry = buildCommandRegistry({
     runtime,
@@ -99,12 +107,15 @@ async function main(): Promise<void> {
     karma,
     reminders,
     triviaScores,
+    duelScores,
+    userMemory,
+    profiler,
   });
   const registerCommands = (cfg: BotConfig) => {
     bot.clearCommands();
     for (const [trigger, name] of Object.entries(cfg.commands)) {
       const handler = commandRegistry[name];
-      if (handler) bot.command(trigger, ["ask", "translate", "tldr", "paint", "film"].includes(name) ? jobs.wrap(handler) : handler);
+      if (handler) bot.command(trigger, ["ask", "profile", "translate", "tldr", "paint", "film"].includes(name) ? jobs.wrap(handler) : handler);
       else logger.warn({ trigger, name }, "No handler registered for command");
     }
   };
@@ -127,6 +138,9 @@ async function main(): Promise<void> {
       configStore,
       knownChats,
       triviaScores,
+      userMemory,
+      userProfiles,
+      profiler,
       logger,
       apiToken: API_TOKEN,
       allowInsecureApi: process.env.ALLOW_INSECURE_API === "true",

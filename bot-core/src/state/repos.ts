@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.js";
 import type { ChatIdentity } from "../transport/types.js";
+import { normalizeName } from "../router/normalize.js";
 
 const CONFIG_KEY = "config";
 const CONFIG_VERSION_KEY = "config_version";
@@ -8,8 +9,8 @@ const CONFIG_VERSION_KEY = "config_version";
 // into existing installs. v2 adds weather/fact/8ball/quote/siesta/complain/score/
 // top.positive/top.negative/torture/insults. v3 adds ask (Ollama). v4 adds
 // seen/tell/remind/karma. v5 adds translate/tldr/roll/trivia. v6 adds paint.
-// v7 adds film. v8 adds meteo.
-const CONFIG_VERSION = 8;
+// v7 adds film. v8 adds meteo. v9 adds profile.
+const CONFIG_VERSION = 9;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {
@@ -233,6 +234,149 @@ export class SeenActivityStore {
   }
 }
 
+export interface UserMessage {
+  name: string;
+  chat_name: string | null;
+  message: string;
+  ts: number;
+}
+
+// A distinct person the bot has heard from, identified by a stable sender_key
+// (phone digits, else the raw jid/lid) with their latest display name.
+export interface KnownUser {
+  sender_key: string;
+  name: string;
+  name_norm: string;
+}
+
+// Rolling, bounded record of what each user says, keyed by a STABLE identity
+// (phone/jid) rather than display name so two people sharing a pushName never
+// merge. The display name is kept only to resolve name-based lookups (bot.profile
+// Alice) and to label output. Powers personalization for bot.ask / bot.profile.
+export class UserMemoryStore {
+  constructor(private readonly db: Database.Database) {}
+
+  // Append a message and trim this identity's history to the most recent `limit`.
+  record(senderKey: string, name: string, chatName: string | null, message: string, limit: number): void {
+    this.db
+      .prepare(
+        "INSERT INTO user_messages (sender_key, name_norm, name, chat_name, message, ts) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(senderKey, normalizeName(name), name, chatName, message, Date.now());
+    this.db
+      .prepare(
+        `DELETE FROM user_messages
+         WHERE sender_key = ?
+           AND id NOT IN (
+             SELECT id FROM user_messages WHERE sender_key = ? ORDER BY id DESC LIMIT ?
+           )`,
+      )
+      .run(senderKey, senderKey, limit);
+  }
+
+  // Most recent messages for an identity, returned oldest-first for natural reading.
+  recentFor(senderKey: string, limit = 20): UserMessage[] {
+    const rows = this.db
+      .prepare(
+        "SELECT name, chat_name, message, ts FROM user_messages WHERE sender_key = ? ORDER BY id DESC LIMIT ?",
+      )
+      .all(senderKey, limit) as UserMessage[];
+    return rows.reverse();
+  }
+
+  // Highest stored row id for an identity (0 if none) — a high-water mark used to
+  // tell how many new messages have arrived since a profile was last built.
+  latestId(senderKey: string): number {
+    const row = this.db
+      .prepare("SELECT MAX(id) AS maxId FROM user_messages WHERE sender_key = ?")
+      .get(senderKey) as { maxId: number | null };
+    return row.maxId ?? 0;
+  }
+
+  // How many messages this identity has sent with id greater than `sinceId`.
+  countSince(senderKey: string, sinceId: number): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM user_messages WHERE sender_key = ? AND id > ?")
+      .get(senderKey, sinceId) as { n: number };
+    return row.n;
+  }
+
+  // Resolve a typed name to the most-recently-active identity using it. When two
+  // people share a name, the one who spoke most recently wins.
+  keyForName(nameNorm: string): KnownUser | undefined {
+    return this.db
+      .prepare(
+        `SELECT sender_key, name, name_norm FROM user_messages
+         WHERE name_norm = ? ORDER BY id DESC LIMIT 1`,
+      )
+      .get(nameNorm) as KnownUser | undefined;
+  }
+
+  // Distinct identities the bot has heard from (most recently active first).
+  knownUsers(limit = 200): KnownUser[] {
+    return this.db
+      .prepare(
+        `SELECT sender_key, name, name_norm, MAX(id) AS last_id FROM user_messages
+         GROUP BY sender_key ORDER BY last_id DESC LIMIT ?`,
+      )
+      .all(limit) as (KnownUser & { last_id: number })[];
+  }
+
+  forget(senderKey: string): number {
+    const info = this.db.prepare("DELETE FROM user_messages WHERE sender_key = ?").run(senderKey);
+    return info.changes;
+  }
+}
+
+export interface UserProfile {
+  sender_key: string;
+  name: string;
+  deep: string;
+  short: string;
+  last_profiled_id: number;
+  updated_at: number;
+}
+
+// Persisted two-tier personality profiles: `deep` is a long-lived dossier that
+// accumulates across refreshes (surviving the rolling user_messages window);
+// `short` is a compact briefing cheap enough to inject into bot.ask.
+export class UserProfileStore {
+  constructor(private readonly db: Database.Database) {}
+
+  get(senderKey: string): UserProfile | undefined {
+    return this.db
+      .prepare(
+        "SELECT sender_key, name, deep, short, last_profiled_id, updated_at FROM user_profiles WHERE sender_key = ?",
+      )
+      .get(senderKey) as UserProfile | undefined;
+  }
+
+  // Summaries for the dashboard (newest first); omits the large deep dossier.
+  list(): Omit<UserProfile, "deep" | "last_profiled_id">[] {
+    return this.db
+      .prepare(
+        "SELECT sender_key, name, short, updated_at FROM user_profiles ORDER BY updated_at DESC",
+      )
+      .all() as Omit<UserProfile, "deep" | "last_profiled_id">[];
+  }
+
+  upsert(p: Omit<UserProfile, "updated_at">): void {
+    this.db
+      .prepare(
+        `INSERT INTO user_profiles (sender_key, name, deep, short, last_profiled_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(sender_key) DO UPDATE SET
+           name = excluded.name, deep = excluded.deep, short = excluded.short,
+           last_profiled_id = excluded.last_profiled_id, updated_at = excluded.updated_at`,
+      )
+      .run(p.sender_key, p.name, p.deep, p.short, p.last_profiled_id, Date.now());
+  }
+
+  forget(senderKey: string): void {
+    this.db.prepare("DELETE FROM user_profiles WHERE sender_key = ?").run(senderKey);
+  }
+}
+
 export interface Tell {
   target_name: string;
   from_name: string;
@@ -439,5 +583,90 @@ export class TriviaScoreStore {
 
   clearAll(): void {
     this.db.prepare("DELETE FROM trivia_scores").run();
+  }
+}
+
+const DUEL_PERIOD_KEY = "duel_period";
+
+export interface DuelWin {
+  name: string;
+  wins: number;
+}
+
+// Monthly duel-win tally, mirroring TriviaScoreStore: wins reset each month and a
+// trophy goes to the month's top duellist; duel_totals keeps lifetime wins.
+export class DuelWinStore {
+  constructor(private readonly db: Database.Database) {}
+
+  private rollover(now: number): void {
+    const current = monthKey(now);
+    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(DUEL_PERIOD_KEY) as
+      | { value: string }
+      | undefined;
+    if (row?.value === current) return;
+    this.closeMonth(row?.value, now);
+  }
+
+  closeMonth(period: string | undefined, now = Date.now()): void {
+    this.db.transaction(() => {
+      if (period) {
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO duel_trophies (chat_id, period, name_norm, name, score)
+             SELECT w.chat_id, ?, w.name_norm, w.name, w.wins FROM duel_wins w
+             WHERE w.wins > 0 AND w.wins = (
+               SELECT MAX(wins) FROM duel_wins WHERE chat_id = w.chat_id
+             )`,
+          )
+          .run(period);
+        this.db.prepare("DELETE FROM duel_wins").run();
+      }
+      this.db
+        .prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run(DUEL_PERIOD_KEY, monthKey(now));
+    })();
+  }
+
+  // Record a duel win for a player. Returns their new monthly win count.
+  add(chatId: string, nameNorm: string, name: string, now = Date.now()): number {
+    this.rollover(now);
+    this.db
+      .prepare(
+        `INSERT INTO duel_wins (chat_id, name_norm, name, wins) VALUES (?, ?, ?, 1)
+         ON CONFLICT(chat_id, name_norm) DO UPDATE SET wins = wins + 1, name = excluded.name`,
+      )
+      .run(chatId, nameNorm, name);
+    this.db
+      .prepare(
+        `INSERT INTO duel_totals (chat_id, name_norm, name, total) VALUES (?, ?, ?, 1)
+         ON CONFLICT(chat_id, name_norm) DO UPDATE SET total = total + 1, name = excluded.name`,
+      )
+      .run(chatId, nameNorm, name);
+    const win = this.db
+      .prepare("SELECT wins FROM duel_wins WHERE chat_id = ? AND name_norm = ?")
+      .get(chatId, nameNorm) as { wins: number };
+    return win.wins;
+  }
+
+  top(chatId: string, limit = 5, now = Date.now()): DuelWin[] {
+    this.rollover(now);
+    return this.db
+      .prepare("SELECT name, wins FROM duel_wins WHERE chat_id = ? ORDER BY wins DESC LIMIT ?")
+      .all(chatId, limit) as DuelWin[];
+  }
+
+  allTime(chatId: string, limit = 5): { name: string; total: number }[] {
+    return this.db
+      .prepare("SELECT name, total FROM duel_totals WHERE chat_id = ? ORDER BY total DESC LIMIT ?")
+      .all(chatId, limit) as { name: string; total: number }[];
+  }
+
+  trophies(chatId: string, limit = 5): TriviaTrophy[] {
+    return this.db
+      .prepare(
+        `SELECT MAX(name) AS name, COUNT(*) AS trophies FROM duel_trophies
+         WHERE chat_id = ? GROUP BY name_norm ORDER BY trophies DESC, name LIMIT ?`,
+      )
+      .all(chatId, limit) as TriviaTrophy[];
   }
 }
