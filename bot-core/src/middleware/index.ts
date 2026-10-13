@@ -55,6 +55,76 @@ export function dedupe(seen: SeenStore): Middleware {
   };
 }
 
+// Matches any Instagram link (posts, reels, stories, profiles) in a message.
+const INSTAGRAM_LINK = /\b(?:https?:\/\/)?(?:www\.)?(?:instagram\.com|instagr\.am)\/\S*/i;
+
+// Instagram shares often arrive as a video/image link preview, so the URL lives
+// in the caption or the preview metadata rather than the plain message text.
+function instagramLinkText(ctx: Context): string {
+  const parts: (string | null | undefined)[] = [ctx.text];
+  const m = ctx.msg.raw.message;
+  if (m) {
+    const ext = m.extendedTextMessage;
+    if (ext) parts.push(ext.text, ext.matchedText, ext.title, ext.description);
+    parts.push(m.videoMessage?.caption, m.imageMessage?.caption);
+    const ad =
+      m.extendedTextMessage?.contextInfo?.externalAdReply ??
+      m.videoMessage?.contextInfo?.externalAdReply ??
+      m.imageMessage?.contextInfo?.externalAdReply;
+    if (ad) parts.push(ad.sourceUrl, ad.title, ad.body);
+  }
+  return parts.filter(Boolean).join(" ");
+}
+
+// Does the message's sender match one of the configured targets? An empty target
+// list means "everyone". Entries may be a JID, a phone number, or a display name.
+function matchesInstagramTarget(ctx: Context, targets: string[]): boolean {
+  if (targets.length === 0) return true;
+  const phone = ctx.msg.senderPhone.replace(/\D/g, "");
+  const nameNorm = normalizeName(ctx.msg.senderName);
+  for (const raw of targets) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    if (entry.includes("@")) {
+      if (entry === ctx.msg.senderId || (phone && entry === `${phone}@s.whatsapp.net`)) return true;
+      continue;
+    }
+    const digits = entry.replace(/\D/g, "");
+    if (/^\+?[\d ()-]+$/.test(entry) && digits.length >= 6) {
+      if (digits === phone) return true;
+      continue;
+    }
+    if (nameNorm && normalizeName(entry) === nameNorm) return true;
+  }
+  return false;
+}
+
+// Moderation: delete (for everyone) any message containing an Instagram link when
+// enabled, optionally restricted to specific senders. Deletion only succeeds in
+// groups where the bot is an admin (or on the bot's own messages); failures are
+// logged and otherwise ignored.
+export function instagramGuard(logger: Logger): Middleware {
+  return async (ctx, next) => {
+    if (
+      ctx.config.deleteInstagramPosts &&
+      INSTAGRAM_LINK.test(instagramLinkText(ctx)) &&
+      matchesInstagramTarget(ctx, ctx.config.instagramDeleteSenders)
+    ) {
+      try {
+        await ctx.deleteMessage();
+        logger.info(
+          { chat: ctx.msg.chatName, sender: ctx.msg.senderName },
+          "deleted Instagram post",
+        );
+      } catch (err) {
+        logger.warn({ err }, "failed to delete Instagram post (bot may not be group admin)");
+      }
+      return;
+    }
+    await next();
+  };
+}
+
 // Ignore media unless explicitly enabled in config, EXCEPT media whose caption
 // carries a bot command (e.g. a photo captioned `bot.paint ...` for img2img).
 export const mediaPolicy: Middleware = async (ctx, next) => {

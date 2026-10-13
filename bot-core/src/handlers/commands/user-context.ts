@@ -1,5 +1,7 @@
 import type { UserMemoryStore, KnownUser } from "../../state/repos.js";
 import type { IncomingMessage } from "../../transport/types.js";
+import type { BotConfig } from "../../config/schema.js";
+import type { ProfileService } from "../profiles/service.js";
 import { normalizeName } from "../../router/normalize.js";
 
 const MAX_MSG_LEN = 200;
@@ -8,6 +10,24 @@ const MAX_MSG_LEN = 200;
 // person across a DM @lid and a group), otherwise the raw jid/lid. Never the name.
 export function senderKey(msg: IncomingMessage): string {
   return msg.senderPhone || msg.senderId;
+}
+
+// Record a piece of text under the sender's identity and schedule a profile
+// refresh, honoring the userMemoryEnabled gate. Shared by bot.ask/tldr/translate
+// so command inputs (not just free-form chatter) enrich profiles.
+export function rememberMessage(
+  store: UserMemoryStore,
+  profiler: ProfileService,
+  msg: IncomingMessage,
+  cfg: BotConfig,
+  text: string,
+): void {
+  if (!cfg.userMemoryEnabled) return;
+  const name = msg.senderName?.trim();
+  const key = senderKey(msg);
+  if (!key || !name || !text.trim()) return;
+  store.record(key, name, msg.chatName || null, text, cfg.userMemoryLimit);
+  profiler.maybeRefresh(key, name);
 }
 
 function sampleLines(store: UserMemoryStore, senderKey: string, limit: number): string[] {

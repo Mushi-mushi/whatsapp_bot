@@ -1,4 +1,4 @@
-import type { WAMessage } from "@whiskeysockets/baileys";
+import type { WAMessage, WAMessageKey } from "@whiskeysockets/baileys";
 
 export type MessageKind = "text" | "audio" | "image" | "video" | "sticker" | "other";
 
@@ -44,6 +44,7 @@ export interface Transport {
   sendReply(chatId: string, text: string, quoted: WAMessage): Promise<void>;
   sendImage(chatId: string, image: Buffer, caption?: string): Promise<void>;
   sendVideo(chatId: string, video: Buffer, caption?: string): Promise<void>;
+  deleteMessage(chatId: string, key: WAMessageKey): Promise<void>;
   downloadAudio(raw: WAMessage): Promise<Buffer>;
   downloadImage(raw: WAMessage): Promise<Buffer>;
   downloadQuotedImage(raw: WAMessage): Promise<Buffer | null>;

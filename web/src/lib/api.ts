@@ -36,6 +36,8 @@ export interface BotConfig {
   paintGuidance: number;
   botReplyPrefix: string;
   acknowledgeMedia: boolean;
+  deleteInstagramPosts: boolean;
+  instagramDeleteSenders: string[];
   respondToOwnCommands: boolean;
   approvedSenders: string[];
   commands: Record<string, string>;

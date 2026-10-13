@@ -1,7 +1,10 @@
 import type { Handler } from "../../router/router.js";
+import type { UserMemoryStore } from "../../state/repos.js";
+import type { ProfileService } from "../profiles/service.js";
 import { ollamaChat, ollamaErrorMessage } from "../../util/ollama.js";
 import { decodeEntities, extractReadable, isSafeHttpUrl } from "../../util/net.js";
 import { fetchPublicText } from "../../util/public-http.js";
+import { rememberMessage } from "./user-context.js";
 
 function readerFallbackUrls(url: string): string[] {
   const stripped = url.replace(/^https?:\/\//i, "");
@@ -135,17 +138,18 @@ async function fetchRedditOembed(postUrl: string): Promise<{
 }
 
 // bot.tldr <url> — fetch a web page and summarize it with the local LLM.
-export const tldr: Handler = async (ctx) => {
-  const cfg = ctx.config;
-  if (!cfg.askEnabled) {
-    await ctx.reply("AI features are disabled (enable them in Settings).");
-    return;
-  }
-  const url = ctx.args.trim().split(/\s+/)[0];
-  if (!url || !isSafeHttpUrl(url)) {
-    await ctx.reply("Usage: `bot.tldr https://example.com/article` (public http/https pages only).");
-    return;
-  }
+export function makeTldr(userMemory: UserMemoryStore, profiler: ProfileService): Handler {
+  return async (ctx) => {
+    const cfg = ctx.config;
+    if (!cfg.askEnabled) {
+      await ctx.reply("AI features are disabled (enable them in Settings).");
+      return;
+    }
+    const url = ctx.args.trim().split(/\s+/)[0];
+    if (!url || !isSafeHttpUrl(url)) {
+      await ctx.reply("Usage: `bot.tldr https://example.com/article` (public http/https pages only).");
+      return;
+    }
 
   let title = "";
   let text = "";
@@ -254,4 +258,8 @@ export const tldr: Handler = async (ctx) => {
   const rssHint = usedRedditRss ? " (reddit rss)" : "";
   const metadataHint = metadataOnly ? " (metadata fallback)" : "";
   await ctx.reply(`📰 ${title ? `${title}${sourceHint}${rssHint}${metadataHint}\n` : ""}${r.content}`);
-};
+
+    // What people choose to read is strong interest signal.
+    rememberMessage(userMemory, profiler, ctx.msg, cfg, `(shared a link) ${title ? `${title} — ` : ""}${url}`);
+  };
+}

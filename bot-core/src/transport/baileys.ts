@@ -468,6 +468,13 @@ export class BaileysTransport implements Transport {
     if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
   }
 
+  // Delete a message for everyone. In groups this requires the bot to be an admin;
+  // in DMs only the bot's own messages can be removed for everyone.
+  async deleteMessage(chatId: string, key: WAMessageKey): Promise<void> {
+    if (!this.sock) throw new Error("Transport not started");
+    await this.sock.sendMessage(chatId, { delete: key });
+  }
+
   // Bounded message-content cache used to answer decryption retry receipts.
   private cacheMessage(id: string, content: WAMessageContent): void {
     this.messageCache.set(id, content);

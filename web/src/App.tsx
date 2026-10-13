@@ -21,8 +21,9 @@ type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory";
 const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
   connection: [],
   general: [
-    "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia",
-    "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl", "transcriptionTimeoutSeconds",
+    "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia", "deleteInstagramPosts",
+    "instagramDeleteSenders", "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl",
+    "transcriptionTimeoutSeconds",
   ],
   access: ["approvedSenders"],
   ai: [

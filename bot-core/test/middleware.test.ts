@@ -3,6 +3,7 @@ import {
   approvedSenderGuard,
   dedupe,
   ignoreOwn,
+  instagramGuard,
   mediaPolicy,
   siestaGuard,
 } from "../src/middleware/index.js";
@@ -13,11 +14,14 @@ import { openDatabase } from "../src/state/db.js";
 import { SeenStore } from "../src/state/repos.js";
 import type { IncomingMessage, MessageKind } from "../src/transport/types.js";
 import type { WAMessage } from "@whiskeysockets/baileys";
+import type { Logger } from "pino";
+
+const silentLogger = { info: () => {}, warn: () => {}, error: () => {} } as unknown as Logger;
 
 function makeCtx(
   msgOverrides: Partial<IncomingMessage> = {},
   configOverrides: Partial<BotConfig> = {},
-): { ctx: Context; sendText: ReturnType<typeof vi.fn> } {
+): { ctx: Context; sendText: ReturnType<typeof vi.fn>; deleteMessage: ReturnType<typeof vi.fn> } {
   const kind: MessageKind = msgOverrides.kind ?? "text";
   const msg: IncomingMessage = {
     chatId: "c@s.whatsapp.net",
@@ -31,15 +35,16 @@ function makeCtx(
     text: kind === "text" ? "hello" : null,
     kind,
     timestamp: Date.now(),
-    raw: {} as WAMessage,
+    raw: { key: { id: "m1", remoteJid: "c@s.whatsapp.net" } } as WAMessage,
     ...msgOverrides,
   };
   const sendText = vi.fn(async () => {});
+  const deleteMessage = vi.fn(async () => {});
   const services: Services = {
-    transport: { sendText } as unknown as Services["transport"],
+    transport: { sendText, deleteMessage } as unknown as Services["transport"],
     getConfig: () => ({ ...DEFAULT_CONFIG, ...configOverrides }),
   };
-  return { ctx: new Context(msg, services), sendText };
+  return { ctx: new Context(msg, services), sendText, deleteMessage };
 }
 
 const nextSpy = () => {
@@ -166,6 +171,126 @@ describe("mediaPolicy", () => {
     const { next, called } = nextSpy();
     await mediaPolicy(ctx, next);
     expect(called.value).toBe(true);
+  });
+});
+
+describe("instagramGuard", () => {
+  it("deletes a message with an Instagram link when enabled", async () => {
+    const { ctx, deleteMessage } = makeCtx(
+      { text: "look at this https://www.instagram.com/p/ABC123/" },
+      { deleteInstagramPosts: true },
+    );
+    const { next, called } = nextSpy();
+    await instagramGuard(silentLogger)(ctx, next);
+    expect(deleteMessage).toHaveBeenCalledOnce();
+    expect(called.value).toBe(false);
+  });
+
+  it("matches reel, story and instagr.am short links", async () => {
+    for (const link of [
+      "https://instagram.com/reel/XYZ",
+      "instagram.com/stories/user/123",
+      "https://instagr.am/p/ABC",
+    ]) {
+      const { ctx, deleteMessage } = makeCtx({ text: link }, { deleteInstagramPosts: true });
+      const { next } = nextSpy();
+      await instagramGuard(silentLogger)(ctx, next);
+      expect(deleteMessage).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("leaves messages alone when disabled", async () => {
+    const { ctx, deleteMessage } = makeCtx(
+      { text: "https://www.instagram.com/p/ABC123/" },
+      { deleteInstagramPosts: false },
+    );
+    const { next, called } = nextSpy();
+    await instagramGuard(silentLogger)(ctx, next);
+    expect(deleteMessage).not.toHaveBeenCalled();
+    expect(called.value).toBe(true);
+  });
+
+  it("ignores non-Instagram links", async () => {
+    const { ctx, deleteMessage } = makeCtx(
+      { text: "check https://example.com/instagram" },
+      { deleteInstagramPosts: true },
+    );
+    const { next, called } = nextSpy();
+    await instagramGuard(silentLogger)(ctx, next);
+    expect(deleteMessage).not.toHaveBeenCalled();
+    expect(called.value).toBe(true);
+  });
+
+  it("passes through when deletion fails (e.g. bot not admin)", async () => {
+    const { ctx, deleteMessage } = makeCtx(
+      { text: "https://www.instagram.com/p/ABC123/" },
+      { deleteInstagramPosts: true },
+    );
+    deleteMessage.mockRejectedValueOnce(new Error("not admin"));
+    const { next, called } = nextSpy();
+    await instagramGuard(silentLogger)(ctx, next);
+    expect(deleteMessage).toHaveBeenCalledOnce();
+    expect(called.value).toBe(false);
+  });
+
+  it("only deletes from a targeted sender (by phone)", async () => {
+    const link = "https://www.instagram.com/p/ABC123/";
+    const targets = { deleteInstagramPosts: true, instagramDeleteSenders: ["34696451685"] };
+
+    const hit = makeCtx({ text: link, senderPhone: "34696451685" }, targets);
+    await instagramGuard(silentLogger)(hit.ctx, async () => {});
+    expect(hit.deleteMessage).toHaveBeenCalledOnce();
+
+    const miss = makeCtx({ text: link, senderPhone: "99999999999" }, targets);
+    const { next, called } = nextSpy();
+    await instagramGuard(silentLogger)(miss.ctx, next);
+    expect(miss.deleteMessage).not.toHaveBeenCalled();
+    expect(called.value).toBe(true);
+  });
+
+  it("matches a targeted sender by display name", async () => {
+    const { ctx, deleteMessage } = makeCtx(
+      { text: "https://instagram.com/reel/x", senderName: "Bob" },
+      { deleteInstagramPosts: true, instagramDeleteSenders: ["bob"] },
+    );
+    await instagramGuard(silentLogger)(ctx, async () => {});
+    expect(deleteMessage).toHaveBeenCalledOnce();
+  });
+
+  it("detects a link in a video-preview caption (kind video, no text)", async () => {
+    const { ctx, deleteMessage } = makeCtx(
+      {
+        kind: "video",
+        text: null,
+        raw: {
+          key: { id: "m1", remoteJid: "g@g.us" },
+          message: { videoMessage: { caption: "https://www.instagram.com/reel/Dabc/?x=1" } },
+        } as unknown as WAMessage,
+      },
+      { deleteInstagramPosts: true },
+    );
+    await instagramGuard(silentLogger)(ctx, async () => {});
+    expect(deleteMessage).toHaveBeenCalledOnce();
+  });
+
+  it("detects a link in extendedText preview metadata", async () => {
+    const { ctx, deleteMessage } = makeCtx(
+      {
+        text: "check this out",
+        raw: {
+          key: { id: "m1", remoteJid: "g@g.us" },
+          message: {
+            extendedTextMessage: {
+              text: "check this out",
+              matchedText: "https://instagram.com/p/Dabc",
+            },
+          },
+        } as unknown as WAMessage,
+      },
+      { deleteInstagramPosts: true },
+    );
+    await instagramGuard(silentLogger)(ctx, async () => {});
+    expect(deleteMessage).toHaveBeenCalledOnce();
   });
 });
 

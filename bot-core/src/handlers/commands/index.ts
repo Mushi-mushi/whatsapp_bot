@@ -32,13 +32,15 @@ import { makeSeen } from "./seen.js";
 import { makeTell } from "./tell.js";
 import { makeRemind } from "./remind.js";
 import { makeKarma } from "./karma.js";
-import { translate } from "./translate.js";
-import { tldr } from "./tldr.js";
+import { makeTranslate } from "./translate.js";
+import { makeTldr } from "./tldr.js";
 import { roll } from "./roll.js";
 import { makeTrivia } from "./trivia.js";
 import { paint } from "./paint.js";
 import { film } from "./film.js";
+import { makeInstaDelete } from "./instadelete.js";
 import type { ProfileService } from "../profiles/service.js";
+import type { ConfigController } from "../../config/controller.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
@@ -52,6 +54,7 @@ export interface CommandDeps {
   duelScores: DuelWinStore;
   userMemory: UserMemoryStore;
   profiler: ProfileService;
+  settings: ConfigController;
 }
 
 // Command name (config value) -> handler. Add new commands here.
@@ -79,11 +82,12 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     tell: makeTell(deps.tells),
     remind: makeRemind(deps.reminders),
     karma: makeKarma(deps.karma),
-    translate,
-    tldr,
+    translate: makeTranslate(deps.userMemory, deps.profiler),
+    tldr: makeTldr(deps.userMemory, deps.profiler),
     roll,
     paint,
     film,
     trivia: makeTrivia(deps.runtime, deps.triviaScores, deps.duelScores),
+    instadelete: makeInstaDelete(deps.settings),
   };
 }

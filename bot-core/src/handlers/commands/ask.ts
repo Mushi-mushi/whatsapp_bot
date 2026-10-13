@@ -3,7 +3,7 @@ import type { UserMemoryStore } from "../../state/repos.js";
 import type { IncomingMessage } from "../../transport/types.js";
 import type { ProfileService } from "../profiles/service.js";
 import { ollamaChat, ollamaErrorMessage, type OllamaMessage } from "../../util/ollama.js";
-import { mentionedUsers, senderKey, userContextBlock } from "./user-context.js";
+import { mentionedUsers, rememberMessage, senderKey, userContextBlock } from "./user-context.js";
 
 // Pipe the user's prompt to a local Ollama model and reply with the answer.
 // When user memory is enabled, the system prompt is enriched with what the bot
@@ -37,6 +37,10 @@ export function makeAsk(userMemory: UserMemoryStore, profiler: ProfileService): 
 
     const r = await ollamaChat(cfg, messages);
     await ctx.reply(r.ok ? `🧠 ${r.content}` : ollamaErrorMessage(r, cfg.ollamaModel));
+
+    // The question itself is strong signal about the asker — record it (after the
+    // answer, so it isn't fed into its own context) to enrich their profile.
+    rememberMessage(userMemory, profiler, ctx.msg, cfg, `(asked the bot) ${prompt}`);
   };
 }
 

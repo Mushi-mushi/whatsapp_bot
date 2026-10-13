@@ -75,6 +75,14 @@ export const ConfigSchema = z.object({
   // Media (image/sticker/gif) handling: false = ignore silently.
   acknowledgeMedia: z.boolean().default(false),
 
+  // Moderation: when true, automatically delete (for everyone) any message that
+  // contains an Instagram link. Only works in groups where the bot is an admin.
+  deleteInstagramPosts: z.boolean().default(false),
+
+  // Restrict Instagram auto-delete to these senders (phone digits or display
+  // name). Empty = applies to everyone in approved chats.
+  instagramDeleteSenders: z.array(z.string()).default([]),
+
   // Let the owner run bot.* commands from their own linked phone (own messages).
   respondToOwnCommands: z.boolean().default(true),
 
@@ -120,5 +128,6 @@ export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
     "bot.trivia": "trivia",
     "bot.paint": "paint",
     "bot.film": "film",
+    "bot.instadelete": "instadelete",
   },
 });

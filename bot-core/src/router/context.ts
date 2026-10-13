@@ -56,6 +56,11 @@ export class Context {
     );
   }
 
+  // Delete the current message for everyone (needs group-admin rights in groups).
+  async deleteMessage(): Promise<void> {
+    await this.services.transport.deleteMessage(this.msg.chatId, this.msg.raw.key);
+  }
+
   async downloadAudio(): Promise<Buffer> {
     return this.services.transport.downloadAudio(this.msg.raw);
   }

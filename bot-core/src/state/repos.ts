@@ -9,8 +9,8 @@ const CONFIG_VERSION_KEY = "config_version";
 // into existing installs. v2 adds weather/fact/8ball/quote/siesta/complain/score/
 // top.positive/top.negative/torture/insults. v3 adds ask (Ollama). v4 adds
 // seen/tell/remind/karma. v5 adds translate/tldr/roll/trivia. v6 adds paint.
-// v7 adds film. v8 adds meteo. v9 adds profile.
-const CONFIG_VERSION = 9;
+// v7 adds film. v8 adds meteo. v9 adds profile. v10 adds instadelete.
+const CONFIG_VERSION = 10;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {

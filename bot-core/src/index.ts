@@ -20,6 +20,7 @@ import { RuntimeState } from "./state/runtime.js";
 import { OutboxStore } from "./state/outbox.js";
 import { DeliveryWorker } from "./state/deliveries.js";
 import type { BotConfig } from "./config/schema.js";
+import type { ConfigController } from "./config/controller.js";
 import { BaileysTransport } from "./transport/baileys.js";
 import { Bot } from "./router/router.js";
 import { BackgroundJobs } from "./router/jobs.js";
@@ -29,6 +30,7 @@ import {
   approvedSenderGuard,
   dedupe,
   ignoreOwn,
+  instagramGuard,
   logging,
   mediaPolicy,
   siestaGuard,
@@ -70,6 +72,21 @@ async function main(): Promise<void> {
   let config: BotConfig = configStore.load();
   const getConfig = () => config;
 
+  // Reload cached config and re-apply command registration after a config change.
+  const reloadConfig = () => {
+    config = configStore.load();
+    registerCommands(config);
+  };
+  // Lets commands (e.g. bot.instadelete) persist a config change and apply it live.
+  const settings: ConfigController = {
+    get: getConfig,
+    update: (patch) => {
+      const saved = configStore.save({ ...configStore.load(), ...patch });
+      reloadConfig();
+      return saved;
+    },
+  };
+
   const transport = new BaileysTransport({
     authDir: AUTH_DIR,
     logger,
@@ -90,6 +107,7 @@ async function main(): Promise<void> {
     .use(approvedSenderGuard)
     .use(siestaGuard(runtime))
     .use(dedupe(seen))
+    .use(instagramGuard(logger))
     .use(activityTracker(seenActivity, tells))
     .use(mediaPolicy);
 
@@ -110,6 +128,7 @@ async function main(): Promise<void> {
     duelScores,
     userMemory,
     profiler,
+    settings,
   });
   const registerCommands = (cfg: BotConfig) => {
     bot.clearCommands();
@@ -144,10 +163,7 @@ async function main(): Promise<void> {
       logger,
       apiToken: API_TOKEN,
       allowInsecureApi: process.env.ALLOW_INSECURE_API === "true",
-      onConfigChange: () => {
-        config = configStore.load();
-        registerCommands(config); // Apply added/removed commands live, no restart needed.
-      },
+      onConfigChange: reloadConfig,
     },
     API_PORT,
   );
