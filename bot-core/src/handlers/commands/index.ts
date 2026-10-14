@@ -27,8 +27,10 @@ import { makeTopNegative, makeTopPositive } from "./top.js";
 import { makeTorture } from "./torture.js";
 import { makeInsults } from "./insults.js";
 import { makeAsk } from "./ask.js";
+import { makeAsUser } from "./asuser.js";
 import { makeProfile } from "./profile.js";
 import { makeSeen } from "./seen.js";
+import { whoami } from "./whoami.js";
 import { makeTell } from "./tell.js";
 import { makeRemind } from "./remind.js";
 import { makeKarma } from "./karma.js";
@@ -77,8 +79,10 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     torture: makeTorture(deps.runtime),
     insults: makeInsults(deps.runtime),
     ask: makeAsk(deps.userMemory, deps.profiler),
+    as_user: makeAsUser(deps.userMemory, deps.profiler),
     profile: makeProfile(deps.userMemory, deps.profiler),
     seen: makeSeen(deps.seenActivity),
+    whoami,
     tell: makeTell(deps.tells),
     remind: makeRemind(deps.reminders),
     karma: makeKarma(deps.karma),

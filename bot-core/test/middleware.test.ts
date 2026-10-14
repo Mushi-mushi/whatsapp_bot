@@ -4,6 +4,7 @@ import {
   dedupe,
   ignoreOwn,
   instagramGuard,
+  learnFromOwner,
   mediaPolicy,
   siestaGuard,
 } from "../src/middleware/index.js";
@@ -148,6 +149,81 @@ describe("ignoreOwn", () => {
     const { next, called } = nextSpy();
     await ignoreOwn(runtime)(ctx, next);
     expect(called.value).toBe(false);
+  });
+});
+
+describe("learnFromOwner", () => {
+  const stubProfiler = () => ({ maybeRefresh: vi.fn() });
+  const stubMemory = () => ({ record: vi.fn() });
+  const stubSeen = () => ({ record: vi.fn() });
+
+  it("records the owner's own chatter", async () => {
+    const memory = stubMemory();
+    const profiler = stubProfiler();
+    const seen = stubSeen();
+    const { ctx } = makeCtx({ fromMe: true, text: "I love climbing on weekends", senderName: "Baptiste" });
+    const { next, called } = nextSpy();
+    await learnFromOwner(memory as never, profiler as never, seen as never)(ctx, next);
+    expect(memory.record).toHaveBeenCalledOnce();
+    expect(profiler.maybeRefresh).toHaveBeenCalledOnce();
+    expect(called.value).toBe(true);
+  });
+
+  it("tracks activity so others can bot.seen the owner", async () => {
+    const memory = stubMemory();
+    const profiler = stubProfiler();
+    const seen = stubSeen();
+    const { ctx } = makeCtx({ fromMe: true, text: "heading out climbing", senderName: "Baptiste" });
+    const { next } = nextSpy();
+    await learnFromOwner(memory as never, profiler as never, seen as never)(ctx, next);
+    expect(seen.record).toHaveBeenCalledWith("baptiste", "Baptiste", expect.any(Number), null);
+  });
+
+  it("tracks short activity but does not add it to the profile", async () => {
+    const memory = stubMemory();
+    const profiler = stubProfiler();
+    const seen = stubSeen();
+    const { ctx } = makeCtx({ fromMe: true, text: "ok", senderName: "Baptiste" });
+    const { next } = nextSpy();
+    await learnFromOwner(memory as never, profiler as never, seen as never)(ctx, next);
+    expect(seen.record).toHaveBeenCalledOnce();
+    expect(memory.record).not.toHaveBeenCalled();
+  });
+
+  it("skips the bot's own prefixed replies", async () => {
+    const memory = stubMemory();
+    const profiler = stubProfiler();
+    const seen = stubSeen();
+    const { ctx } = makeCtx({ fromMe: true, text: "🤖 *WhatsApp Bot:*\nBaptiste was last seen 17d ago." });
+    const { next, called } = nextSpy();
+    await learnFromOwner(memory as never, profiler as never, seen as never)(ctx, next);
+    expect(memory.record).not.toHaveBeenCalled();
+    expect(seen.record).not.toHaveBeenCalled();
+    expect(called.value).toBe(true);
+  });
+
+  it("skips the owner's own command inputs", async () => {
+    const memory = stubMemory();
+    const profiler = stubProfiler();
+    const seen = stubSeen();
+    const { ctx } = makeCtx({ fromMe: true, text: "bot.seen baptiste" });
+    const { next, called } = nextSpy();
+    await learnFromOwner(memory as never, profiler as never, seen as never)(ctx, next);
+    expect(memory.record).not.toHaveBeenCalled();
+    expect(seen.record).not.toHaveBeenCalled();
+    expect(called.value).toBe(true);
+  });
+
+  it("ignores messages from other people", async () => {
+    const memory = stubMemory();
+    const profiler = stubProfiler();
+    const seen = stubSeen();
+    const { ctx } = makeCtx({ fromMe: false, text: "I love climbing on weekends" });
+    const { next, called } = nextSpy();
+    await learnFromOwner(memory as never, profiler as never, seen as never)(ctx, next);
+    expect(memory.record).not.toHaveBeenCalled();
+    expect(seen.record).not.toHaveBeenCalled();
+    expect(called.value).toBe(true);
   });
 });
 

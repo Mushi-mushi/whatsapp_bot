@@ -31,6 +31,7 @@ import {
   dedupe,
   ignoreOwn,
   instagramGuard,
+  learnFromOwner,
   logging,
   mediaPolicy,
   siestaGuard,
@@ -102,6 +103,7 @@ async function main(): Promise<void> {
   const jobs = new BackgroundJobs((err) => logger.error({ err }, "background job failed"));
   const profiler = new ProfileService(userMemory, userProfiles, jobs, getConfig, logger);
   bot
+    .use(learnFromOwner(userMemory, profiler, seenActivity))
     .use(ignoreOwn(runtime))
     .use(logging(logger))
     .use(approvedSenderGuard)
@@ -134,7 +136,7 @@ async function main(): Promise<void> {
     bot.clearCommands();
     for (const [trigger, name] of Object.entries(cfg.commands)) {
       const handler = commandRegistry[name];
-      if (handler) bot.command(trigger, ["ask", "profile", "translate", "tldr", "paint", "film"].includes(name) ? jobs.wrap(handler) : handler);
+      if (handler) bot.command(trigger, ["ask", "as_user", "profile", "translate", "tldr", "paint", "film"].includes(name) ? jobs.wrap(handler) : handler);
       else logger.warn({ trigger, name }, "No handler registered for command");
     }
   };

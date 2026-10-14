@@ -9,8 +9,9 @@ const CONFIG_VERSION_KEY = "config_version";
 // into existing installs. v2 adds weather/fact/8ball/quote/siesta/complain/score/
 // top.positive/top.negative/torture/insults. v3 adds ask (Ollama). v4 adds
 // seen/tell/remind/karma. v5 adds translate/tldr/roll/trivia. v6 adds paint.
-// v7 adds film. v8 adds meteo. v9 adds profile. v10 adds instadelete.
-const CONFIG_VERSION = 10;
+// v7 adds film. v8 adds meteo. v9 adds profile. v10 adds instadelete. v11 adds whoami.
+// v12 adds ask.raw (no-profile ask) and as (impersonate a profiled user).
+const CONFIG_VERSION = 12;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {
@@ -310,6 +311,17 @@ export class UserMemoryStore {
          WHERE name_norm = ? ORDER BY id DESC LIMIT 1`,
       )
       .get(nameNorm) as KnownUser | undefined;
+  }
+
+  // Like keyForName, but only among people who have spoken in a given chat — used
+  // to restrict profile lookups to participants of the current chat.
+  keyForNameInChat(nameNorm: string, chatName: string): KnownUser | undefined {
+    return this.db
+      .prepare(
+        `SELECT sender_key, name, name_norm FROM user_messages
+         WHERE name_norm = ? AND chat_name = ? ORDER BY id DESC LIMIT 1`,
+      )
+      .get(nameNorm, chatName) as KnownUser | undefined;
   }
 
   // Distinct identities the bot has heard from (most recently active first).

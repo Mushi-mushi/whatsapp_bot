@@ -177,4 +177,19 @@ describe("background jobs", () => {
     expect(errors).toHaveLength(1);
     expect(ran).toBe(true);
   });
+
+  it("queues a few jobs per key (FIFO) and rejects beyond the limit", async () => {
+    const queue = new BackgroundJobs(() => {});
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const order: string[] = [];
+    // First runs and blocks; two more queue behind it; the fourth exceeds maxPerKey=3.
+    expect(queue.submit("chat", async () => { await gate; order.push("a"); }, 3)).toBe(true);
+    expect(queue.submit("chat", async () => { order.push("b"); }, 3)).toBe(true);
+    expect(queue.submit("chat", async () => { order.push("c"); }, 3)).toBe(true);
+    expect(queue.submit("chat", async () => { order.push("d"); }, 3)).toBe(false);
+    release();
+    await queue.stop();
+    expect(order).toEqual(["a", "b", "c"]);
+  });
 });

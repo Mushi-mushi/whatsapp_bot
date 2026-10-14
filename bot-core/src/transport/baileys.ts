@@ -384,13 +384,17 @@ export class BaileysTransport implements Transport {
     const chatId = raw.key.remoteJid;
     const isGroup = chatId.endsWith("@g.us");
     const fromMe = !!raw.key.fromMe;
-    const senderId = isGroup ? raw.key.participant ?? chatId : chatId;
+    // Our own messages carry the chat partner's jid in the key, so attribute them
+    // to the linked account instead — otherwise the owner's profile/activity would
+    // be keyed to whoever they were talking to.
+    const ownJid = fromMe ? this.sock?.user?.id : undefined;
+    const senderId = ownJid ?? (isGroup ? raw.key.participant ?? chatId : chatId);
 
     // WhatsApp now routes DMs under an opaque LID; the real phone JID (when the
     // chat id is a @lid) arrives in senderPn / participantPn.
     const key = raw.key as { senderPn?: string; participantPn?: string };
     const phoneJid = (isGroup ? key.participantPn : key.senderPn) ?? undefined;
-    const phoneSource = phoneJid ?? (senderId.endsWith("@s.whatsapp.net") ? senderId : "");
+    const phoneSource = ownJid ?? phoneJid ?? (senderId.endsWith("@s.whatsapp.net") ? senderId : "");
     const senderPhone = phoneSource.split("@")[0].split(":")[0].replace(/\D/g, "");
 
     const m = raw.message;
@@ -432,7 +436,7 @@ export class BaileysTransport implements Transport {
       chatId,
       chatName,
       senderId,
-      senderName: raw.pushName ?? senderId,
+      senderName: (fromMe ? this.sock?.user?.name ?? this.sock?.user?.notify : null) ?? raw.pushName ?? senderId,
       senderPhone,
       messageId: raw.key.id ?? "",
       fromMe,

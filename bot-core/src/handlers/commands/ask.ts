@@ -27,7 +27,9 @@ export function makeAsk(userMemory: UserMemoryStore, profiler: ProfileService): 
 
     const messages: OllamaMessage[] = [{ role: "system", content: system }];
 
-    const memory = buildMemoryPrompt(userMemory, profiler, cfg.userMemoryEnabled, cfg.userMemoryContext, {
+    // bot.ask.raw answers without personalising from the learned user profiles.
+    const useProfiles = cfg.userMemoryEnabled && !(ctx.commandTrigger ?? "").endsWith(".raw");
+    const memory = buildMemoryPrompt(userMemory, profiler, useProfiles, cfg.userMemoryContext, {
       msg: ctx.msg,
       prompt,
     });

@@ -23,26 +23,41 @@ export function makeProfile(userMemory: UserMemoryStore, profiler: ProfileServic
     const askingSelf = target.length === 0;
 
     // Self → use the sender's own stable identity. Named → resolve the typed name
-    // back to the most-recently-active identity using it.
+    // back to an identity, but only among people active in THIS chat so you can't
+    // pull up the profile of someone who isn't here.
     let key: string;
     let displayName: string;
     if (askingSelf) {
       key = senderKey(ctx.msg);
       displayName = ctx.msg.senderName?.trim() || "you";
     } else {
-      const match = userMemory.keyForName(normalizeName(target));
+      const nameNorm = normalizeName(target);
+      const chatName = ctx.msg.chatName?.trim();
+      const match = chatName ? userMemory.keyForNameInChat(nameNorm, chatName) : userMemory.keyForName(nameNorm);
       if (!match) {
-        await ctx.reply(`I haven't heard from anyone called "${target}" yet.`);
+        const elsewhere = userMemory.keyForName(nameNorm);
+        await ctx.reply(
+          elsewhere
+            ? `"${target}" isn't active in this chat, so I won't share their profile here.`
+            : `I haven't heard from anyone called "${target}" yet.`,
+        );
         return;
       }
       key = match.sender_key;
       displayName = match.name;
     }
 
-    // Rebuild from the latest messages, falling back to any stored dossier.
-    const refreshed = await profiler.refresh(key, displayName, cfg);
-    const profile = refreshed ?? profiler.deepFor(key);
-    if (!profile) {
+    // Fast path: return the stored dossier instantly and refresh in the background
+    // for next time. Only block on the (slow) LLM build when none exists yet.
+    const existing = profiler.deepFor(key);
+    if (existing) {
+      await ctx.reply(`🪪 ${displayName}\n${existing.deep}`);
+      profiler.maybeRefresh(key, displayName);
+      return;
+    }
+
+    const built = await profiler.refresh(key, displayName, cfg);
+    if (!built) {
       await ctx.reply(
         askingSelf
           ? "I haven't heard enough from you yet. Chat a bit and try again!"
@@ -51,6 +66,6 @@ export function makeProfile(userMemory: UserMemoryStore, profiler: ProfileServic
       return;
     }
 
-    await ctx.reply(`🪪 ${displayName}\n${profile.deep}`);
+    await ctx.reply(`🪪 ${displayName}\n${built.deep}`);
   };
 }

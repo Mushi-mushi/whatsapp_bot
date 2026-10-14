@@ -1,9 +1,39 @@
 import type { Logger } from "pino";
-import type { SeenActivityStore, SeenStore, TellStore } from "../state/repos.js";
+import type { SeenActivityStore, SeenStore, TellStore, UserMemoryStore } from "../state/repos.js";
 import type { RuntimeState } from "../state/runtime.js";
 import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
+import type { ProfileService } from "../handlers/profiles/service.js";
+import { rememberMessage } from "../handlers/commands/user-context.js";
 import { extractCommandToken, normalizeLooseName, normalizeName } from "../router/normalize.js";
+
+// Passively learn from the owner's own messages so they build a profile like
+// everyone else, and track their activity so others can `bot.seen` them. Runs
+// before ignoreOwn (which would otherwise drop this chatter). Skips the bot's own
+// prefixed replies and command inputs; the profile also skips very short noise.
+export function learnFromOwner(
+  userMemory: UserMemoryStore,
+  profiler: ProfileService,
+  seen: SeenActivityStore,
+): Middleware {
+  return async (ctx, next) => {
+    if (ctx.msg.fromMe) {
+      const text = ctx.text.trim();
+      const prefix = ctx.config.botReplyPrefix?.trim();
+      const isBotReply = !!prefix && text.startsWith(prefix);
+      if (!isBotReply && !extractCommandToken(text)) {
+        const strictName = normalizeName(ctx.msg.senderName);
+        if (strictName) {
+          seen.record(strictName, ctx.msg.senderName, Date.now(), ctx.msg.isGroup ? ctx.msg.chatName : null);
+        }
+        if (text.length >= 6) {
+          rememberMessage(userMemory, profiler, ctx.msg, ctx.config, text);
+        }
+      }
+    }
+    await next();
+  };
+}
 
 // Skip our own outgoing messages, except commands the owner types from the linked
 // phone (when enabled) and answers to an active game in the chat. The bot's own
