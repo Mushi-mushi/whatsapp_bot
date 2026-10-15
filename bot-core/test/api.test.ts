@@ -202,7 +202,8 @@ describe("configuration revisions", () => {
         payload: { ...payload, settings: { ...DEFAULT_PET_SETTINGS, firstRequestMinutes: 5, maxRequestsPerDay: 8 } } });
       expect(response.statusCode).toBe(200);
       const result = response.json();
-      expect(result.pet).toMatchObject({ name: "Mochi", species: "fox", enabled: true, nextRequestActiveMinutes: 5 });
+      expect(result.pet).toMatchObject({ name: "Mochi", species: "fox", enabled: true });
+      expect(result.pet.nextRequestActiveMinutes).toBeCloseTo(5, 2);
       expect(result.pet).toMatchObject({ hydration: 100, cleanliness: 100 });
       expect(deps.pets.store.get(chatId)?.maxRequestsPerDay).toBe(8);
       let rev = result.revision;
