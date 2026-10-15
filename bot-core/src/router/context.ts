@@ -36,6 +36,11 @@ export class Context {
     await this.services.transport.sendText(this.msg.chatId, this.withPrefix(text));
   }
 
+  async isGroupAdmin(): Promise<boolean> {
+    if (!this.services.transport.isGroupAdmin) throw new Error("Group admin lookup is unavailable");
+    return this.services.transport.isGroupAdmin(this.msg.chatId, this.msg.senderId);
+  }
+
   async quote(text: string): Promise<void> {
     await this.services.transport.sendReply(this.msg.chatId, this.withPrefix(text), this.msg.raw);
   }

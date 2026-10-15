@@ -4,6 +4,7 @@ import type { RuntimeState } from "../state/runtime.js";
 import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
+import type { PetService } from "../pets/service.js";
 import { rememberMessage } from "../handlers/commands/user-context.js";
 import { extractCommandToken, normalizeLooseName, normalizeName } from "../router/normalize.js";
 
@@ -17,7 +18,7 @@ export function learnFromOwner(
   seen: SeenActivityStore,
 ): Middleware {
   return async (ctx, next) => {
-    if (ctx.msg.fromMe) {
+    if (ctx.msg.fromMe && !ctx.msg.isBot) {
       const text = ctx.text.trim();
       const prefix = ctx.config.botReplyPrefix?.trim();
       const isBotReply = !!prefix && text.startsWith(prefix);
@@ -40,16 +41,25 @@ export function learnFromOwner(
 // prefixed replies are always ignored to avoid loops.
 export function ignoreOwn(runtime: RuntimeState): Middleware {
   return async (ctx, next) => {
+    if (ctx.msg.isBot) return;
     if (!ctx.msg.fromMe) {
       await next();
       return;
     }
+
     if (!ctx.config.respondToOwnCommands) return;
     const prefix = ctx.config.botReplyPrefix?.trim();
     if (prefix && ctx.text.trimStart().startsWith(prefix)) return;
     const gameActive =
       runtime.triviaGames.has(ctx.msg.chatId) || runtime.insultGames.has(ctx.msg.chatId);
     if (!extractCommandToken(ctx.text) && !gameActive) return;
+    await next();
+  };
+}
+
+export function petObserver(pets: PetService): Middleware {
+  return async (ctx, next) => {
+    pets.observe(ctx.msg);
     await next();
   };
 }

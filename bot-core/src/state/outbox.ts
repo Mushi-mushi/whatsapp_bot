@@ -8,6 +8,7 @@ export interface Delivery {
   body: string;
   claim_token: string;
   attempts: number;
+  pet_event_id?: string | null;
 }
 
 export class OutboxStore {
@@ -39,9 +40,23 @@ export class OutboxStore {
     })();
   }
 
-  sent(delivery: Delivery): void {
-    this.db.prepare("UPDATE outbox SET status = 'sent', lease_until = NULL, last_error = NULL WHERE id = ? AND claim_token = ? AND status = 'sending'")
+  sent(delivery: Delivery, onSent?: () => void): void {
+    this.db.transaction(() => {
+      const result = this.db.prepare("UPDATE outbox SET status = 'sent', lease_until = NULL, last_error = NULL WHERE id = ? AND claim_token = ? AND status = 'sending'")
+        .run(delivery.id, delivery.claim_token);
+      if (result.changes) onSent?.();
+    })();
+  }
+
+  cancel(delivery: Delivery): void {
+    this.db.prepare("UPDATE outbox SET status = 'cancelled', lease_until = NULL WHERE id = ? AND claim_token = ? AND status = 'sending'")
       .run(delivery.id, delivery.claim_token);
+  }
+
+  defer(delivery: Delivery, now: number): void {
+    this.db.prepare(`UPDATE outbox SET status = 'pending', attempts = attempts - 1,
+      available_at = ?, lease_until = NULL WHERE id = ? AND claim_token = ? AND status = 'sending'`)
+      .run(now + 15_000, delivery.id, delivery.claim_token);
   }
 
   failed(delivery: Delivery, error: unknown, now: number): void {

@@ -7,6 +7,11 @@ import { redactSecrets, restoreSecrets } from "../config/secrets.js";
 import type { ConfigStore, KnownChatsStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import type { Transport } from "../transport/types.js";
+import { ollamaListModels } from "../util/ollama.js";
+import { z } from "zod";
+import type { PetService } from "../pets/service.js";
+import { SPECIES, isSpecies, statusText, type Pet } from "../pets/model.js";
+import { DEFAULT_PET_SETTINGS, PetSettingsSchema, petSettings } from "../pets/settings.js";
 
 export interface ApiDeps {
   transport: Transport;
@@ -16,6 +21,7 @@ export interface ApiDeps {
   userMemory: UserMemoryStore;
   userProfiles: UserProfileStore;
   profiler: ProfileService;
+  pets: PetService;
   onConfigChange: () => void;
   logger: Logger;
   apiToken?: string;
@@ -87,6 +93,96 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   });
 
   app.get("/api/chats", async () => ({ chats: deps.knownChats.list() }));
+
+  const petSnapshot = (pet: Pet | undefined) => pet ? {
+    name: pet.name, species: pet.species, enabled: pet.enabled, paused: pet.paused,
+    settings: petSettings(pet),
+  } : null;
+  const petView = (pet: Pet | undefined) => pet ? {
+    ...petSnapshot(pet), stage: pet.stage, hunger: pet.hunger, happiness: pet.happiness,
+    hydration: pet.hydration, cleanliness: pet.cleanliness,
+    energy: pet.energy, hibernating: pet.hibernating, healthyDays: pet.healthyMs / 86_400_000,
+    status: statusText(pet),
+    evolution: deps.pets.evolutionStatus(pet),
+    nextRequestActiveMinutes: Math.max(0, (pet.nextRequest - pet.clock) / 60_000),
+    request: pet.request ? { kind: pet.request.kind, delivered: pet.request.startedAt !== null } : null,
+  } : null;
+  const petUpdateSchema = z.object({
+    action: z.enum(["save", "enable", "disable", "pause", "resume"]),
+    name: z.string().trim().min(1).max(40)
+      .refine((name) => ![...name].some((c) => c.charCodeAt(0) < 32), "Use a single-line name.")
+      .refine((name) => !/(?:^|\s)species=/i.test(name), "Choose species using the species selector, not the name."),
+    species: z.string().refine((value) => value === "random" || isSpecies(value), "Unknown pet species."),
+    settings: PetSettingsSchema,
+  }).strict();
+
+  app.get("/api/pets", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const config = deps.configStore.load();
+    const known = deps.knownChats.list();
+    const groups = config.approvedSenders.filter((id) => id.endsWith("@g.us")).map((id) => {
+      const pet = deps.pets.store.get(id);
+      return { id, name: known.find((chat) => chat.id === id)?.name ?? id,
+        pet: petView(pet), revision: revision(petSnapshot(pet)) };
+    });
+    return { groups, species: SPECIES, defaults: DEFAULT_PET_SETTINGS };
+  });
+
+  app.post<{ Params: { chatId: string } }>("/api/pets/:chatId/request", async (req, reply) => {
+    const chatId = req.params.chatId;
+    if (!chatId.endsWith("@g.us") || !deps.configStore.load().approvedSenders.includes(chatId)) {
+      return reply.code(403).send({ error: "This group must be approved before requesting a challenge." });
+    }
+    const parsed = z.object({
+      kind: z.enum(["random", "feed", "water", "clean", "play", "silence"]).default("random"),
+    }).strict().safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "Choose random, feed, water, clean, play or silence." });
+    const result = deps.pets.requestNow(chatId, Date.now(), parsed.data.kind === "random" ? undefined : parsed.data.kind);
+    if (!result.ok) return reply.code(409).send({ error: result.error });
+    const pet = deps.pets.store.get(chatId);
+    return reply.code(202).send({ pet: petView(pet), revision: revision(petSnapshot(pet)) });
+  });
+
+  app.post<{ Params: { chatId: string } }>("/api/pets/:chatId/evolve", async (req, reply) => {
+    const chatId = req.params.chatId;
+    if (!chatId.endsWith("@g.us") || !deps.configStore.load().approvedSenders.includes(chatId)) {
+      return reply.code(403).send({ error: "This group must be approved before evolving its pet." });
+    }
+    const parsed = z.object({ expectedStage: z.number().int().min(0).max(4) }).strict().safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Provide the current pet stage (0-4). Reload pets and try again." });
+    const result = deps.pets.evolveNow(chatId, parsed.data.expectedStage);
+    if (!result.ok) return reply.code(409).send({ error: result.error });
+    const pet = deps.pets.store.get(chatId);
+    return { pet: petView(pet), revision: revision(petSnapshot(pet)) };
+  });
+
+  app.put<{ Params: { chatId: string } }>("/api/pets/:chatId", async (req, reply) => {
+    const chatId = req.params.chatId;
+    if (!chatId.endsWith("@g.us") || !deps.configStore.load().approvedSenders.includes(chatId)) {
+      return reply.code(403).send({ error: "Save this group's approval in Access before managing its pet." });
+    }
+    const current = deps.pets.store.get(chatId);
+    if (!req.headers["if-match"]) return reply.code(428).send({ error: "Reload pets before saving." });
+    if (req.headers["if-match"] !== revision(petSnapshot(current))) {
+      return reply.code(412).send({ error: "Pet settings changed elsewhere. Reload pets before saving; your edits were not applied." });
+    }
+    const parsed = petUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues.map((issue) => issue.message).join(" ") });
+    const { action, name, species, settings } = parsed.data;
+    if (!current && action !== "enable") return reply.code(404).send({ error: "Spawn a pet first." });
+    if (current && species !== current.species) {
+      return reply.code(409).send({ error: "An existing pet's species cannot be changed or rerolled." });
+    }
+    deps.pets.store.transaction(() => {
+      if (action === "enable") {
+        deps.pets.command(chatId, "enable", `${name}${species === "random" ? "" : ` species=${species}`}`);
+      }
+      deps.pets.configure(chatId, settings, name);
+      if (action !== "save" && action !== "enable") deps.pets.command(chatId, action, "");
+    });
+    const saved = deps.pets.store.get(chatId);
+    return { pet: petView(saved), revision: revision(petSnapshot(saved)) };
+  });
 
   // Learned personality profiles (deep dossier + short briefing) per user.
   app.get("/api/profiles", async () => {
@@ -173,20 +269,13 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   });
 
   // List models available on the configured local Ollama instance.
-  app.get("/api/ollama/models", async (_req, reply) => {    const base = deps.configStore.load().ollamaBaseUrl.replace(/\/+$/, "");
-    try {
-      const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) {
-        reply.code(502);
-        return { ok: false, models: [] as string[] };
-      }
-      const data = (await res.json()) as { models?: { name?: string }[] };
-      const models = (data.models ?? []).map((m) => m.name).filter((n): n is string => !!n);
-      return { ok: true, models };
-    } catch (err) {
+  app.get("/api/ollama/models", async (_req, reply) => {
+    const r = await ollamaListModels(deps.configStore.load());
+    if (!r.ok) {
       reply.code(502);
-      return { ok: false, models: [] as string[], error: String(err) };
+      return { ok: false, models: [] as string[] };
     }
+    return { ok: true, models: r.models };
   });
 
   // Reachability check for the configured ComfyUI backend (bot.paint / bot.film).

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -43,6 +43,15 @@ async function openPrefix() {
 }
 
 describe("configuration editor", () => {
+  it("orders Connection and General first, with Pets after the existing tabs", async () => {
+    mount();
+    await screen.findByRole("button", { name: "Connection" });
+    expect(within(screen.getByRole("navigation")).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
+      "Connection", "General", "Access", "AI", "Paint & Film", "Memory & profiles", "Pets",
+    ]);
+    expect(screen.queryByLabelText("Prefix")).toBeNull();
+  });
+
   it("shows failed loading and a retry action", async () => {
     vi.mocked(api.getConfig).mockRejectedValue(new Error("offline"));
     mount();

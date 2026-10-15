@@ -118,6 +118,7 @@ export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
     "bot.insults": "insults",
     "bot.ask": "ask",
     "bot.ask.raw": "ask",
+    "bot.models": "models",
     "bot.as": "as_user",
     "bot.profile": "profile",
     "bot.seen": "seen",
@@ -132,5 +133,6 @@ export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
     "bot.paint": "paint",
     "bot.film": "film",
     "bot.instadelete": "instadelete",
+    "bot.pet": "pet",
   },
 });

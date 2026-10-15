@@ -16,8 +16,9 @@ export type OllamaResult =
 export async function ollamaChat(
   cfg: BotConfig,
   messages: OllamaMessage[],
-  opts: { numPredict?: number; numCtx?: number; timeoutMs?: number } = {},
+  opts: { numPredict?: number; numCtx?: number; timeoutMs?: number; model?: string } = {},
 ): Promise<OllamaResult> {
+  const model = opts.model?.trim() || cfg.ollamaModel;
   const numPredict = opts.numPredict ?? 512;
   // Keep the default context small so short commands (e.g. bot.ask) stay light;
   // callers with long inputs (e.g. bot.tldr) opt into a bigger window.
@@ -40,7 +41,7 @@ export async function ollamaChat(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: cfg.ollamaModel,
+        model,
         stream: true,
         // Configurable model-retention window (default = Ollama's own 5m).
         keep_alive: cfg.ollamaKeepAlive,
@@ -101,5 +102,23 @@ export function ollamaErrorMessage(
       return "I couldn't reach Ollama. Make sure it's running on the host.";
     default:
       return `Ollama returned an error${r.status ? ` (${r.status})` : ""}.`;
+  }
+}
+
+export type OllamaModelsResult =
+  | { ok: true; models: string[] }
+  | { ok: false; reason: "unreachable" };
+
+// List the models installed on the configured Ollama instance (GET /api/tags).
+export async function ollamaListModels(cfg: BotConfig): Promise<OllamaModelsResult> {
+  const base = cfg.ollamaBaseUrl.replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return { ok: false, reason: "unreachable" };
+    const data = (await res.json()) as { models?: { name?: string }[] };
+    const models = (data.models ?? []).map((m) => m.name).filter((n): n is string => !!n);
+    return { ok: true, models };
+  } catch {
+    return { ok: false, reason: "unreachable" };
   }
 }

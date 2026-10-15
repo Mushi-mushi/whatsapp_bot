@@ -30,7 +30,7 @@ describe("durable delivery", () => {
     let migrated: ReturnType<typeof openDatabase> | undefined;
     try {
       migrated = openDatabase(path);
-      expect(migrated.pragma("user_version", { simple: true })).toBe(1);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(2);
       expect(new RemindersStore(migrated).due(100)[0].text).toBe("keep me");
     } finally {
       migrated?.close();
@@ -50,6 +50,34 @@ describe("durable delivery", () => {
     await worker.flush();
     expect(send).toHaveBeenCalledTimes(1);
     await worker.stop();
+  });
+
+  it("preserves existing outbox claims when upgrading a version-one database for pets", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bot-pet-migration-"));
+    const path = join(directory, "bot.db");
+    const old = new Database(path);
+    old.exec(`CREATE TABLE outbox (
+      id INTEGER PRIMARY KEY, chat_id TEXT NOT NULL, body TEXT NOT NULL,
+      status TEXT NOT NULL, attempts INTEGER NOT NULL, available_at INTEGER NOT NULL,
+      lease_until INTEGER, claim_token TEXT, last_error TEXT, created_at INTEGER NOT NULL
+    );
+    INSERT INTO outbox VALUES (1,'chat','keep me','sending',1,0,300000,'old-claim',NULL,0);
+    PRAGMA user_version = 1;`);
+    old.close();
+    let migrated: ReturnType<typeof openDatabase> | undefined;
+    try {
+      migrated = openDatabase(path);
+      const store = new OutboxStore(migrated);
+      expect(store.claim(299999)).toBeUndefined();
+      expect(store.claim(300001)).toMatchObject({
+        id: 1, chat_id: "chat", body: "keep me", attempts: 2, pet_event_id: null,
+      });
+      expect(migrated.pragma("user_version", { simple: true })).toBe(2);
+      expect(migrated.prepare("SELECT COUNT(*) AS count FROM pets").get()).toEqual({ count: 0 });
+    } finally {
+      migrated?.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("rolls back source deletion if the outbox insertion fails", () => {

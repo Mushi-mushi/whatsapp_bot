@@ -26,7 +26,7 @@ import { makeScore } from "./score.js";
 import { makeTopNegative, makeTopPositive } from "./top.js";
 import { makeTorture } from "./torture.js";
 import { makeInsults } from "./insults.js";
-import { makeAsk } from "./ask.js";
+import { makeAsk, models } from "./ask.js";
 import { makeAsUser } from "./asuser.js";
 import { makeProfile } from "./profile.js";
 import { makeSeen } from "./seen.js";
@@ -43,6 +43,8 @@ import { film } from "./film.js";
 import { makeInstaDelete } from "./instadelete.js";
 import type { ProfileService } from "../profiles/service.js";
 import type { ConfigController } from "../../config/controller.js";
+import type { PetService } from "../../pets/service.js";
+import { makePet } from "./pet.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
@@ -57,6 +59,7 @@ export interface CommandDeps {
   userMemory: UserMemoryStore;
   profiler: ProfileService;
   settings: ConfigController;
+  pets: PetService;
 }
 
 // Command name (config value) -> handler. Add new commands here.
@@ -79,6 +82,7 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     torture: makeTorture(deps.runtime),
     insults: makeInsults(deps.runtime),
     ask: makeAsk(deps.userMemory, deps.profiler),
+    models,
     as_user: makeAsUser(deps.userMemory, deps.profiler),
     profile: makeProfile(deps.userMemory, deps.profiler),
     seen: makeSeen(deps.seenActivity),
@@ -93,5 +97,6 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     film,
     trivia: makeTrivia(deps.runtime, deps.triviaScores, deps.duelScores),
     instadelete: makeInstaDelete(deps.settings),
+    pet: makePet(deps.pets),
   };
 }

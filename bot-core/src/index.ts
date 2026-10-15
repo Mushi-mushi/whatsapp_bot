@@ -34,6 +34,7 @@ import {
   learnFromOwner,
   logging,
   mediaPolicy,
+  petObserver,
   siestaGuard,
 } from "./middleware/index.js";
 import { buildCommandRegistry } from "./handlers/commands/index.js";
@@ -42,6 +43,9 @@ import { KARMA_PATTERN, makeKarmaHears } from "./handlers/commands/karma.js";
 import { makeAudioHandler } from "./handlers/audio.js";
 import { makeFallback } from "./handlers/fallback.js";
 import { paintImage } from "./handlers/commands/paint.js";
+import { PetStore } from "./pets/store.js";
+import { PetService } from "./pets/service.js";
+import { petPortrait } from "./pets/art.js";
 
 const AUTH_DIR = process.env.AUTH_DIR ?? "auth";
 const DB_PATH = process.env.DB_PATH ?? "data/bot.db";
@@ -97,6 +101,9 @@ async function main(): Promise<void> {
     loadContacts: () => contacts.all(),
   });
   const services: Services = { transport, getConfig };
+  const pets = new PetService(new PetStore(db), getConfig, () =>
+    transport.getStatus().state === "open" &&
+    transport.getStatus().health === "online" && !runtime.isSleeping());
 
   // Build the router from config-driven command triggers.
   const bot = new Bot();
@@ -104,11 +111,12 @@ async function main(): Promise<void> {
   const profiler = new ProfileService(userMemory, userProfiles, jobs, getConfig, logger);
   bot
     .use(learnFromOwner(userMemory, profiler, seenActivity))
-    .use(ignoreOwn(runtime))
     .use(logging(logger))
     .use(approvedSenderGuard)
-    .use(siestaGuard(runtime))
     .use(dedupe(seen))
+    .use(petObserver(pets))
+    .use(ignoreOwn(runtime))
+    .use(siestaGuard(runtime))
     .use(instagramGuard(logger))
     .use(activityTracker(seenActivity, tells))
     .use(mediaPolicy);
@@ -131,6 +139,7 @@ async function main(): Promise<void> {
     userMemory,
     profiler,
     settings,
+    pets,
   });
   const registerCommands = (cfg: BotConfig) => {
     bot.clearCommands();
@@ -162,6 +171,7 @@ async function main(): Promise<void> {
       userMemory,
       userProfiles,
       profiler,
+      pets,
       logger,
       apiToken: API_TOKEN,
       allowInsecureApi: process.env.ALLOW_INSECURE_API === "true",
@@ -173,11 +183,25 @@ async function main(): Promise<void> {
   await transport.start();
   logger.info("bot-core started");
 
-  const deliveries = new DeliveryWorker(new OutboxStore(db), async (chatId, body) => {
+  const deliveries = new DeliveryWorker(new OutboxStore(db), async (chatId, body, delivery) => {
     const prefix = config.botReplyPrefix?.trim();
-    await transport.sendText(chatId, prefix ? `${prefix}\n${body}` : body);
-  }, logger, () => transport.getStatus().state === "open");
+    const text = prefix ? `${prefix}\n${body}` : body;
+    if (delivery.pet_event_id) {
+      const event = pets.store.event(delivery.pet_event_id);
+      if (!event) throw new Error("Pet delivery is missing its event");
+      const image = await petPortrait(event.stage, !!event.sleeping, event.species);
+      // Artwork generation may yield while the group disables or pauses its pet.
+      if (pets.deliveryDecision(delivery) !== true) throw new Error("Pet delivery state changed before sending");
+      await transport.sendImage(chatId, image, text);
+    } else {
+      await transport.sendText(chatId, text);
+    }
+  }, logger, () => transport.getStatus().state === "open", {
+    canSend: (delivery) => pets.deliveryDecision(delivery),
+    onSent: (delivery) => pets.delivered(delivery),
+  });
   deliveries.start();
+  pets.start(logger);
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
@@ -190,6 +214,7 @@ async function main(): Promise<void> {
     }, 30_000);
     unsubscribeMessages();
     unsubscribeChats();
+    pets.stop();
     await bot.stop();
     await jobs.stop();
     await deliveries.stop();

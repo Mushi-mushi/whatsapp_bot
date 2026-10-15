@@ -6,8 +6,9 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.help": "show this list",
   "bot.status": "bot & services status",
   "bot.whoami": "how I identify you (name + owner)",
-  "bot.ask": "ask the AI (personalised from what I know) — `bot.ask <question>`",
+  "bot.ask": "ask the AI (personalised from what I know) — `bot.ask <question>` (pick a model with `model=<name>`)",
   "bot.ask.raw": "ask the AI without using learned profiles — `bot.ask.raw <question>`",
+  "bot.models": "list the installed AI models — `bot.models`",
   "bot.as": "reply in the voice of a profiled person — `bot.as <name>: <question>`",
   "bot.profile": "what I've learned about someone here — `bot.profile [name]`",
   "bot.seen": "when someone was last active — `bot.seen <name>`",
@@ -36,6 +37,7 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.paint": "generate an image — `bot.paint <prompt>`",
   "bot.film": "generate a short video — `bot.film <prompt>`",
   "bot.instadelete": "(owner) manage Instagram auto-delete",
+  "bot.pet": "raise a shared group pet — `bot.pet help` (admins enable per group)",
 };
 
 export const help: Handler = (ctx) => {

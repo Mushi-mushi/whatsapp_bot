@@ -117,7 +117,82 @@ export interface ProfileDetail extends ProfileSummary {
   deep: string;
 }
 
+export interface PetSettings {
+  wakeStart: number;
+  wakeEnd: number;
+  firstRequestMinutes: number;
+  requestMinHours: number;
+  requestMaxHours: number;
+  maxRequestsPerDay: number;
+  activityWindowHours: number;
+  responseMinutes: number;
+  silenceMinutes: number;
+}
+export interface GroupPet {
+  name: string;
+  species: string;
+  enabled: boolean;
+  paused: boolean;
+  settings: PetSettings;
+  stage: number;
+  hunger: number;
+  hydration: number;
+  cleanliness: number;
+  happiness: number;
+  energy: number;
+  hibernating: boolean;
+  healthyDays: number;
+  evolution: {
+    nextForm: string | null;
+    remainingHealthyMs: number;
+    sampledAt: number;
+    running: boolean;
+    frozenReason: string | null;
+    canForce: boolean;
+  };
+  status: string;
+  nextRequestActiveMinutes: number;
+  request: { kind: string; delivered: boolean } | null;
+}
+export interface PetGroup {
+  id: string;
+  name: string;
+  pet: GroupPet | null;
+  revision: string;
+}
+export interface PetsResponse {
+  groups: PetGroup[];
+  species: Record<string, { name: string; forms: string[]; emoji: string[] }>;
+  defaults: PetSettings;
+}
+export interface PetUpdate {
+  action: "save" | "enable" | "disable" | "pause" | "resume";
+  name: string;
+  species: string;
+  settings: PetSettings;
+}
+
+export type PetRequestChoice = "random" | "feed" | "water" | "clean" | "play" | "silence";
+
 export const api = {
+  evolvePet: (id: string, expectedStage: number) =>
+    fetch(`/api/pets/${encodeURIComponent(id)}/evolve`, {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ expectedStage }),
+    }).then(json<{ pet: GroupPet; revision: string }>),
+  requestPet: (id: string, kind: PetRequestChoice = "random") =>
+    fetch(`/api/pets/${encodeURIComponent(id)}/request`, {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ kind }),
+    })
+      .then(json<{ pet: GroupPet; revision: string }>),
+  getPets: () => fetch("/api/pets", { headers: authHeaders(), cache: "no-store" }).then(json<PetsResponse>),
+  updatePet: (id: string, revision: string, update: PetUpdate) =>
+    fetch(`/api/pets/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json", "If-Match": revision }),
+      body: JSON.stringify(update),
+    }).then(json<{ pet: GroupPet; revision: string }>),
   getConfig: async (): Promise<ConfigSnapshot> => {
     const response = await fetch("/api/config", { headers: authHeaders(), cache: "no-store" });
     return { config: await json<BotConfig>(response), revision: response.headers.get("etag") ?? "" };

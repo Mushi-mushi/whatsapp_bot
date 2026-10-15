@@ -2,6 +2,7 @@ import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
+  jidNormalizedUser,
   useMultiFileAuthState,
   type Chat,
   type Contact,
@@ -61,6 +62,7 @@ export class BaileysTransport implements Transport {
   // Recently sent/seen message content, so we can answer decryption retry receipts
   // (otherwise the peer is stuck on "Waiting for this message").
   private messageCache = new Map<string, WAMessageContent>();
+  private sentMessageIds = new Set<string>();
 
   constructor(private readonly opts: BaileysOptions) {}
 
@@ -85,6 +87,14 @@ export class BaileysTransport implements Transport {
 
   getStatus(): ConnectionStatus {
     return this.status;
+  }
+
+  async isGroupAdmin(chatId: string, senderId: string): Promise<boolean> {
+    if (!this.sock || this.status.state !== "open") throw new Error("WhatsApp is disconnected");
+    const metadata = await this.sock.groupMetadata(chatId);
+    return metadata.participants.some((participant) =>
+      jidNormalizedUser(participant.id) === jidNormalizedUser(senderId) &&
+      (participant.admin === "admin" || participant.admin === "superadmin"));
   }
 
   private setStatus(patch: Partial<ConnectionStatus>): void {
@@ -440,6 +450,7 @@ export class BaileysTransport implements Transport {
       senderPhone,
       messageId: raw.key.id ?? "",
       fromMe,
+      isBot: fromMe && this.sentMessageIds.has(raw.key.id ?? ""),
       isGroup,
       text,
       kind,
@@ -451,25 +462,35 @@ export class BaileysTransport implements Transport {
   async sendText(chatId: string, text: string): Promise<void> {
     if (!this.sock) throw new Error("Transport not started");
     const sent = await this.sock.sendMessage(chatId, { text });
-    if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
+    this.cacheOutgoing(sent);
   }
 
   async sendReply(chatId: string, text: string, quoted: WAMessage): Promise<void> {
     if (!this.sock) throw new Error("Transport not started");
     const sent = await this.sock.sendMessage(chatId, { text }, { quoted });
-    if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
+    this.cacheOutgoing(sent);
   }
 
   async sendImage(chatId: string, image: Buffer, caption?: string): Promise<void> {
     if (!this.sock) throw new Error("Transport not started");
     const sent = await this.sock.sendMessage(chatId, { image, caption });
-    if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
+    this.cacheOutgoing(sent);
   }
 
   async sendVideo(chatId: string, video: Buffer, caption?: string): Promise<void> {
     if (!this.sock) throw new Error("Transport not started");
     const sent = await this.sock.sendMessage(chatId, { video, caption, mimetype: "video/mp4" });
-    if (sent?.key?.id && sent.message) this.cacheMessage(sent.key.id, sent.message);
+    this.cacheOutgoing(sent);
+  }
+
+  private cacheOutgoing(sent: WAMessage | undefined): void {
+    if (!sent?.key?.id || !sent.message) return;
+    this.cacheMessage(sent.key.id, sent.message);
+    this.sentMessageIds.add(sent.key.id);
+    if (this.sentMessageIds.size > 1000) {
+      const oldest = this.sentMessageIds.values().next().value;
+      if (oldest) this.sentMessageIds.delete(oldest);
+    }
   }
 
   // Delete a message for everyone. In groups this requires the bot to be an admin;

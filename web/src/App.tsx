@@ -11,15 +11,17 @@ import { AiCard } from "@/components/AiCard";
 import { PaintCard } from "@/components/PaintCard";
 import { MemoryCard } from "@/components/MemoryCard";
 import { ProfilesCard } from "@/components/ProfilesCard";
+import { PetsCard } from "@/components/PetsCard";
 import { Bot, Brain, Check, Image, Loader2, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles } from "lucide-react";
 
 const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;
 
-type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory";
+type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets";
 
 // Which config fields live on which tab — drives the per-tab "unsaved" dot.
 const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
   connection: [],
+  pets: [],
   general: [
     "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia", "deleteInstagramPosts",
     "instagramDeleteSenders", "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl",
@@ -192,7 +194,12 @@ export default function App() {
         <TabButton active={tab === "memory"} onClick={() => setTab("memory")} enabled={draft.userMemoryEnabled} dirty={dirtyTabs.has("memory")}>
           <Brain className="h-4 w-4" /> Memory &amp; profiles
         </TabButton>
+        <TabButton active={tab === "pets"} onClick={() => setTab("pets")}>
+          <Sparkles className="h-4 w-4" /> Pets
+        </TabButton>
       </nav>
+
+      {tab === "pets" && <PetsCard />}
 
       {tab === "connection" && (
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">

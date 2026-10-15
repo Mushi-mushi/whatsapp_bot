@@ -10,6 +10,7 @@ export interface IncomingMessage {
   senderPhone: string;
   messageId: string;
   fromMe: boolean;
+  isBot?: boolean;
   isGroup: boolean;
   text: string | null;
   kind: MessageKind;
@@ -52,6 +53,7 @@ export interface Transport {
   resyncContacts(): Promise<void>;
   relink(): Promise<void>;
   getStatus(): ConnectionStatus;
+  isGroupAdmin?(chatId: string, senderId: string): Promise<boolean>;
   onMessage(cb: (m: IncomingMessage) => void): () => void;
   onStatus(cb: (s: ConnectionStatus) => void): () => void;
   onChatsDiscovered(cb: (chats: ChatIdentity[]) => void): () => void;
