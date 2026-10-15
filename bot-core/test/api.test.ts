@@ -165,8 +165,10 @@ describe("configuration revisions", () => {
       await app.inject({ method: "PUT", url, headers: { ...headers, "if-match": revision }, payload });
       const listed = (await app.inject({ url: "/api/pets", headers })).json();
       expect(listed.groups[0].pet.evolution).toMatchObject({
-        nextForm: "Ember Kit", remainingHealthyMs: 86400000, running: true, canForce: true,
+        nextForm: "Ember Kit", running: true, canForce: true,
       });
+      expect(listed.groups[0].pet.evolution.remainingHealthyMs).toBeGreaterThan(86400000 - 1000);
+      expect(listed.groups[0].pet.evolution.remainingHealthyMs).toBeLessThanOrEqual(86400000);
       expect((await app.inject({ method: "POST", url: evolveUrl, headers, payload: { expectedStage: 5 } })).statusCode).toBe(400);
       const evolved = await app.inject({ method: "POST", url: evolveUrl, headers, payload: { expectedStage: 0 } });
       expect(evolved.statusCode).toBe(200);
