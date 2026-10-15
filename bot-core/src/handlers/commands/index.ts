@@ -45,6 +45,7 @@ import type { ProfileService } from "../profiles/service.js";
 import type { ConfigController } from "../../config/controller.js";
 import type { PetService } from "../../pets/service.js";
 import { makePet } from "./pet.js";
+import { makeServices } from "./services.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
@@ -97,6 +98,7 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     film,
     trivia: makeTrivia(deps.runtime, deps.triviaScores, deps.duelScores),
     instadelete: makeInstaDelete(deps.settings),
+    services: makeServices(deps.settings),
     pet: makePet(deps.pets),
   };
 }

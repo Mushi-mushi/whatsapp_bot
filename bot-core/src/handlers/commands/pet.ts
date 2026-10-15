@@ -16,7 +16,7 @@ const HELP = [
   "Species is fixed for a pet's lifetime; re-enabling never rerolls it.",
   "bot.pet hours <start> <end> - waking hours, integer UTC hours 0-23 (overnight supported)",
   "Evolve at 1, 7, 21, and 60 healthy days. Request frequency and deadlines are configurable per group in the dashboard's Pets tab.",
-  "Critical needs for 24 hours cause hibernation; another 48 hours loses one form, once per episode.",
+  "Critical needs for 8 active hours cause hibernation; another 48 hours loses one form, once per episode.",
   "Rescue: leave a snack and solve the dream-riddle. One person can do both; no rescue expiry.",
   "Pausing, bot downtime, and lost group approval freeze progress and neglect. Silence is a game, never moderation.",
 ].join("\n");

@@ -134,5 +134,6 @@ export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
     "bot.film": "film",
     "bot.instadelete": "instadelete",
     "bot.pet": "pet",
+    "bot.services": "services",
   },
 });

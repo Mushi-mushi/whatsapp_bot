@@ -16,6 +16,12 @@ by nginx. ComfyUI, Ollama and Auralis are external inference services.
    when Docker has NVIDIA GPU access. Set the paint backend to
    `http://comfyui:8188` in the dashboard. Ollama and Auralis remain host services.
 
+The bot owner can manage inference features in WhatsApp with `bot.services`:
+`bot.services off` disables Ollama-backed AI commands and ComfyUI image/video
+generation, while `bot.services on` re-enables them. Use
+`bot.services off ollama` or `bot.services off comfyui` to disable one service,
+and `bot.services status` to check both.
+
 Published ports bind to loopback. For remote use, put an authenticated HTTPS
 reverse proxy in front; do not expose ComfyUI directly. All API routes require
 a bearer token. Tokens are never accepted in URLs. `/api/health` reports API
@@ -174,17 +180,18 @@ revival restores all five needs to 60 and keeps the existing grace period.
 The pet makes at most three requests per UTC day, spaced 8-12 active hours
 apart (first request after 15 active minutes). It only starts requests during
 waking hours in groups with human activity in the last six hours. Only one
-request can be active. Care/number requests default to 30 minutes; silence asks
-for two full minutes with no human messages, including owner chatter, media
-and commands. Bot output and duplicate deliveries do not count. Silence never
-mutes participants or deletes messages.
+request can be active. Care/number requests default to 30 minutes; a missed
+request costs 20 points from its matching need. Breaking a silence request
+costs 20 energy; silence asks for two full minutes with no human messages,
+including owner chatter, media and commands. Bot output and duplicate
+deliveries do not count. Silence never mutes participants or deletes messages.
 
 Request windows start after WhatsApp acknowledges delivery. Unsolicited pet
 pictures wait until waking hours, without blocking ordinary reminders.
 Failures use the existing durable outbox's retry policy; delivery remains
 at-least-once, so an ambiguous acknowledgement can produce a duplicate picture.
 
-When any stat stays critical (20 or below) for 24 active hours, the pet
+When any stat stays critical (20 or below) for 8 active hours, the pet
 hibernates. Another 48 active hours of hibernation removes **one** form,
 once per neglect episode; the egg cannot devolve further. The pet never dies.
 Rescue requires a snack and the displayed dream-riddle, in either order.

@@ -12,8 +12,8 @@ const CONFIG_VERSION_KEY = "config_version";
 // v7 adds film. v8 adds meteo. v9 adds profile. v10 adds instadelete. v11 adds whoami.
 // v12 adds ask.raw (no-profile ask) and as (impersonate a profiled user).
 // v13 adds models (list installed Ollama models).
-// v14 adds the opt-in, per-group pet.
-const CONFIG_VERSION = 14;
+// v14 adds the opt-in, per-group pet. v15 adds owner-controlled AI service toggles.
+const CONFIG_VERSION = 15;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {

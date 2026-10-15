@@ -37,6 +37,7 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.paint": "generate an image — `bot.paint <prompt>`",
   "bot.film": "generate a short video — `bot.film <prompt>`",
   "bot.instadelete": "(owner) manage Instagram auto-delete",
+  "bot.services": "(owner) enable, disable, or check Ollama and ComfyUI",
   "bot.pet": "raise a shared group pet — `bot.pet help` (admins enable per group)",
 };
 

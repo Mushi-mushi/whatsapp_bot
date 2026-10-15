@@ -9,6 +9,8 @@ import {
 } from "./model.js";
 import { petSettings, type PetSettings } from "./settings.js";
 
+const MISSED_REQUEST_PENALTY = 20;
+
 export class PetService {
   private timer?: ReturnType<typeof setInterval>;
 
@@ -164,9 +166,9 @@ export class PetService {
       pet.criticalMs += gap;
       if (!pet.warned) {
         pet.warned = true;
-        this.store.enqueue(pet, `${title(pet)}\nI need care! Check bot.pet, then use bot.pet feed, water, clean or play. If my needs stay critical for 24 hours, I will hibernate.`, now);
+        this.store.enqueue(pet, `${title(pet)}\nI need care! Check bot.pet, then use bot.pet feed, water, clean or play. If my needs stay critical for 8 hours, I will hibernate.`, now);
       }
-      if (pet.criticalMs >= DAY) {
+      if (pet.criticalMs >= 8 * HOUR) {
         this.cancelRequest(pet);
         this.store.cancel(pet.chatId);
         pet.hibernating = true;
@@ -192,7 +194,7 @@ export class PetService {
         pet.happiness = Math.min(100, pet.happiness + 10);
         this.finishRequest(pet, "Such a peaceful nap! Silence challenge complete.", now);
       } else {
-        pet.happiness = Math.max(0, pet.happiness - 5);
+        this.penalizeMissedRequest(pet, pet.request.kind);
         this.finishRequest(pet, "Maybe next time! My request has expired.", now);
       }
     }
@@ -252,8 +254,8 @@ export class PetService {
         const request = pet.request;
         if (request?.kind === "silence" && request.startedAt !== null &&
           msg.timestamp >= Math.floor(request.startedAt / 1000) * 1000) {
-          pet.happiness = Math.max(0, pet.happiness - 2);
-          this.finishRequest(pet, "Whoops, you woke me! No worries; we can try another time.", now);
+          pet.energy = Math.max(0, pet.energy - MISSED_REQUEST_PENALTY);
+          this.finishRequest(pet, "Whoops, you woke me before my nap was over. My energy dropped.", now);
         } else if (!/bot\./i.test(msg.text ?? "") && msg.kind === "text") {
           this.answer(pet, msg.text ?? "", now);
         }
@@ -323,6 +325,14 @@ export class PetService {
       return true;
     }
     return false;
+  }
+
+  private penalizeMissedRequest(pet: Pet, kind: Exclude<RequestKind, "silence">): void {
+    const stat = kind === "feed" ? "hunger"
+      : kind === "water" ? "hydration"
+      : kind === "clean" ? "cleanliness"
+      : "happiness";
+    pet[stat] = Math.max(0, pet[stat] - MISSED_REQUEST_PENALTY);
   }
 
   private tryRevive(pet: Pet, now: number): void {
@@ -429,8 +439,15 @@ export class PetService {
           response = "That was fun! Happiness and energy restored.";
         }
       } else if (sub === "answer") {
-        response = this.answer(pet, rest, now) ? (pet.hibernating ? `That's right!\n${rescueText(pet)}` : "That's right!")
-          : "No matching answer. Check bot.pet for the current request or rescue riddle.";
+        const activeNumberGame =
+          !pet.hibernating && pet.request?.kind === "play" && pet.request.startedAt !== null;
+        if (this.answer(pet, rest, now)) {
+          response = pet.hibernating ? `That's right!\n${rescueText(pet)}` : "That's right!";
+        } else if (activeNumberGame) {
+          response = "Not quite! Guess again from 1 to 5 with bot.pet answer <number> while the request is active.";
+        } else {
+          response = "No matching answer. Check bot.pet for the current request or rescue riddle.";
+        }
       } else response = "Unknown pet command. Use bot.pet help.";
       this.store.save(pet);
       return response;

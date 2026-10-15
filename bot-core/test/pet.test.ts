@@ -332,10 +332,10 @@ describe("evolution and neglect", () => {
     expect(s.store.get(CHAT)).toMatchObject({ stage: 0, healthyMs: DAY - 30_000 });
   });
 
-  it("hibernates after 24 critical hours and devolves only once after another 48 hours", () => {
+  it("hibernates after 8 critical hours and devolves only once after another 48 hours", () => {
     const s = setup();
     s.enable();
-    s.change({ stage: 3, healthyMs: 23 * DAY, hunger: 0, criticalMs: DAY - 60_000 });
+    s.change({ stage: 3, healthyMs: 23 * DAY, hunger: 0, criticalMs: 8 * HOUR - 60_000 });
     s.pets.tick(NOW + 59_999);
     expect(s.store.get(CHAT)?.hibernating).toBe(false);
     s.pets.tick(NOW + 60_000);
@@ -361,9 +361,9 @@ describe("evolution and neglect", () => {
   it("freezes clocks during downtime, disconnects, pause, and lost approval", () => {
     const s = setup();
     s.enable();
-    s.change({ hunger: 0, criticalMs: DAY - 1 });
+    s.change({ hunger: 0, criticalMs: 8 * HOUR - 1 });
     s.pets.tick(NOW + 3 * DAY);
-    expect(s.store.get(CHAT)).toMatchObject({ clock: 0, criticalMs: DAY - 1, hibernating: false });
+    expect(s.store.get(CHAT)).toMatchObject({ clock: 0, criticalMs: 8 * HOUR - 1, hibernating: false });
     s.setReady(false);
     s.pets.tick(NOW + 3 * DAY + 60_000);
     expect(s.store.get(CHAT)?.clock).toBe(0);
@@ -453,7 +453,7 @@ describe("scheduled requests and silence", () => {
   it.each(["hydration", "cleanliness"] as const)("critical %s stops evolution and causes hibernation", (stat) => {
     const s = setup();
     s.enable();
-    s.change({ [stat]: 0, healthyMs: DAY - 60_000, criticalMs: DAY - 60_000 });
+    s.change({ [stat]: 0, healthyMs: DAY - 60_000, criticalMs: 8 * HOUR - 60_000 });
     s.pets.tick(NOW + 60_000);
     expect(s.store.get(CHAT)).toMatchObject({ stage: 0, healthyMs: DAY - 60_000, hibernating: true });
     s.pets.command(CHAT, "water", "", NOW + 60_000);
@@ -594,6 +594,22 @@ describe("scheduled requests and silence", () => {
     expect(s.store.get(CHAT)?.happiness).toBe(70);
   });
 
+  it("tells players to guess again after a wrong number-game answer", () => {
+    const s = setup(() => 0.99);
+    s.enable();
+    s.acknowledgeAll();
+    s.change({ stage: 1, nextRequest: 0, happiness: 40 });
+    s.pets.tick();
+    s.acknowledgeAll();
+
+    const response = s.pets.command(CHAT, "answer", "1");
+
+    expect(response).toContain("Not quite! Guess again from 1 to 5");
+    expect(s.store.get(CHAT)?.request).toMatchObject({ kind: "play", answer: "5" });
+    expect(s.pets.command(CHAT, "answer", "5")).toBe("That's right!");
+    expect(s.store.get(CHAT)?.request).toBeNull();
+  });
+
   it("allows a delivered feeding request to bypass the normal cooldown", () => {
     const s = setup();
     s.enable();
@@ -618,6 +634,7 @@ describe("scheduled requests and silence", () => {
     expect(s.store.get(CHAT)?.request).not.toBeNull();
     s.pets.tick(NOW + 60_000);
     expect(s.store.get(CHAT)?.request).toBeNull();
+    expect(s.store.get(CHAT)?.hunger).toBeLessThan(81);
     expect(s.outbox.claim(NOW + 60_000)?.body).toMatch(/expired/);
   });
 
@@ -745,6 +762,7 @@ describe("scheduled requests and silence", () => {
     const s = silence();
     s.pets.observe(message({ kind, timestamp: NOW + 1000 }), NOW + 1000);
     expect(s.store.get(CHAT)?.request).toBeNull();
+    expect(s.store.get(CHAT)?.energy).toBeLessThan(11);
     expect(s.outbox.claim(NOW + 1000)?.body).toMatch(/woke me/);
   });
 
