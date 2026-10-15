@@ -28,6 +28,8 @@ a bearer token. Tokens are never accepted in URLs. `/api/health` reports API
 liveness and the current WhatsApp connection state; linking is not required
 for the dashboard to be healthy.
 
+An active `bot.siesta` can be cancelled from the dashboard's **Connection** tab.
+
 ## Upgrading Existing Installations
 
 - Back up the database and authentication directory before upgrading.
@@ -95,7 +97,8 @@ Evolution and neglect thresholds remain fixed game rules.
 The Pets tab shows **healthy time remaining until the next form**, as a
 days/hours/minutes/seconds countdown. Live status refreshes every 15 seconds
 without replacing unsaved editor changes. The countdown freezes while paused,
-disabled, hibernating, offline/on siesta, or when any need is critical.
+disabled, hibernating, offline, or when any need is critical. Bot siesta does
+not affect pet care, requests, or commands.
 It holds if fresh status is unavailable; it is not a guaranteed wall-clock ETA.
 The final form displays "Final form unlocked!" instead of a timer.
 
@@ -201,7 +204,8 @@ If it devolved, healthy-time progress resets to the lower form's threshold:
 the group must earn the next evolution again.
 
 Pause, disable, removed group approval, WhatsApp disconnects/stale connections,
-global bot siesta and process downtime freeze pet time and neglect. Long
+and process downtime freeze pet time and neglect. Bot siesta does not affect the
+pet. Long
 scheduler gaps are treated as downtime rather than backfilled. Pause/disable
 and removed approval also cancel queued pet notifications and active requests.
 An interrupted silence challenge is cancelled without penalty because offline

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,16 @@ const STATE_LABEL: Record<string, { text: string; variant: "success" | "muted" |
 };
 
 export function StatusCard({ status }: { status: Status | null }) {
+  const queryClient = useQueryClient();
+  const siesta = useQuery({
+    queryKey: ["siesta"],
+    queryFn: api.getSiesta,
+    refetchInterval: 5000,
+  });
+  const cancelSiesta = useMutation({
+    mutationFn: api.cancelSiesta,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["siesta"] }),
+  });
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -68,6 +79,22 @@ export function StatusCard({ status }: { status: Status | null }) {
       </CardHeader>
       <CardContent className="space-y-4">
         {status?.me && <p className="text-sm text-muted-foreground">Linked as {status.me}</p>}
+
+        {siesta.data?.sleeping && (
+          <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+            <p className="text-sm text-amber-300">Bot siesta is active. Pet commands remain available.</p>
+            <Button
+              variant="outline"
+              onClick={() => cancelSiesta.mutate()}
+              disabled={cancelSiesta.isPending}
+            >
+              {cancelSiesta.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Cancel siesta
+            </Button>
+          </div>
+        )}
+        {siesta.error && <p role="alert" className="text-sm text-destructive">Siesta status unavailable: {siesta.error.message}</p>}
+        {cancelSiesta.error && <p role="alert" className="text-sm text-destructive">Could not cancel siesta: {cancelSiesta.error.message}</p>}
 
         {state === "open" && !stale && (
           <p className="text-sm text-emerald-400">The bot is online and listening. 🎉</p>

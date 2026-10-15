@@ -61,6 +61,11 @@ export interface Status {
   lastActivityAt: number | null;
 }
 
+export interface SiestaStatus {
+  sleeping: boolean;
+  until: number | null;
+}
+
 const TOKEN_KEY = "apiToken";
 let authToken = localStorage.getItem(TOKEN_KEY) ?? "";
 
@@ -175,6 +180,12 @@ export interface PetUpdate {
 export type PetRequestChoice = "random" | "feed" | "water" | "clean" | "play" | "silence";
 
 export const api = {
+  getSiesta: () =>
+    fetch("/api/siesta", { headers: authHeaders(), cache: "no-store" }).then(json<SiestaStatus>),
+  cancelSiesta: () =>
+    fetch("/api/siesta/cancel", { method: "POST", headers: authHeaders() }).then(
+      json<{ ok: boolean; cancelled: boolean }>,
+    ),
   evolvePet: (id: string, expectedStage: number) =>
     fetch(`/api/pets/${encodeURIComponent(id)}/evolve`, {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),

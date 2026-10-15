@@ -441,12 +441,12 @@ export async function handleTriviaAnswer(c: TriviaAnswerCtx): Promise<boolean> {
   const nameNorm = normalizeName(c.senderName);
   if (game.mode === "duel") return handleDuelAttempt(c, game, nameNorm);
 
-  // Classic: one attempt per player; every correct answerer scores.
+  // Classic: wrong guesses may retry; every correct answerer scores once.
   if (game.answered.has(nameNorm)) return true;
   const result = checkTriviaAnswer(game, c.text);
   if (!result) return false;
-  game.answered.add(nameNorm);
   if (result.correct) {
+    game.answered.add(nameNorm);
     const points = c.scores.add(chatId, nameNorm, c.senderName, 1);
     await c.reply(`✅ Correct, ${c.senderName}! (+1 → ${points})`);
     // First correct answer opens a short window so stragglers can still score.

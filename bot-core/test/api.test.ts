@@ -8,6 +8,7 @@ import { ProfileService } from "../src/handlers/profiles/service.js";
 import { PetService } from "../src/pets/service.js";
 import { PetStore } from "../src/pets/store.js";
 import { DEFAULT_PET_SETTINGS } from "../src/pets/settings.js";
+import { RuntimeState } from "../src/state/runtime.js";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -16,6 +17,7 @@ async function setup(apiToken: string | undefined = "test-token") {
   const db = openDatabase(":memory:");
   const listeners = new Set<(status: unknown) => void>();
   const logger = pino({ level: "silent" });
+  const runtime = new RuntimeState();
   const userMemory = new UserMemoryStore(db);
   const userProfiles = new UserProfileStore(db);
   const configStore = new ConfigStore(db);
@@ -25,6 +27,7 @@ async function setup(apiToken: string | undefined = "test-token") {
     configStore, knownChats: new KnownChatsStore(db),
     triviaScores: new TriviaScoreStore(db), userMemory, userProfiles, profiler, logger,
     pets: new PetService(new PetStore(db), () => configStore.load(), () => true),
+    runtime,
     onConfigChange: vi.fn(),
     transport: {
       getStatus: () => ({ state: "open", health: "online", qrDataUrl: null, pairingCode: null, me: null, lastActivityAt: null }),
@@ -36,7 +39,7 @@ async function setup(apiToken: string | undefined = "test-token") {
   };
   const app = await createApi(deps);
   cleanup.push(async () => { await app.close(); db.close(); });
-  return { app, deps, listeners };
+  return { app, deps, listeners, runtime };
 }
 
 describe("API authentication", () => {
@@ -82,6 +85,32 @@ describe("API authentication", () => {
     await app.close();
     expect(listeners.size).toBe(0);
     await second.body!.cancel();
+  });
+});
+
+describe("siesta controls", () => {
+  const headers = { authorization: "Bearer test-token" };
+
+  it("reports and cancels an active siesta through the authenticated API", async () => {
+    const { app, runtime } = await setup();
+    expect((await app.inject({ method: "POST", url: "/api/siesta/cancel" })).statusCode).toBe(401);
+    runtime.siestaUntil = Date.now() + 60_000;
+    const status = await app.inject({ url: "/api/siesta", headers });
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toMatchObject({ sleeping: true, until: runtime.siestaUntil });
+
+    const cancelled = await app.inject({ method: "POST", url: "/api/siesta/cancel", headers });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json()).toEqual({ ok: true, cancelled: true });
+    expect(runtime.isSleeping()).toBe(false);
+    expect((await app.inject({ url: "/api/siesta", headers })).json()).toEqual({ sleeping: false, until: null });
+  });
+
+  it("reports cancellation as a no-op when no siesta is active", async () => {
+    const { app } = await setup();
+    const response = await app.inject({ method: "POST", url: "/api/siesta/cancel", headers });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, cancelled: false });
   });
 });
 

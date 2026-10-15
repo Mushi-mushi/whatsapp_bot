@@ -176,10 +176,17 @@ export const mediaPolicy: Middleware = async (ctx, next) => {
   await next();
 };
 
-// While on siesta, the bot ignores everything (matches the old Python behavior).
+// Siesta pauses ordinary bot commands but leaves the group pet available.
 export function siestaGuard(runtime: RuntimeState): Middleware {
-  return async (_ctx, next) => {
-    if (runtime.isSleeping()) return;
+  return async (ctx, next) => {
+    if (runtime.isSleeping()) {
+      const command = extractCommandToken(ctx.text)?.split(/\s+/, 1)[0].toLowerCase();
+      const isPetCommand = command != null &&
+        Object.entries(ctx.config.commands).some(
+          ([trigger, name]) => name === "pet" && trigger.toLowerCase() === command,
+        );
+      if (!isPetCommand) return;
+    }
     await next();
   };
 }

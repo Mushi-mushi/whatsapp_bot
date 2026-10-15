@@ -12,6 +12,7 @@ import { z } from "zod";
 import type { PetService } from "../pets/service.js";
 import { SPECIES, isSpecies, statusText, type Pet } from "../pets/model.js";
 import { DEFAULT_PET_SETTINGS, PetSettingsSchema, petSettings } from "../pets/settings.js";
+import type { RuntimeState } from "../state/runtime.js";
 
 export interface ApiDeps {
   transport: Transport;
@@ -22,6 +23,7 @@ export interface ApiDeps {
   userProfiles: UserProfileStore;
   profiler: ProfileService;
   pets: PetService;
+  runtime: RuntimeState;
   onConfigChange: () => void;
   logger: Logger;
   apiToken?: string;
@@ -64,6 +66,14 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
 
   app.get("/api/status", async () => deps.transport.getStatus());
   app.get("/api/health", async () => ({ ok: true, connection: deps.transport.getStatus().state }));
+  app.get("/api/siesta", async () => ({
+    sleeping: deps.runtime.isSleeping(),
+    until: deps.runtime.isSleeping() ? deps.runtime.siestaUntil : null,
+  }));
+  app.post("/api/siesta/cancel", async () => ({
+    ok: true,
+    cancelled: deps.runtime.cancelSiesta(),
+  }));
 
   app.get("/api/config", async (_req, reply) => {
     const config = deps.configStore.load();

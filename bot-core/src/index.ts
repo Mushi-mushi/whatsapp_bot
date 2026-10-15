@@ -103,7 +103,7 @@ async function main(): Promise<void> {
   const services: Services = { transport, getConfig };
   const pets = new PetService(new PetStore(db), getConfig, () =>
     transport.getStatus().state === "open" &&
-    transport.getStatus().health === "online" && !runtime.isSleeping());
+    transport.getStatus().health === "online");
 
   // Build the router from config-driven command triggers.
   const bot = new Bot();
@@ -172,6 +172,7 @@ async function main(): Promise<void> {
       userProfiles,
       profiler,
       pets,
+      runtime,
       logger,
       apiToken: API_TOKEN,
       allowInsecureApi: process.env.ALLOW_INSECURE_API === "true",

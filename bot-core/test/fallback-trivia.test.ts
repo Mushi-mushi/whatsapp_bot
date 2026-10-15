@@ -105,6 +105,20 @@ describe("trivia stale-answer guard", () => {
 });
 
 describe("classic multi-correct", () => {
+  it("allows retrying after a wrong answer and scores the wrong guess", async () => {
+    vi.useFakeTimers();
+    const askedAt = Date.now();
+    const { deps, scores } = setup(makeGame(askedAt));
+    const run = makeFallback(deps);
+
+    const wrong = makeCtx("C", askedAt + 1000, "Alice");
+    await run(wrong.ctx);
+    await run(makeCtx("A", askedAt + 2000, "Alice").ctx);
+
+    expect(wrong.sendText).toHaveBeenCalledOnce();
+    expect(scoreMap(scores).get("Alice")).toBe(0);
+  });
+
   it("awards every correct answerer once and ignores repeats", async () => {
     vi.useFakeTimers();
     const askedAt = Date.now();

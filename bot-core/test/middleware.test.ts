@@ -250,6 +250,37 @@ describe("mediaPolicy", () => {
   });
 });
 
+describe("siestaGuard", () => {
+  it("allows pet commands during siesta", async () => {
+    const runtime = new RuntimeState();
+    runtime.siestaUntil = Date.now() + 60_000;
+    const { ctx } = makeCtx({ isGroup: true, text: "bot.pet feed" });
+    const { next, called } = nextSpy();
+    await siestaGuard(runtime)(ctx, next);
+    expect(called.value).toBe(true);
+  });
+
+  it("continues to block other commands and ordinary messages during siesta", async () => {
+    const runtime = new RuntimeState();
+    runtime.siestaUntil = Date.now() + 60_000;
+    for (const text of ["bot.ask What time is it?", "hello"]) {
+      const { ctx } = makeCtx({ text });
+      const { next, called } = nextSpy();
+      await siestaGuard(runtime)(ctx, next);
+      expect(called.value).toBe(false);
+    }
+  });
+
+  it("allows all messages when siesta has ended", async () => {
+    const runtime = new RuntimeState();
+    runtime.siestaUntil = Date.now() - 1;
+    const { ctx } = makeCtx({ text: "hello" });
+    const { next, called } = nextSpy();
+    await siestaGuard(runtime)(ctx, next);
+    expect(called.value).toBe(true);
+  });
+});
+
 describe("instagramGuard", () => {
   it("deletes a message with an Instagram link when enabled", async () => {
     const { ctx, deleteMessage } = makeCtx(

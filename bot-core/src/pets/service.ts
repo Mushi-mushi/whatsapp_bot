@@ -76,7 +76,7 @@ export class PetService {
     const unavailable = !pet.enabled ? "Pet is disabled."
       : pet.paused ? "Pet is paused."
       : !this.approved(pet.chatId) ? "Group is not approved."
-      : !this.isReady() ? "Bot is offline, reconnecting, or on siesta."
+      : !this.isReady() ? "Bot is offline or reconnecting."
       : pet.hibernating ? "Pet is hibernating; complete its rescue first."
       : null;
     const frozenReason = unavailable ?? (needsCare(pet) ? "Needs are critical; restore all five stats above 20."
@@ -98,7 +98,7 @@ export class PetService {
       this.advance(pet, now);
       this.store.save(pet);
       if (pet.stage !== expectedStage) return { ok: false, error: "Pet's form changed. Reload pets before evolving again." };
-      if (!this.canAct(pet)) return { ok: false, error: "Pet must be enabled, resumed, approved and online (not on bot siesta)." };
+      if (!this.canAct(pet)) return { ok: false, error: "Pet must be enabled, resumed, approved, and connected." };
       if (pet.hibernating) return { ok: false, error: "Rescue the hibernating pet before evolving it." };
       if (!STAGES[pet.stage + 1]) return { ok: false, error: "This pet has already reached its final form." };
       this.cancelRequest(pet);
@@ -206,7 +206,7 @@ export class PetService {
       if (!pet) return { ok: false, error: "Spawn a pet first." };
       this.advance(pet, now);
       this.store.save(pet);
-      if (!this.canAct(pet)) return { ok: false, error: "Pet must be enabled, resumed, approved and online (not on bot siesta)." };
+      if (!this.canAct(pet)) return { ok: false, error: "Pet must be enabled, resumed, approved, and connected." };
       if (pet.hibernating) return { ok: false, error: "Rescue the hibernating pet before requesting a challenge." };
       if (pet.request) return { ok: false, error: "This pet already has an active or queued request." };
       this.request(pet, now, true, kind);

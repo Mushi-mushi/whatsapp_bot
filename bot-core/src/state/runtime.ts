@@ -22,7 +22,7 @@ export interface TriviaGame {
   timer?: ReturnType<typeof setTimeout>;
   // "classic" awards every correct answerer; "duel" is a race (first correct only).
   mode: "classic" | "duel";
-  // name_norm of players who already answered this question (one attempt each).
+  // name_norm of players whose question attempt is used: correct in classic, any guess in duels.
   answered: Set<string>;
   // Classic collection window: once the first correct answer lands, this timer
   // closes the question so stragglers can still score before it advances.
@@ -105,5 +105,11 @@ export class RuntimeState {
 
   isSleeping(): boolean {
     return this.siestaUntil != null && Date.now() < this.siestaUntil;
+  }
+
+  cancelSiesta(): boolean {
+    const wasSleeping = this.isSleeping();
+    this.siestaUntil = null;
+    return wasSleeping;
   }
 }
