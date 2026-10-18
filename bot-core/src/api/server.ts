@@ -399,15 +399,16 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     return petActionView(chatId);
   });
 
-  const profileChatName = (chatId: string): string | null =>
-    deps.knownChats.list().find((chat) => chat.id === chatId)?.name ?? null;
+  const profileChatName = (chatId: string): string | null => {
+    const aliases = new Set(contactDirectory().aliasesFor(chatId));
+    return deps.knownChats.list().find((chat) => aliases.has(chat.id))?.name ?? null;
+  };
 
   // Learned personality profiles belong to a person within one chat.
   app.get("/api/profiles", async () => {
-    const chatNames = new Map(deps.knownChats.list().map((chat) => [chat.id, chat.name]));
     const profiles = deps.userProfiles.list().map((p) => ({
       ...p,
-      chat_name: chatNames.get(p.chat_id) ?? null,
+      chat_name: profileChatName(p.chat_id),
       messageCount: deps.userMemory.countSince(p.sender_key, 0),
     }));
     return { profiles } satisfies ProfilesResponse;

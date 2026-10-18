@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect } from "vitest";
 import { openDatabase } from "../src/state/db.js";
-import { UserMemoryStore } from "../src/state/repos.js";
+import { ContactsStore, UserMemoryStore } from "../src/state/repos.js";
 import { mentionedUsers, userContextBlock } from "../src/handlers/commands/user-context.js";
 
 import { memoryChat, memoryKey, personKey } from "../src/state/identity.js";
@@ -90,6 +90,39 @@ describe("UserMemoryStore", () => {
   it("rejects attempts to write unscoped memory", () => {
     const store = freshStore();
     expect(() => store.record("123", "Alice", null, "unscoped", 50)).toThrow();
+  });
+
+  it("reconciles historical LID and phone memory in groups and DMs after a verified alias is learned", () => {
+    const db = openDatabase(":memory:");
+    databases.push(db);
+    const store = new UserMemoryStore(db);
+    const lidKey = memoryKey(CHAT, "900@lid");
+    const phoneKey = memoryKey(CHAT, "34600000001@s.whatsapp.net");
+    store.record(lidKey, "Alice", "Group", "lid message", 3);
+    store.record(phoneKey, "Alicia", "Group", "phone message", 3);
+
+    new ContactsStore(db).upsertMany([{ jid: "900@lid", phone: "34600000001", name: "" }]);
+
+    expect(store.recentFor(lidKey).map((m) => m.message)).toEqual(["lid message", "phone message"]);
+    expect(store.recentFor(phoneKey).map((m) => m.message)).toEqual(["lid message", "phone message"]);
+    expect(store.countSince(lidKey, 0)).toBe(2);
+    expect(store.knownUsers(CHAT)).toEqual([{ sender_key: phoneKey, name: "Alicia", name_norm: "alicia" }]);
+    expect(store.usersForNameInChat("alice", CHAT)).toEqual([]);
+    expect(store.usersForNameInChat("alicia", CHAT)).toEqual([{ sender_key: phoneKey, name: "Alicia", name_norm: "alicia" }]);
+
+    // Recording trims across all verified alias keys as one rolling window.
+    store.record(lidKey, "Alicia", "Group", "third", 3);
+    store.record(phoneKey, "Alicia", "Group", "fourth", 3);
+    expect(store.recentFor(lidKey).map((m) => m.message)).toEqual(["phone message", "third", "fourth"]);
+    expect(store.forget(lidKey)).toBe(3);
+    expect(store.recentFor(phoneKey)).toEqual([]);
+
+    // DM conversations where both chatId and senderId were LID before alias discovery:
+    const dmLidKey = memoryKey("900@lid", "900@lid");
+    const dmPhoneKey = memoryKey("34600000001@s.whatsapp.net", "34600000001@s.whatsapp.net");
+    store.record(dmLidKey, "Alicia", null, "dm from lid", 10);
+    expect(store.recentFor(dmPhoneKey).map((m) => m.message)).toEqual(["dm from lid"]);
+    expect(store.knownUsers("900@lid")).toEqual([{ sender_key: dmPhoneKey, name: "Alicia", name_norm: "alicia" }]);
   });
 });
 

@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { IdentityResolver } from "./identity.js";
+import { IdentityResolver, memoryKey, memoryTuple } from "./identity.js";
 
 export interface PersonScope { chat_id: string; sender_id: string }
 
@@ -24,4 +24,38 @@ export function forPerson<T extends PersonScope>(
 ): T[] {
   const person = identities.canonical(senderId);
   return inChat(rows, chatId, identities).filter((r) => identities.canonical(r.sender_id) === person);
+}
+
+function personCandidate(person: string): string {
+  return /^\d+$/.test(person) ? `${person}@s.whatsapp.net` : person;
+}
+
+export function canonicalMemoryKey(key: string, identities: IdentityResolver): string {
+  let tuple: [string, string];
+  try {
+    tuple = memoryTuple(key);
+  } catch {
+    return key;
+  }
+  const [chatId, person] = tuple;
+  const candidate = personCandidate(person);
+  return memoryKey(identities.canonical(chatId), candidate, identities.phoneFor(candidate));
+}
+
+export function memoryKeyAliases(key: string, identities: IdentityResolver): string[] {
+  let tuple: [string, string];
+  try {
+    tuple = memoryTuple(key);
+  } catch {
+    return [key];
+  }
+  const [chatId, person] = tuple;
+  const candidate = personCandidate(person);
+  const chats = new Set([chatId, ...identities.aliasesFor(chatId)]);
+  const persons = new Set([person, ...identities.aliasesFor(candidate)]);
+  const phone = identities.phoneFor(candidate);
+  if (phone) persons.add(phone);
+  const keys = new Set<string>([key, canonicalMemoryKey(key, identities)]);
+  for (const c of chats) for (const p of persons) keys.add(JSON.stringify([c, p]));
+  return [...keys];
 }

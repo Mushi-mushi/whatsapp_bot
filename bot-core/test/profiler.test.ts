@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import pino from "pino";
 import { openDatabase } from "../src/state/db.js";
-import { UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
+import { ContactsStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
 import { ProfileQueueError, ProfileService } from "../src/handlers/profiles/service.js";
 import { DEFAULT_CONFIG, type BotConfig } from "../src/config/schema.js";
@@ -27,7 +27,7 @@ function setup(cfg: BotConfig = DEFAULT_CONFIG) {
   const profiles = new UserProfileStore(db);
   const jobs = new BackgroundJobs(() => {});
   const service = new ProfileService(memory, profiles, jobs, () => cfg, silent);
-  return { memory, profiles, service, jobs };
+  return { db, memory, profiles, service, jobs };
 }
 
 beforeEach(() => {
@@ -204,6 +204,36 @@ describe("ProfileService.refresh", () => {
 
     const result = await service.refresh(KEY, "Alice");
     expect(result?.short).toBe("DEEP only");
+  });
+
+  it("reconciles split LID and phone dossiers on refresh and forgets both aliases together", async () => {
+    const { db, memory, profiles, service } = setup();
+    const lidKey = memoryKey("c@g.us", "900@lid");
+    const phoneKey = memoryKey("c@g.us", "34600000001@s.whatsapp.net");
+    memory.record(lidKey, "Alice", null, "lid message 1", 50);
+    memory.record(lidKey, "Alice", null, "lid message 2", 50);
+    memory.record(phoneKey, "Alicia", null, "phone message 1", 50);
+    memory.record(phoneKey, "Alicia", null, "phone message 2", 50);
+    profiles.upsert({ sender_key: lidKey, name: "Alice", deep: "LID DOSSIER", short: "lid short", last_profiled_id: 2 });
+    profiles.upsert({ sender_key: phoneKey, name: "Alicia", deep: "PHONE DOSSIER", short: "phone short", last_profiled_id: 4 });
+
+    new ContactsStore(db).upsertMany([{ jid: "900@lid", phone: "34600000001", name: "" }]);
+
+    expect(profiles.list()).toHaveLength(1);
+    expect(profiles.list()[0].sender_key).toBe(phoneKey);
+    expect(profiles.get(lidKey)?.sender_key).toBe(phoneKey);
+
+    await service.refresh(lidKey, "Alicia");
+    const deepPrompt = JSON.stringify(ollama.chat.mock.calls[0][1]);
+    expect(deepPrompt).toContain("LID DOSSIER");
+    expect(deepPrompt).toContain("PHONE DOSSIER");
+    expect(deepPrompt).toContain("lid message 1");
+    expect(deepPrompt).toContain("phone message 2");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM user_profiles").get()).toEqual({ n: 1 });
+
+    service.forget(lidKey);
+    expect(profiles.get(phoneKey)).toBeUndefined();
+    expect(memory.recentFor(phoneKey)).toEqual([]);
   });
 });
 

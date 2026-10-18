@@ -4,7 +4,7 @@ import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
 import type { Contact, PendingTell, RemindersResponse, ScheduledReminder, TellsResponse } from "../../../shared/api.js";
 import { type IdentityResolver, memoryChat, normalizeJid, phoneDigits, phoneFromJid } from "./identity.js";
-import { canonicalScope, forPerson, identitiesFor, inChat, type PersonScope } from "./scoped.js";
+import { canonicalMemoryKey, canonicalScope, forPerson, identitiesFor, inChat, memoryKeyAliases, type PersonScope } from "./scoped.js";
 import { PlayerScores } from "./player-scores.js";
 
 const CONFIG_KEY = "config";
@@ -293,76 +293,103 @@ export interface KnownUser {
 export class UserMemoryStore {
   constructor(private readonly db: Database.Database) {}
 
+  canonicalKey(senderKey: string): string {
+    return canonicalMemoryKey(senderKey, identitiesFor(this.db));
+  }
+
+  aliasesForKey(senderKey: string): string[] {
+    return this.keysFor(senderKey).keys;
+  }
+
+  private keysFor(senderKey: string): { key: string; keys: string[]; placeholders: string } {
+    const identities = identitiesFor(this.db);
+    const key = canonicalMemoryKey(senderKey, identities);
+    const keys = memoryKeyAliases(senderKey, identities);
+    return { key, keys, placeholders: keys.map(() => "?").join(",") };
+  }
+
   // Append a message and trim this identity's history to the most recent `limit`.
   record(senderKey: string, name: string, chatName: string | null, message: string, limit: number): void {
-    this.db
-      .prepare(
-        "INSERT INTO user_messages (sender_key, chat_id, name_norm, name, chat_name, message, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(senderKey, memoryChat(senderKey), normalizeName(name), name, chatName, message, Date.now());
-    this.db
-      .prepare(
-        `DELETE FROM user_messages
-         WHERE sender_key = ?
-           AND id NOT IN (
-             SELECT id FROM user_messages WHERE sender_key = ? ORDER BY id DESC LIMIT ?
-           )`,
-      )
-      .run(senderKey, senderKey, limit);
+    this.db.transaction(() => {
+      const { key, keys, placeholders } = this.keysFor(senderKey);
+      this.db
+        .prepare(
+          "INSERT INTO user_messages (sender_key, chat_id, name_norm, name, chat_name, message, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(key, memoryChat(key), normalizeName(name), name, chatName, message, Date.now());
+      this.db
+        .prepare(
+          `DELETE FROM user_messages
+           WHERE sender_key IN (${placeholders})
+             AND id NOT IN (
+               SELECT id FROM user_messages WHERE sender_key IN (${placeholders}) ORDER BY id DESC LIMIT ?
+             )`,
+        )
+        .run(...keys, ...keys, limit);
+    })();
   }
 
   // Most recent messages for an identity, returned oldest-first for natural reading.
   recentFor(senderKey: string, limit = 20): UserMessage[] {
+    const { keys, placeholders } = this.keysFor(senderKey);
     const rows = this.db
       .prepare(
-        "SELECT name, chat_name, message, ts FROM user_messages WHERE sender_key = ? ORDER BY id DESC LIMIT ?",
+        `SELECT name, chat_name, message, ts FROM user_messages WHERE sender_key IN (${placeholders}) ORDER BY id DESC LIMIT ?`,
       )
-      .all(senderKey, limit) as UserMessage[];
+      .all(...keys, limit) as UserMessage[];
     return rows.reverse();
   }
 
   // Highest stored row id for an identity (0 if none) — a high-water mark used to
   // tell how many new messages have arrived since a profile was last built.
   latestId(senderKey: string): number {
+    const { keys, placeholders } = this.keysFor(senderKey);
     const row = this.db
-      .prepare("SELECT MAX(id) AS maxId FROM user_messages WHERE sender_key = ?")
-      .get(senderKey) as { maxId: number | null };
+      .prepare(`SELECT MAX(id) AS maxId FROM user_messages WHERE sender_key IN (${placeholders})`)
+      .get(...keys) as { maxId: number | null };
     return row.maxId ?? 0;
   }
 
   // How many messages this identity has sent with id greater than `sinceId`.
   countSince(senderKey: string, sinceId: number): number {
+    const { keys, placeholders } = this.keysFor(senderKey);
     const row = this.db
-      .prepare("SELECT COUNT(*) AS n FROM user_messages WHERE sender_key = ? AND id > ?")
-      .get(senderKey, sinceId) as { n: number };
+      .prepare(`SELECT COUNT(*) AS n FROM user_messages WHERE sender_key IN (${placeholders}) AND id > ?`)
+      .get(...keys, sinceId) as { n: number };
     return row.n;
   }
 
   usersForNameInChat(nameNorm: string, chatId: string): KnownUser[] {
-    return this.db
-      .prepare(
-        `SELECT sender_key, name, name_norm FROM user_messages
-         WHERE chat_id = ? AND id IN (
-           SELECT MAX(id) FROM user_messages WHERE chat_id = ? GROUP BY sender_key
-         ) AND name_norm = ? ORDER BY id DESC`,
-      )
-      .all(chatId, chatId, nameNorm) as KnownUser[];
+    return this.knownUsers(chatId).filter((u) => u.name_norm === nameNorm);
   }
 
   // Distinct identities the bot has heard from (most recently active first).
   knownUsers(chatId: string): KnownUser[] {
-    return this.db
+    const identities = identitiesFor(this.db);
+    const chats = chatId.trim() ? identities.aliasesFor(chatId) : [chatId];
+    const placeholders = chats.map(() => "?").join(",");
+    const rows = this.db
       .prepare(
         `SELECT sender_key, name, name_norm FROM user_messages
-         WHERE chat_id = ? AND id IN (
-           SELECT MAX(id) FROM user_messages WHERE chat_id = ? GROUP BY sender_key
+         WHERE chat_id IN (${placeholders}) AND id IN (
+           SELECT MAX(id) FROM user_messages WHERE chat_id IN (${placeholders}) GROUP BY sender_key
          ) ORDER BY id DESC`,
       )
-      .all(chatId, chatId) as KnownUser[];
+      .all(...chats, ...chats) as KnownUser[];
+    const seen = new Set<string>();
+    const users: KnownUser[] = [];
+    for (const row of rows) {
+      const sender_key = canonicalMemoryKey(row.sender_key, identities);
+      if (seen.has(sender_key)) continue;
+      seen.add(sender_key);
+      users.push({ sender_key, name: row.name, name_norm: row.name_norm });
+    }
+    return users;
   }
 
   forget(senderKey: string): number {
-    const info = this.db.prepare("DELETE FROM user_messages WHERE sender_key = ?").run(senderKey);
+    const { keys, placeholders } = this.keysFor(senderKey);
+    const info = this.db.prepare(`DELETE FROM user_messages WHERE sender_key IN (${placeholders})`).run(...keys);
     return info.changes;
   }
 }
@@ -383,37 +410,78 @@ export interface UserProfile {
 export class UserProfileStore {
   constructor(private readonly db: Database.Database) {}
 
-  get(senderKey: string): UserProfile | undefined {
+  private keysFor(senderKey: string): { key: string; keys: string[]; placeholders: string } {
+    const identities = identitiesFor(this.db);
+    const key = canonicalMemoryKey(senderKey, identities);
+    const keys = memoryKeyAliases(senderKey, identities);
+    return { key, keys, placeholders: keys.map(() => "?").join(",") };
+  }
+
+  allFor(senderKey: string): UserProfile[] {
+    const { keys, placeholders } = this.keysFor(senderKey);
     return this.db
       .prepare(
-        "SELECT sender_key, chat_id, name, deep, short, last_profiled_id, updated_at FROM user_profiles WHERE sender_key = ?",
+        `SELECT sender_key, chat_id, name, deep, short, last_profiled_id, updated_at
+         FROM user_profiles WHERE sender_key IN (${placeholders}) ORDER BY updated_at DESC, rowid DESC`,
       )
-      .get(senderKey) as UserProfile | undefined;
+      .all(...keys) as UserProfile[];
+  }
+
+  get(senderKey: string): UserProfile | undefined {
+    const identities = identitiesFor(this.db);
+    const rows = this.allFor(senderKey);
+    if (rows.length === 0) return undefined;
+    const key = canonicalMemoryKey(senderKey, identities);
+    const latest = rows[0];
+    return {
+      ...latest,
+      sender_key: key,
+      chat_id: memoryChat(key),
+      last_profiled_id: rows.length > 1 ? 0 : latest.last_profiled_id,
+    };
   }
 
   // Summaries for the dashboard (newest first); omits the large deep dossier.
   list(): Omit<UserProfile, "deep" | "last_profiled_id">[] {
-    return this.db
+    const identities = identitiesFor(this.db);
+    const rows = this.db
       .prepare(
-        "SELECT sender_key, chat_id, name, short, updated_at FROM user_profiles ORDER BY updated_at DESC",
+        "SELECT sender_key, chat_id, name, short, updated_at FROM user_profiles ORDER BY updated_at DESC, rowid DESC",
       )
       .all() as Omit<UserProfile, "deep" | "last_profiled_id">[];
+    const seen = new Set<string>();
+    const out: Omit<UserProfile, "deep" | "last_profiled_id">[] = [];
+    for (const row of rows) {
+      const sender_key = canonicalMemoryKey(row.sender_key, identities);
+      if (seen.has(sender_key)) continue;
+      seen.add(sender_key);
+      out.push({ ...row, sender_key, chat_id: memoryChat(sender_key) });
+    }
+    return out;
   }
 
   upsert(p: Omit<UserProfile, "updated_at" | "chat_id">): void {
-    this.db
-      .prepare(
-        `INSERT INTO user_profiles (sender_key, chat_id, name, deep, short, last_profiled_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(sender_key) DO UPDATE SET
-           name = excluded.name, deep = excluded.deep, short = excluded.short,
-           last_profiled_id = excluded.last_profiled_id, updated_at = excluded.updated_at`,
-      )
-      .run(p.sender_key, memoryChat(p.sender_key), p.name, p.deep, p.short, p.last_profiled_id, Date.now());
+    this.db.transaction(() => {
+      const { key, keys } = this.keysFor(p.sender_key);
+      const stale = keys.filter((k) => k !== key);
+      if (stale.length > 0) {
+        this.db.prepare(`DELETE FROM user_profiles WHERE sender_key IN (${stale.map(() => "?").join(",")})`).run(...stale);
+      }
+      this.db
+        .prepare(
+          `INSERT INTO user_profiles (sender_key, chat_id, name, deep, short, last_profiled_id, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(sender_key) DO UPDATE SET
+             name = excluded.name, deep = excluded.deep, short = excluded.short,
+             last_profiled_id = excluded.last_profiled_id, updated_at = excluded.updated_at`,
+        )
+        .run(key, memoryChat(key), p.name, p.deep, p.short, p.last_profiled_id, Date.now());
+    })();
   }
 
   forget(senderKey: string): void {
-    this.db.prepare("DELETE FROM user_profiles WHERE sender_key = ?").run(senderKey);
+    const { keys, placeholders } = this.keysFor(senderKey);
+    this.db.prepare(`DELETE FROM user_profiles WHERE sender_key IN (${placeholders})`).run(...keys);
   }
 }
 

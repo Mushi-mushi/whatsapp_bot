@@ -69,10 +69,11 @@ export function mentionedUsers(
 ): KnownUser[] {
   const haystack = normalizeName(prompt);
   if (!haystack) return [];
+  const excluded = store.canonicalKey(excludeKey);
   const found: KnownUser[] = [];
   const users = store.knownUsers(chatId);
   for (const u of users) {
-    if (u.sender_key === excludeKey || u.name_norm.length < 3) continue;
+    if (u.sender_key === excluded || u.name_norm.length < 3) continue;
     if (users.some((other) => other.sender_key !== u.sender_key && other.name_norm === u.name_norm)) continue;
     // Word-ish boundary match to avoid matching short names inside other words.
     const re = new RegExp(`(?:^|\\W)${escapeRegExp(u.name_norm)}(?:\\W|$)`);

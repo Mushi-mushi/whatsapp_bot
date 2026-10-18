@@ -29,6 +29,14 @@ export class ProfileService {
     private readonly logger: Logger,
   ) {}
 
+  private generationFor(senderKey: string): number {
+    let max = 0;
+    for (const k of this.memory.aliasesForKey(senderKey)) {
+      max = Math.max(max, this.generations.get(k) ?? 0);
+    }
+    return max;
+  }
+
   // The compact briefing to inject into bot.ask, or null if none exists yet.
   shortFor(senderKey: string): string | null {
     const p = this.profiles.get(senderKey);
@@ -41,18 +49,22 @@ export class ProfileService {
   }
 
   forget(senderKey: string): void {
-    this.generations.set(senderKey, (this.generations.get(senderKey) ?? 0) + 1);
+    const next = this.generationFor(senderKey) + 1;
+    for (const k of this.memory.aliasesForKey(senderKey)) {
+      this.generations.set(k, next);
+    }
     this.profiles.forget(senderKey);
     this.memory.forget(senderKey);
   }
 
   requestRefresh(senderKey: string, name: string): Promise<UserProfile | null> {
-    const generation = this.generations.get(senderKey) ?? 0;
+    const canonical = this.memory.canonicalKey(senderKey);
+    const generation = this.generationFor(canonical);
     return new Promise((resolve, reject) => {
-      const accepted = this.jobs.submit(`profile:${senderKey}`, async () => {
+      const accepted = this.jobs.submit(`profile:${canonical}`, async () => {
         try {
-          resolve(generation === (this.generations.get(senderKey) ?? 0)
-            ? await this.refresh(senderKey, name) : null);
+          resolve(generation === this.generationFor(canonical)
+            ? await this.refresh(canonical, name) : null);
         } catch (error) {
           reject(error);
           throw error;
@@ -67,15 +79,18 @@ export class ProfileService {
   maybeRefresh(senderKey: string, name: string): void {
     const cfg = this.getConfig();
     if (!cfg.userMemoryEnabled || !cfg.askEnabled) return;
-    if (!this.isStale(senderKey, cfg)) return;
-    void this.requestRefresh(senderKey, name).catch((err: unknown) => {
-      this.logger.warn({ err, senderKey }, "profile refresh was not completed");
+    const canonical = this.memory.canonicalKey(senderKey);
+    if (!this.isStale(canonical, cfg)) return;
+    void this.requestRefresh(canonical, name).catch((err: unknown) => {
+      this.logger.warn({ err, senderKey: canonical }, "profile refresh was not completed");
     });
   }
 
   private isStale(senderKey: string, cfg: BotConfig): boolean {
-    const p = this.profiles.get(senderKey);
-    if (!p) return this.memory.countSince(senderKey, 0) >= MIN_MESSAGES;
+    const existing = this.profiles.allFor(senderKey);
+    if (existing.length === 0) return this.memory.countSince(senderKey, 0) >= MIN_MESSAGES;
+    if (existing.length > 1) return this.memory.countSince(senderKey, 0) >= MIN_MESSAGES;
+    const p = existing[0];
     if (this.memory.countSince(senderKey, p.last_profiled_id) >= cfg.profileRefreshEvery) return true;
     const ageMs = Date.now() - p.updated_at;
     return ageMs >= cfg.profileMaxAgeDays * 24 * 60 * 60 * 1000;
@@ -86,12 +101,16 @@ export class ProfileService {
   // go on or the LLM was unreachable. Safe to call directly (e.g. bot.profile).
   async refresh(senderKey: string, name: string, cfg = this.getConfig()): Promise<UserProfile | null> {
     if (!cfg.userMemoryEnabled || !cfg.askEnabled) return null;
-    const generation = this.generations.get(senderKey) ?? 0;
-    const lastProfiledId = this.memory.latestId(senderKey);
-    const recent = this.memory.recentFor(senderKey, cfg.profileSampleSize);
+    const canonical = this.memory.canonicalKey(senderKey);
+    const generation = this.generationFor(canonical);
+    const lastProfiledId = this.memory.latestId(canonical);
+    const recent = this.memory.recentFor(canonical, cfg.profileSampleSize);
     if (recent.length < MIN_MESSAGES) return null;
 
-    const existing = this.profiles.get(senderKey);
+    const existing = this.profiles.allFor(canonical)
+      .map((p) => p.deep.trim())
+      .filter(Boolean);
+    const previousDossier = [...new Set(existing)].join("\n\n");
     const lines = recent
       .map((m) => m.message.replace(/\s+/g, " ").trim())
       .filter(Boolean)
@@ -112,14 +131,14 @@ export class ProfileService {
         },
         {
           role: "user",
-          content: `Person: ${name}\n\nPREVIOUS DOSSIER:\n${existing?.deep?.trim() || "(none yet)"}\n\nNEW MESSAGES:\n${lines}`,
+          content: `Person: ${name}\n\nPREVIOUS DOSSIER:\n${previousDossier || "(none yet)"}\n\nNEW MESSAGES:\n${lines}`,
         },
       ],
       { numPredict: 600, numCtx: 8192 },
     );
-    if (generation !== (this.generations.get(senderKey) ?? 0)) return null;
+    if (generation !== this.generationFor(canonical)) return null;
     if (!deepRes.ok) {
-      this.logger.warn({ senderKey, result: deepRes }, "profile generation failed");
+      this.logger.warn({ senderKey: canonical, result: deepRes }, "profile generation failed");
       return null;
     }
     const deep = deepRes.content.trim();
@@ -138,20 +157,20 @@ export class ProfileService {
       ],
       { numPredict: 300 },
     );
-    if (generation !== (this.generations.get(senderKey) ?? 0)) return null;
-    if (!shortRes.ok) this.logger.warn({ senderKey, result: shortRes }, "profile briefing failed; using dossier excerpt");
+    if (generation !== this.generationFor(canonical)) return null;
+    if (!shortRes.ok) this.logger.warn({ senderKey: canonical, result: shortRes }, "profile briefing failed; using dossier excerpt");
     const short = shortRes.ok
       ? shortRes.content.trim().slice(0, cfg.profileShortMaxChars)
       : deep.slice(0, cfg.profileShortMaxChars);
 
     this.profiles.upsert({
-      sender_key: senderKey,
+      sender_key: canonical,
       name,
       deep,
       short,
       last_profiled_id: lastProfiledId,
     });
-    this.logger.info({ senderKey, name }, "profile refreshed");
-    return this.profiles.get(senderKey) ?? null;
+    this.logger.info({ senderKey: canonical, name }, "profile refreshed");
+    return this.profiles.get(canonical) ?? null;
   }
 }

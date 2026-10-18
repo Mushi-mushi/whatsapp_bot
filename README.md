@@ -203,7 +203,10 @@ identity-keyed karma/game tables, and adds nullable scope columns to tells and
 sentiment. Historical name-only seen/karma/game rows remain in their original
 tables, unattributed and excluded from new lookups, resets and monthly rollover.
 Old sentiment rows remain unattributed and subject to the existing retention
-policy. No historical AI memory/profile reconciliation is performed.
+policy. When WhatsApp later verifies a LID ↔ phone mapping, earlier AI memory and
+profiles for that person in the same chat are reconciled transparently across
+verified aliases, existing dossiers are merged on the next profile refresh, and
+`Forget` removes all verified alias rows for that chat/person pair.
 New scoped statistics start fresh; names are never used to guess ownership.
 Back up before upgrading: older binaries cannot open schema 9.
 

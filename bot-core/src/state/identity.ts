@@ -61,7 +61,7 @@ export function memoryKey(chatId: string, senderId: string, phone?: string | nul
   return JSON.stringify([chatId, personKey(senderId, phone)]);
 }
 
-export function memoryChat(key: string): string {
+export function memoryTuple(key: string): [string, string] {
   const value: unknown = JSON.parse(key);
   if (!Array.isArray(value) || value.length !== 2) {
     throw new Error("Invalid chat-scoped memory key");
@@ -71,5 +71,9 @@ export function memoryChat(key: string): string {
       typeof senderId !== "string" || !senderId.trim()) {
     throw new Error("Invalid chat-scoped memory key");
   }
-  return chatId;
+  return [chatId, senderId];
+}
+
+export function memoryChat(key: string): string {
+  return memoryTuple(key)[0];
 }
