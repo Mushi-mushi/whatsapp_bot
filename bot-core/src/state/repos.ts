@@ -689,6 +689,18 @@ export function utcDay(ts: number): string {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
+// Stable per-person key for siesta discipline. Group participants arrive under an
+// opaque LID (raw.key.participant) while the dashboard arms them by their phone
+// JID from contacts, so both sides must collapse to the same identity. Prefer the
+// phone number (always present as senderPhone/contact phone), falling back to the
+// phone JID, then the raw id (LID) when no phone is known.
+export function disciplineKey(senderId: string, phone?: string | null): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (digits) return `${digits}@s.whatsapp.net`;
+  if (senderId.endsWith("@s.whatsapp.net")) return senderId;
+  return senderId;
+}
+
 export interface DisciplineEntry {
   chatId: string;
   senderId: string;

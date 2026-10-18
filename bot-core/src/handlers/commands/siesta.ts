@@ -1,6 +1,6 @@
 import type { Handler } from "../../router/router.js";
 import type { RuntimeState } from "../../state/runtime.js";
-import { utcDay, type SiestaDisciplineStore } from "../../state/repos.js";
+import { disciplineKey, utcDay, type SiestaDisciplineStore } from "../../state/repos.js";
 
 const RESPONSES = [
   (m: number) =>
@@ -51,7 +51,8 @@ export function makeSiesta(runtime: RuntimeState, discipline: SiestaDisciplineSt
       return ctx.reply("My siestas can only be between 1 and 60 minutes.");
     }
 
-    const { chatId, senderId } = ctx.msg;
+    const { chatId } = ctx.msg;
+    const senderId = disciplineKey(ctx.msg.senderId, ctx.msg.senderPhone);
     const now = Date.now();
     const armed = discipline.isArmed(chatId, senderId);
     const usedToday = discipline.usedToday(chatId, senderId, utcDay(now));

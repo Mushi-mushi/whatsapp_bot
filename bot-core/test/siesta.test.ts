@@ -70,6 +70,20 @@ describe("bot.siesta discipline", () => {
     db.close();
   });
 
+  it("matches a LID group participant against the phone-JID they were armed by", async () => {
+    // In groups the sender arrives as an opaque LID, but the dashboard arms by the
+    // phone JID resolved from contacts. Both must collapse to the same identity.
+    const { run, runtime, discipline, db } = setup("5", {
+      senderId: "209348576012345@lid",
+      senderPhone: "34634439261",
+    });
+    discipline.arm("g@g.us", "34634439261@s.whatsapp.net");
+    await run();
+    expect(runtime.isSleeping()).toBe(false);
+    expect(discipline.sleepUntil("g@g.us", "34634439261@s.whatsapp.net")).not.toBeNull();
+    db.close();
+  });
+
   it("does not penalise or consume the allowance on an invalid duration", async () => {
     const { run, runtime, discipline, msg, db } = setup("nope");
     await run();

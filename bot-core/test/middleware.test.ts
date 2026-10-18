@@ -286,8 +286,9 @@ describe("sleepGuard", () => {
   it("deletes messages from a sleeping player and tells them to sleep, blocking the chain", async () => {
     const db = openDatabase(":memory:");
     const discipline = new SiestaDisciplineStore(db);
-    discipline.putToSleep("c@s.whatsapp.net", "c@s.whatsapp.net", Date.now() + 60_000);
-    const { ctx, deleteMessage, sendText } = makeCtx({ text: "still awake" });
+    // Stored under the phone-derived key; the sleeping message arrives as a LID.
+    discipline.putToSleep("c@s.whatsapp.net", "34696451685@s.whatsapp.net", Date.now() + 60_000);
+    const { ctx, deleteMessage, sendText } = makeCtx({ senderId: "209348576012345@lid", text: "still awake" });
     const { next, called } = nextSpy();
     await sleepGuard(discipline, silentLogger)(ctx, next);
     expect(deleteMessage).toHaveBeenCalledOnce();
@@ -299,7 +300,7 @@ describe("sleepGuard", () => {
   it("still scolds when deletion fails (bot not group admin)", async () => {
     const db = openDatabase(":memory:");
     const discipline = new SiestaDisciplineStore(db);
-    discipline.putToSleep("g@g.us", "p@s.whatsapp.net", Date.now() + 60_000);
+    discipline.putToSleep("g@g.us", "34696451685@s.whatsapp.net", Date.now() + 60_000);
     const { ctx, sendText } = makeCtx(
       { chatId: "g@g.us", isGroup: true, senderId: "p@s.whatsapp.net" },
     );

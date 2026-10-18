@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
 import { redactSecrets, restoreSecrets } from "../config/secrets.js";
 import type { ConfigStore, ContactsStore, KnownChatsStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
+import { disciplineKey } from "../state/repos.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import type { Transport } from "../transport/types.js";
 import { ollamaListModels } from "../util/ollama.js";
@@ -91,6 +92,13 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     }
     return null;
   };
+  // Collapse a dashboard-supplied JID to the same identity the bot sees at message
+  // time (phone-based), using the contact's phone when the JID is a LID.
+  const canonicalTarget = (jid: string): string => {
+    const contact = deps.contacts.all().find((c) => c.jid === jid);
+    const phone = contact?.phone ?? (jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : "");
+    return disciplineKey(jid, phone);
+  };
   const disciplineView = (now = Date.now()) => {
     const chats = new Map(deps.knownChats.list().map((c) => [c.id, c.name]));
     return deps.discipline.listActive(now).map((e) => ({
@@ -116,7 +124,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       return { ok: false, error: parsed.error.flatten() };
     }
     const { chatId, senderId, minutes } = parsed.data;
-    deps.discipline.putToSleep(chatId, senderId, Date.now() + minutes * 60_000);
+    deps.discipline.putToSleep(chatId, canonicalTarget(senderId), Date.now() + minutes * 60_000);
     return { ok: true, players: disciplineView() };
   });
   app.post("/api/discipline/arm", async (req, reply) => {
@@ -125,7 +133,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       reply.code(400);
       return { ok: false, error: parsed.error.flatten() };
     }
-    deps.discipline.arm(parsed.data.chatId, parsed.data.senderId);
+    deps.discipline.arm(parsed.data.chatId, canonicalTarget(parsed.data.senderId));
     return { ok: true, players: disciplineView() };
   });
   app.post("/api/discipline/wake", async (req, reply) => {
@@ -134,7 +142,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       reply.code(400);
       return { ok: false, error: parsed.error.flatten() };
     }
-    deps.discipline.wake(parsed.data.chatId, parsed.data.senderId);
+    deps.discipline.wake(parsed.data.chatId, canonicalTarget(parsed.data.senderId));
     return { ok: true, players: disciplineView() };
   });
 

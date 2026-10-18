@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 import type { SeenActivityStore, SeenStore, SiestaDisciplineStore, TellStore, UserMemoryStore } from "../state/repos.js";
+import { disciplineKey } from "../state/repos.js";
 import type { RuntimeState } from "../state/runtime.js";
 import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
@@ -206,7 +207,8 @@ export function sleepGuard(discipline: SiestaDisciplineStore, logger: Logger): M
       await next();
       return;
     }
-    if (discipline.sleepUntil(ctx.msg.chatId, ctx.msg.senderId) == null) {
+    const senderId = disciplineKey(ctx.msg.senderId, ctx.msg.senderPhone);
+    if (discipline.sleepUntil(ctx.msg.chatId, senderId) == null) {
       await next();
       return;
     }
