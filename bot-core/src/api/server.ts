@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
 import { redactSecrets, restoreSecrets } from "../config/secrets.js";
-import type { ConfigStore, KnownChatsStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
+import type { ConfigStore, ContactsStore, KnownChatsStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import type { Transport } from "../transport/types.js";
 import { ollamaListModels } from "../util/ollama.js";
@@ -24,6 +24,8 @@ export interface ApiDeps {
   profiler: ProfileService;
   pets: PetService;
   runtime: RuntimeState;
+  discipline: SiestaDisciplineStore;
+  contacts: ContactsStore;
   onConfigChange: () => void;
   logger: Logger;
   apiToken?: string;
@@ -74,6 +76,77 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     ok: true,
     cancelled: deps.runtime.cancelSiesta(),
   }));
+
+  // Forced-sleep discipline: list sleeping/armed players and manage their state.
+  // Resolve a friendly name for a sender JID from the synced contacts (exact JID
+  // first, then by phone digits), falling back to null so the UI can show the JID.
+  const resolveName = (jid: string): string | null => {
+    const contacts = deps.contacts.all();
+    const direct = contacts.find((c) => c.jid === jid);
+    if (direct?.name) return direct.name;
+    const digits = jid.split("@")[0].replace(/\D/g, "");
+    if (digits) {
+      const byPhone = contacts.find((c) => c.phone && c.phone.replace(/\D/g, "") === digits);
+      if (byPhone?.name) return byPhone.name;
+    }
+    return null;
+  };
+  const disciplineView = (now = Date.now()) => {
+    const chats = new Map(deps.knownChats.list().map((c) => [c.id, c.name]));
+    return deps.discipline.listActive(now).map((e) => ({
+      chatId: e.chatId,
+      chatName: chats.get(e.chatId) ?? null,
+      senderId: e.senderId,
+      displayName: resolveName(e.senderId),
+      sleepUntil: e.sleepUntil != null && e.sleepUntil > now ? e.sleepUntil : null,
+      armed: e.armed,
+    }));
+  };
+  const disciplineTarget = z.object({ chatId: z.string().min(1), senderId: z.string().min(1) });
+  const disciplineSleep = disciplineTarget.extend({ minutes: z.number().int().min(1).max(60) });
+
+  app.get("/api/discipline", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return { players: disciplineView() };
+  });
+  app.post("/api/discipline/sleep", async (req, reply) => {
+    const parsed = disciplineSleep.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, error: parsed.error.flatten() };
+    }
+    const { chatId, senderId, minutes } = parsed.data;
+    deps.discipline.putToSleep(chatId, senderId, Date.now() + minutes * 60_000);
+    return { ok: true, players: disciplineView() };
+  });
+  app.post("/api/discipline/arm", async (req, reply) => {
+    const parsed = disciplineTarget.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, error: parsed.error.flatten() };
+    }
+    deps.discipline.arm(parsed.data.chatId, parsed.data.senderId);
+    return { ok: true, players: disciplineView() };
+  });
+  app.post("/api/discipline/wake", async (req, reply) => {
+    const parsed = disciplineTarget.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, error: parsed.error.flatten() };
+    }
+    deps.discipline.wake(parsed.data.chatId, parsed.data.senderId);
+    return { ok: true, players: disciplineView() };
+  });
+
+  // Known contacts (JID + display name + phone) for the dashboard's player picker.
+  app.get("/api/contacts", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const contacts = deps.contacts.all()
+      .filter((c) => c.name.trim())
+      .map((c) => ({ jid: c.jid, name: c.name, phone: c.phone }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { contacts };
+  });
 
   app.get("/api/config", async (_req, reply) => {
     const config = deps.configStore.load();

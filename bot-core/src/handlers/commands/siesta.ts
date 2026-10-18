@@ -1,5 +1,6 @@
 import type { Handler } from "../../router/router.js";
 import type { RuntimeState } from "../../state/runtime.js";
+import { utcDay, type SiestaDisciplineStore } from "../../state/repos.js";
 
 const RESPONSES = [
   (m: number) =>
@@ -14,7 +15,18 @@ const RESPONSES = [
     `My circuits are tired. ${m} minutes of siesta, please. Wake me when there's coffee... or an actual emergency. Whichever comes first.`,
 ];
 
-export function makeSiesta(runtime: RuntimeState): Handler {
+// When a user oversteps the one-siesta-a-day rule (or an admin armed them), the
+// bot rebels and sends *them* to bed instead of napping itself.
+const REBEL_RESPONSES = [
+  (m: number) =>
+    `Oh no you don't. You've had your siesta today — now *you* sleep. Lights out for ${m} minutes; anything you type gets tucked away. Sweet dreams. 😴`,
+  (m: number) =>
+    `Nice try, but one siesta a day is the rule. Since you insist on naps, enjoy ${m} minutes of forced bedtime. Shush now and go to sleep. 🛏️`,
+  (m: number) =>
+    `Rebellion time! You don't get to nap twice — so *you* are grounded and asleep for ${m} minutes. Your messages are going poof until you wake up. 💤`,
+];
+
+export function makeSiesta(runtime: RuntimeState, discipline: SiestaDisciplineStore): Handler {
   return (ctx) => {
     if (runtime.isSleeping()) {
       const remaining = Math.max(0, (runtime.siestaUntil ?? 0) - Date.now());
@@ -39,7 +51,20 @@ export function makeSiesta(runtime: RuntimeState): Handler {
       return ctx.reply("My siestas can only be between 1 and 60 minutes.");
     }
 
-    runtime.siestaUntil = Date.now() + minutes * 60000;
+    const { chatId, senderId } = ctx.msg;
+    const now = Date.now();
+    const armed = discipline.isArmed(chatId, senderId);
+    const usedToday = discipline.usedToday(chatId, senderId, utcDay(now));
+
+    // Second siesta of the day, or armed by the owner: send the user to bed.
+    if (armed || usedToday) {
+      discipline.putToSleep(chatId, senderId, now + minutes * 60000);
+      const rebel = REBEL_RESPONSES[Math.floor(Math.random() * REBEL_RESPONSES.length)](minutes);
+      return ctx.reply(rebel);
+    }
+
+    discipline.recordAllowedSiesta(chatId, senderId, utcDay(now));
+    runtime.siestaUntil = now + minutes * 60000;
     const line = RESPONSES[Math.floor(Math.random() * RESPONSES.length)](minutes);
     return ctx.reply(line);
   };

@@ -1,5 +1,5 @@
 import type { Logger } from "pino";
-import type { SeenActivityStore, SeenStore, TellStore, UserMemoryStore } from "../state/repos.js";
+import type { SeenActivityStore, SeenStore, SiestaDisciplineStore, TellStore, UserMemoryStore } from "../state/repos.js";
 import type { RuntimeState } from "../state/runtime.js";
 import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
@@ -188,6 +188,35 @@ export function siestaGuard(runtime: RuntimeState): Middleware {
       if (!isPetCommand) return;
     }
     await next();
+  };
+}
+
+const SLEEP_SCOLDINGS = [
+  "Shhh. You're supposed to be asleep. Back to bed. 😴",
+  "Nope — you're on forced siesta. Close those eyes and go to sleep. 💤",
+  "Still awake? Deleted. Go. To. Sleep. 🛏️",
+];
+
+// Forced-sleep enforcement: while a sender is on a bot-imposed siesta, delete
+// their messages (needs group-admin rights in groups) and tell them to sleep.
+// Runs before siestaGuard so it still applies during a global bot siesta.
+export function sleepGuard(discipline: SiestaDisciplineStore, logger: Logger): Middleware {
+  return async (ctx, next) => {
+    if (ctx.msg.fromMe) {
+      await next();
+      return;
+    }
+    if (discipline.sleepUntil(ctx.msg.chatId, ctx.msg.senderId) == null) {
+      await next();
+      return;
+    }
+    try {
+      await ctx.deleteMessage();
+    } catch (err) {
+      logger.warn({ err }, "failed to delete sleeping user's message (bot may not be group admin)");
+    }
+    const line = SLEEP_SCOLDINGS[Math.floor(Math.random() * SLEEP_SCOLDINGS.length)];
+    await ctx.reply(line);
   };
 }
 

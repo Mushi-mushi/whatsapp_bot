@@ -14,7 +14,7 @@ export function openDatabase(path: string): Database.Database {
 
 function migrate(db: Database.Database): void {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 2) throw new Error("Database schema is newer than this application");
+  if (version > 3) throw new Error("Database schema is newer than this application");
   db.exec(`
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
@@ -215,6 +215,21 @@ function migrate(db: Database.Database): void {
         );
         ALTER TABLE outbox ADD COLUMN pet_event_id TEXT REFERENCES pet_events(id);
         PRAGMA user_version = 2;
+      `);
+    })();
+  }
+  if (version < 3) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE siesta_discipline (
+          chat_id         TEXT NOT NULL,
+          sender_id       TEXT NOT NULL,
+          last_siesta_day TEXT,
+          sleep_until     INTEGER,
+          armed           INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (chat_id, sender_id)
+        );
+        PRAGMA user_version = 3;
       `);
     })();
   }

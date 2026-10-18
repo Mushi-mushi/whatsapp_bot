@@ -66,6 +66,21 @@ export interface SiestaStatus {
   until: number | null;
 }
 
+export interface DisciplinePlayer {
+  chatId: string;
+  chatName: string | null;
+  senderId: string;
+  displayName: string | null;
+  sleepUntil: number | null;
+  armed: boolean;
+}
+
+export interface Contact {
+  jid: string;
+  name: string;
+  phone: string | null;
+}
+
 const TOKEN_KEY = "apiToken";
 let authToken = localStorage.getItem(TOKEN_KEY) ?? "";
 
@@ -264,4 +279,30 @@ export const api = {
     fetch("/api/relink", { method: "POST", headers: authHeaders() }).then(
       json<{ ok: boolean; error?: string }>,
     ),
+  getDiscipline: () =>
+    fetch("/api/discipline", { headers: authHeaders(), cache: "no-store" }).then(
+      json<{ players: DisciplinePlayer[] }>,
+    ),
+  getContacts: () =>
+    fetch("/api/contacts", { headers: authHeaders(), cache: "no-store" }).then(
+      json<{ contacts: Contact[] }>,
+    ),
+  sleepPlayer: (chatId: string, senderId: string, minutes: number) =>
+    fetch("/api/discipline/sleep", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ chatId, senderId, minutes }),
+    }).then(json<{ ok: boolean; players: DisciplinePlayer[] }>),
+  armPlayer: (chatId: string, senderId: string) =>
+    fetch("/api/discipline/arm", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ chatId, senderId }),
+    }).then(json<{ ok: boolean; players: DisciplinePlayer[] }>),
+  wakePlayer: (chatId: string, senderId: string) =>
+    fetch("/api/discipline/wake", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ chatId, senderId }),
+    }).then(json<{ ok: boolean; players: DisciplinePlayer[] }>),
 };

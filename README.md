@@ -30,6 +30,24 @@ for the dashboard to be healthy.
 
 An active `bot.siesta` can be cancelled from the dashboard's **Connection** tab.
 
+Each player may use `bot.siesta` only once per UTC day within a given chat. A
+second attempt that day — or a player an admin has armed — makes the bot rebel
+and put that *player* to sleep instead: their messages are deleted for the
+requested duration (only in groups where the bot is an admin) and they are told
+to go to sleep. The dashboard's **Sleep** tab lets the authenticated owner put a
+player to sleep now (pick a synced contact by name or paste a WhatsApp JID, for a
+chosen number of minutes), arm a player so their next `bot.siesta` triggers the
+sleep, and wake anyone currently sleeping or armed. The list shows each player's
+contact display name (falling back to the JID). Forced-sleep state is keyed per
+chat and per player and persists across restarts.
+
+WhatsApp automatically reconnects using the saved session after two failed
+health probes or when incoming events remain buffered across two consecutive
+minute-spaced checks. Repeated reconnect attempts back off from 2 seconds to
+a maximum of 30 seconds; receiving messages resets the backoff. Quiet chats
+alone do not trigger recovery. This recovery preserves credentials; the
+dashboard's manual re-link action is still available when fresh pairing is needed.
+
 ## Upgrading Existing Installations
 
 - Back up the database and authentication directory before upgrading.
@@ -43,9 +61,10 @@ An active `bot.siesta` can be cancelled from the dashboard's **Connection** tab.
 - Configuration writes require the `ETag` from `GET /api/config` as an
   `If-Match` header. Stale writes return 412; missing revisions return 428.
 - Database migration version 1 adds the durable outbox; version 2 adds group
-  pets and picture-delivery metadata. Both preserve existing configuration,
+  pets and picture-delivery metadata; version 3 adds per-chat siesta discipline
+  (daily limits and forced-sleep state). All preserve existing configuration,
   contacts, reminders and tells. Back up before upgrading; older binaries
-  cannot open a version-2 database.
+  cannot open a newer database.
 - The backend runs as UID 1000. On Linux, ensure the mounted `data/` directory
   is writable by that UID before deployment. Do not loosen auth-file permissions.
 

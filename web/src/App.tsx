@@ -12,16 +12,18 @@ import { PaintCard } from "@/components/PaintCard";
 import { MemoryCard } from "@/components/MemoryCard";
 import { ProfilesCard } from "@/components/ProfilesCard";
 import { PetsCard } from "@/components/PetsCard";
-import { Bot, Brain, Check, Image, Loader2, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles } from "lucide-react";
+import { DisciplineCard } from "@/components/DisciplineCard";
+import { Bot, Brain, Check, Image, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles } from "lucide-react";
 
 const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;
 
-type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets";
+type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline";
 
 // Which config fields live on which tab — drives the per-tab "unsaved" dot.
 const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
   connection: [],
   pets: [],
+  discipline: [],
   general: [
     "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia", "deleteInstagramPosts",
     "instagramDeleteSenders", "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl",
@@ -197,9 +199,18 @@ export default function App() {
         <TabButton active={tab === "pets"} onClick={() => setTab("pets")}>
           <Sparkles className="h-4 w-4" /> Pets
         </TabButton>
+        <TabButton active={tab === "discipline"} onClick={() => setTab("discipline")}>
+          <Moon className="h-4 w-4" /> Sleep
+        </TabButton>
       </nav>
 
       {tab === "pets" && <PetsCard />}
+
+      {tab === "discipline" && (
+        <div className="grid min-w-0 gap-4">
+          <DisciplineCard chats={chatsQuery.data?.chats ?? []} />
+        </div>
+      )}
 
       {tab === "connection" && (
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">

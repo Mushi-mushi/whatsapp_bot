@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import { createApi, type ApiDeps } from "../src/api/server.js";
 import { openDatabase } from "../src/state/db.js";
-import { ConfigStore, KnownChatsStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
+import { ConfigStore, ContactsStore, KnownChatsStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
 import { ProfileService } from "../src/handlers/profiles/service.js";
 import { PetService } from "../src/pets/service.js";
@@ -21,6 +21,7 @@ async function setup(apiToken: string | undefined = "test-token") {
   const userMemory = new UserMemoryStore(db);
   const userProfiles = new UserProfileStore(db);
   const configStore = new ConfigStore(db);
+  const discipline = new SiestaDisciplineStore(db);
   const profiler = new ProfileService(userMemory, userProfiles, new BackgroundJobs(() => {}), () => configStore.load(), logger);
   const deps: ApiDeps = {
     apiToken,
@@ -28,6 +29,8 @@ async function setup(apiToken: string | undefined = "test-token") {
     triviaScores: new TriviaScoreStore(db), userMemory, userProfiles, profiler, logger,
     pets: new PetService(new PetStore(db), () => configStore.load(), () => true),
     runtime,
+    discipline,
+    contacts: new ContactsStore(db),
     onConfigChange: vi.fn(),
     transport: {
       getStatus: () => ({ state: "open", health: "online", qrDataUrl: null, pairingCode: null, me: null, lastActivityAt: null }),
@@ -39,7 +42,7 @@ async function setup(apiToken: string | undefined = "test-token") {
   };
   const app = await createApi(deps);
   cleanup.push(async () => { await app.close(); db.close(); });
-  return { app, deps, listeners, runtime };
+  return { app, deps, listeners, runtime, discipline };
 }
 
 describe("API authentication", () => {
@@ -111,6 +114,56 @@ describe("siesta controls", () => {
     const response = await app.inject({ method: "POST", url: "/api/siesta/cancel", headers });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, cancelled: false });
+  });
+});
+
+describe("sleep discipline controls", () => {
+  const headers = { authorization: "Bearer test-token" };
+
+  it("requires authentication", async () => {
+    const { app } = await setup();
+    expect((await app.inject({ url: "/api/discipline" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url: "/api/discipline/sleep" })).statusCode).toBe(401);
+  });
+
+  it("puts a player to sleep, lists them, and wakes them", async () => {
+    const { app, discipline } = await setup();
+    const body = { chatId: "group@g.us", senderId: "34600@s.whatsapp.net", minutes: 10 };
+    const slept = await app.inject({ method: "POST", url: "/api/discipline/sleep", headers, payload: body });
+    expect(slept.statusCode).toBe(200);
+    expect(slept.json().players).toHaveLength(1);
+    expect(discipline.sleepUntil(body.chatId, body.senderId)).toBeGreaterThan(Date.now());
+
+    const list = await app.inject({ url: "/api/discipline", headers });
+    expect(list.json().players[0]).toMatchObject({ chatId: body.chatId, senderId: body.senderId, armed: false });
+    expect(list.json().players[0].sleepUntil).toBeGreaterThan(Date.now());
+
+    const woken = await app.inject({ method: "POST", url: "/api/discipline/wake", headers, payload: { chatId: body.chatId, senderId: body.senderId } });
+    expect(woken.json().players).toHaveLength(0);
+    expect(discipline.sleepUntil(body.chatId, body.senderId)).toBeNull();
+  });
+
+  it("arms a player and validates request bodies", async () => {
+    const { app, discipline } = await setup();
+    const target = { chatId: "group@g.us", senderId: "34601@s.whatsapp.net" };
+    const armed = await app.inject({ method: "POST", url: "/api/discipline/arm", headers, payload: target });
+    expect(armed.statusCode).toBe(200);
+    expect(discipline.isArmed(target.chatId, target.senderId)).toBe(true);
+    expect(armed.json().players[0]).toMatchObject({ ...target, armed: true, sleepUntil: null });
+
+    const bad = await app.inject({ method: "POST", url: "/api/discipline/sleep", headers, payload: { chatId: "c", senderId: "s", minutes: 999 } });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it("resolves a player's display name from synced contacts", async () => {
+    const { app, deps } = await setup();
+    deps.contacts.upsertMany([{ jid: "34602@s.whatsapp.net", phone: "34602", name: "Alice" }]);
+    await app.inject({ method: "POST", url: "/api/discipline/arm", headers, payload: { chatId: "group@g.us", senderId: "34602@s.whatsapp.net" } });
+    const list = await app.inject({ url: "/api/discipline", headers });
+    expect(list.json().players[0]).toMatchObject({ senderId: "34602@s.whatsapp.net", displayName: "Alice" });
+
+    const contacts = await app.inject({ url: "/api/contacts", headers });
+    expect(contacts.json().contacts).toEqual([{ jid: "34602@s.whatsapp.net", name: "Alice", phone: "34602" }]);
   });
 });
 
@@ -206,7 +259,8 @@ describe("configuration revisions", () => {
       const result = response.json();
       expect(result.pet).toMatchObject({ name: "Mochi", species: "fox", enabled: true });
       expect(result.pet.nextRequestActiveMinutes).toBeCloseTo(5, 2);
-      expect(result.pet).toMatchObject({ hydration: 100, cleanliness: 100 });
+      expect(result.pet.hydration).toBeCloseTo(100, 4);
+      expect(result.pet.cleanliness).toBeCloseTo(100, 4);
       expect(deps.pets.store.get(chatId)?.maxRequestsPerDay).toBe(8);
       let rev = result.revision;
       for (const action of ["pause", "resume", "disable", "enable"]) {

@@ -7,6 +7,7 @@ import type {
   RemindersStore,
   SeenActivityStore,
   SentimentStore,
+  SiestaDisciplineStore,
   TellStore,
   TriviaScoreStore,
   UserMemoryStore,
@@ -49,6 +50,7 @@ import { makeServices } from "./services.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
+  discipline: SiestaDisciplineStore;
   sentiment: SentimentStore;
   complaints: ComplaintStore;
   seenActivity: SeenActivityStore;
@@ -75,7 +77,7 @@ export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler>
     fact,
     eightball,
     quote,
-    siesta: makeSiesta(deps.runtime),
+    siesta: makeSiesta(deps.runtime, deps.discipline),
     complain: makeComplain(deps.complaints),
     score: makeScore(deps.sentiment),
     top_positive: makeTopPositive(deps.sentiment),

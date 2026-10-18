@@ -684,3 +684,116 @@ export class DuelWinStore {
       .all(chatId, limit) as TriviaTrophy[];
   }
 }
+// UTC calendar day (YYYY-MM-DD) used to enforce the once-a-day siesta limit.
+export function utcDay(ts: number): string {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+
+export interface DisciplineEntry {
+  chatId: string;
+  senderId: string;
+  lastSiestaDay: string | null;
+  sleepUntil: number | null;
+  armed: boolean;
+}
+
+interface DisciplineRow {
+  chat_id: string;
+  sender_id: string;
+  last_siesta_day: string | null;
+  sleep_until: number | null;
+  armed: number;
+}
+
+// Per-(chat, sender) siesta discipline: tracks the once-a-day siesta allowance,
+// an active "forced sleep" window (messages deleted until it elapses), and an
+// "armed" flag so the sender's next bot.siesta puts them to sleep instead.
+export class SiestaDisciplineStore {
+  constructor(private readonly db: Database.Database) {}
+
+  private toEntry(row: DisciplineRow): DisciplineEntry {
+    return {
+      chatId: row.chat_id,
+      senderId: row.sender_id,
+      lastSiestaDay: row.last_siesta_day,
+      sleepUntil: row.sleep_until,
+      armed: row.armed !== 0,
+    };
+  }
+
+  get(chatId: string, senderId: string): DisciplineEntry | null {
+    const row = this.db
+      .prepare("SELECT * FROM siesta_discipline WHERE chat_id = ? AND sender_id = ?")
+      .get(chatId, senderId) as DisciplineRow | undefined;
+    return row ? this.toEntry(row) : null;
+  }
+
+  // True once the sender has already spent their allowed siesta for `day`.
+  usedToday(chatId: string, senderId: string, day: string): boolean {
+    return this.get(chatId, senderId)?.lastSiestaDay === day;
+  }
+
+  isArmed(chatId: string, senderId: string): boolean {
+    return this.get(chatId, senderId)?.armed ?? false;
+  }
+
+  // The remaining forced-sleep window end for the sender, or null if awake.
+  sleepUntil(chatId: string, senderId: string, now = Date.now()): number | null {
+    const until = this.get(chatId, senderId)?.sleepUntil ?? null;
+    return until != null && until > now ? until : null;
+  }
+
+  // Record the sender's one allowed siesta for the day (normal bot nap).
+  recordAllowedSiesta(chatId: string, senderId: string, day: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO siesta_discipline (chat_id, sender_id, last_siesta_day)
+         VALUES (?, ?, ?)
+         ON CONFLICT(chat_id, sender_id) DO UPDATE SET last_siesta_day = excluded.last_siesta_day`,
+      )
+      .run(chatId, senderId, day);
+  }
+
+  // Put the sender to sleep until `until`; also clears any armed flag.
+  putToSleep(chatId: string, senderId: string, until: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO siesta_discipline (chat_id, sender_id, sleep_until, armed)
+         VALUES (?, ?, ?, 0)
+         ON CONFLICT(chat_id, sender_id) DO UPDATE SET sleep_until = excluded.sleep_until, armed = 0`,
+      )
+      .run(chatId, senderId, until);
+  }
+
+  // Arm the sender so their next bot.siesta puts them to sleep.
+  arm(chatId: string, senderId: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO siesta_discipline (chat_id, sender_id, armed)
+         VALUES (?, ?, 1)
+         ON CONFLICT(chat_id, sender_id) DO UPDATE SET armed = 1`,
+      )
+      .run(chatId, senderId);
+  }
+
+  // Wake the sender and disarm them, leaving the daily allowance untouched.
+  wake(chatId: string, senderId: string): void {
+    this.db
+      .prepare(
+        "UPDATE siesta_discipline SET sleep_until = NULL, armed = 0 WHERE chat_id = ? AND sender_id = ?",
+      )
+      .run(chatId, senderId);
+  }
+
+  // Currently sleeping or armed senders, for the dashboard.
+  listActive(now = Date.now()): DisciplineEntry[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM siesta_discipline
+         WHERE armed = 1 OR (sleep_until IS NOT NULL AND sleep_until > ?)
+         ORDER BY sleep_until DESC`,
+      )
+      .all(now) as DisciplineRow[];
+    return rows.map((row) => this.toEntry(row));
+  }
+}

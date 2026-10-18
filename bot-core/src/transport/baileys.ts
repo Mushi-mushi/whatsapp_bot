@@ -53,11 +53,13 @@ export class BaileysTransport implements Transport {
   private contacts = new ContactResolver();
   private pairingRequested = false;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private reconnectDelayMs = 2000;
   private stopped = false;
   private starting = false;
   private consecutiveLogouts = 0;
   private healthTimer?: ReturnType<typeof setInterval>;
   private healthFailures = 0;
+  private bufferedSince: number | null = null;
   private lastActivityAt: number | null = null;
   // Recently sent/seen message content, so we can answer decryption retry receipts
   // (otherwise the peer is stuck on "Waiting for this message").
@@ -114,6 +116,8 @@ export class BaileysTransport implements Transport {
   private noteInbound(): void {
     this.lastActivityAt = Date.now();
     this.healthFailures = 0;
+    this.bufferedSince = null;
+    this.reconnectDelayMs = 2000;
     if (this.status.state === "open" && this.status.health !== "online") {
       this.setStatus({ health: "online", lastActivityAt: this.lastActivityAt });
     } else {
@@ -132,38 +136,61 @@ export class BaileysTransport implements Transport {
       clearInterval(this.healthTimer);
       this.healthTimer = undefined;
     }
+    this.bufferedSince = null;
   }
 
-  // Active liveness check: WhatsApp can drop a linked device silently (socket
-  // stays "open" but queries hang and no messages arrive). Probe with a cheap
-  // query and flag the session "stale" after repeated failures so the dashboard
-  // can prompt a re-link.
+  // Queries can succeed while Baileys buffers incoming events indefinitely.
+  // Check both paths; a quiet chat alone is not evidence of a dead connection.
   private async probeHealth(): Promise<void> {
     const sock = this.sock;
     if (this.stopped || this.status.state !== "open" || !sock) return;
+    if (sock.ev.isBuffering()) {
+      this.bufferedSince ??= Date.now();
+      if (Date.now() - this.bufferedSince >= 60_000) {
+        this.recoverConnection(sock, "Incoming WhatsApp events remained buffered across health checks");
+        return;
+      }
+    } else {
+      this.bufferedSince = null;
+    }
     const me = sock.user?.id;
     const number = me ? me.split(":")[0].split("@")[0].replace(/\D/g, "") : "";
     if (!number) return;
     try {
       const res = await this.withTimeout(sock.onWhatsApp(number), 20_000);
+      if (this.stopped || this.sock !== sock || this.status.state !== "open") return;
       if (res && res.length) {
         this.healthFailures = 0;
         this.setStatus({ health: "online", lastActivityAt: Date.now() });
       } else {
-        this.registerHealthFailure();
+        this.registerHealthFailure(sock);
       }
     } catch (err) {
+      if (this.stopped || this.sock !== sock || this.status.state !== "open") return;
       this.opts.logger.warn({ err }, "health probe failed");
-      this.registerHealthFailure();
+      this.registerHealthFailure(sock);
     }
   }
 
-  private registerHealthFailure(): void {
+  private registerHealthFailure(sock: WASocket): void {
     this.healthFailures += 1;
-    if (this.healthFailures >= 2 && this.status.health !== "stale") {
-      this.opts.logger.error("WhatsApp link appears stale — re-link the device from the dashboard.");
-      this.setStatus({ health: "stale" });
+    if (this.healthFailures >= 2) {
+      this.recoverConnection(sock, "Repeated WhatsApp health probe failures");
     }
+  }
+
+  private recoverConnection(sock: WASocket, reason: string): void {
+    if (this.stopped || this.sock !== sock) return;
+    this.opts.logger.warn({ reason }, "Reconnecting WhatsApp with the saved session");
+    this.sock = null;
+    this.stopHealthMonitor();
+    this.setStatus({ state: "connecting", health: "stale" });
+    try {
+      sock.end(new Error(reason));
+    } catch (err) {
+      this.opts.logger.warn({ err }, "Failed to close unhealthy WhatsApp socket");
+    }
+    this.scheduleReconnect();
   }
 
   private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -178,13 +205,15 @@ export class BaileysTransport implements Transport {
 
   // Schedule a single reconnect, coalescing overlapping close events so we never
   // spin up multiple concurrent sockets.
-  private scheduleReconnect(delayMs = 2000): void {
+  private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
+    const delayMs = this.reconnectDelayMs;
+    this.reconnectDelayMs = Math.min(delayMs * 2, 30_000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       void this.start().catch((err) => {
         this.opts.logger.error({ err }, "reconnect failed");
-        this.scheduleReconnect(Math.min(delayMs * 2, 30_000));
+        this.scheduleReconnect();
       });
     }, delayMs);
   }

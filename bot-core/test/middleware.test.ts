@@ -7,12 +7,13 @@ import {
   learnFromOwner,
   mediaPolicy,
   siestaGuard,
+  sleepGuard,
 } from "../src/middleware/index.js";
 import { Context, type Services } from "../src/router/context.js";
 import { DEFAULT_CONFIG, type BotConfig } from "../src/config/schema.js";
 import { RuntimeState } from "../src/state/runtime.js";
 import { openDatabase } from "../src/state/db.js";
-import { SeenStore } from "../src/state/repos.js";
+import { SeenStore, SiestaDisciplineStore } from "../src/state/repos.js";
 import type { IncomingMessage, MessageKind } from "../src/transport/types.js";
 import type { WAMessage } from "@whiskeysockets/baileys";
 import type { Logger } from "pino";
@@ -278,6 +279,51 @@ describe("siestaGuard", () => {
     const { next, called } = nextSpy();
     await siestaGuard(runtime)(ctx, next);
     expect(called.value).toBe(true);
+  });
+});
+
+describe("sleepGuard", () => {
+  it("deletes messages from a sleeping player and tells them to sleep, blocking the chain", async () => {
+    const db = openDatabase(":memory:");
+    const discipline = new SiestaDisciplineStore(db);
+    discipline.putToSleep("c@s.whatsapp.net", "c@s.whatsapp.net", Date.now() + 60_000);
+    const { ctx, deleteMessage, sendText } = makeCtx({ text: "still awake" });
+    const { next, called } = nextSpy();
+    await sleepGuard(discipline, silentLogger)(ctx, next);
+    expect(deleteMessage).toHaveBeenCalledOnce();
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(called.value).toBe(false);
+    db.close();
+  });
+
+  it("still scolds when deletion fails (bot not group admin)", async () => {
+    const db = openDatabase(":memory:");
+    const discipline = new SiestaDisciplineStore(db);
+    discipline.putToSleep("g@g.us", "p@s.whatsapp.net", Date.now() + 60_000);
+    const { ctx, sendText } = makeCtx(
+      { chatId: "g@g.us", isGroup: true, senderId: "p@s.whatsapp.net" },
+    );
+    ctx.deleteMessage = vi.fn(async () => { throw new Error("not admin"); });
+    const { next, called } = nextSpy();
+    await sleepGuard(discipline, silentLogger)(ctx, next);
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(called.value).toBe(false);
+    db.close();
+  });
+
+  it("lets awake players and the owner through untouched", async () => {
+    const db = openDatabase(":memory:");
+    const discipline = new SiestaDisciplineStore(db);
+    discipline.putToSleep("c@s.whatsapp.net", "c@s.whatsapp.net", Date.now() + 60_000);
+    const awake = makeCtx({ senderId: "other@s.whatsapp.net", chatId: "other@s.whatsapp.net" });
+    const owner = makeCtx({ fromMe: true });
+    for (const { ctx, deleteMessage } of [awake, owner]) {
+      const { next, called } = nextSpy();
+      await sleepGuard(discipline, silentLogger)(ctx, next);
+      expect(deleteMessage).not.toHaveBeenCalled();
+      expect(called.value).toBe(true);
+    }
+    db.close();
   });
 });
 

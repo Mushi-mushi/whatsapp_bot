@@ -10,6 +10,7 @@ import {
   SeenActivityStore,
   SeenStore,
   SentimentStore,
+  SiestaDisciplineStore,
   TellStore,
   TriviaScoreStore,
   DuelWinStore,
@@ -36,6 +37,7 @@ import {
   mediaPolicy,
   petObserver,
   siestaGuard,
+  sleepGuard,
 } from "./middleware/index.js";
 import { buildCommandRegistry } from "./handlers/commands/index.js";
 import { ProfileService } from "./handlers/profiles/service.js";
@@ -71,6 +73,7 @@ async function main(): Promise<void> {
   const duelScores = new DuelWinStore(db);
   const userMemory = new UserMemoryStore(db);
   const userProfiles = new UserProfileStore(db);
+  const discipline = new SiestaDisciplineStore(db);
   const runtime = new RuntimeState();
 
   // Cached config, refreshed when the API saves changes.
@@ -116,6 +119,7 @@ async function main(): Promise<void> {
     .use(dedupe(seen))
     .use(petObserver(pets))
     .use(ignoreOwn(runtime))
+    .use(sleepGuard(discipline, logger))
     .use(siestaGuard(runtime))
     .use(instagramGuard(logger))
     .use(activityTracker(seenActivity, tells))
@@ -128,6 +132,7 @@ async function main(): Promise<void> {
 
   const commandRegistry = buildCommandRegistry({
     runtime,
+    discipline,
     sentiment,
     complaints,
     seenActivity,
@@ -173,6 +178,8 @@ async function main(): Promise<void> {
       profiler,
       pets,
       runtime,
+      discipline,
+      contacts,
       logger,
       apiToken: API_TOKEN,
       allowInsecureApi: process.env.ALLOW_INSECURE_API === "true",
