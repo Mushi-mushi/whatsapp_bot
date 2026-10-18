@@ -76,7 +76,7 @@ describe("owner learning after deduplication", () => {
       for (let i = 0; i < 2; i++) {
         await bot.handle(makeCtx({ fromMe: true, text: "ordinary owner chatter" }).ctx);
       }
-      expect(memory.countSince("34696451685", 0)).toBe(1);
+      expect(memory.countSince(JSON.stringify(["c@s.whatsapp.net", "34696451685"]), 0)).toBe(1);
     } finally {
       await bot.stop();
       await jobs.stop();

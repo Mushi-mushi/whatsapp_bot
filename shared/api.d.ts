@@ -89,7 +89,10 @@ export interface ConfigSnapshot {
 }
 
 export interface ProfileSummary {
+  // Opaque identity of one person within one chat; URL-encode for API paths.
   sender_key: string;
+  chat_id: string;
+  chat_name: string | null;
   name: string;
   short: string;
   updated_at: number;

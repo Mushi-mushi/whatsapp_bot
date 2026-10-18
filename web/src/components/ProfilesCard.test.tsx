@@ -1,10 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import { ProfilesCard } from "./ProfilesCard";
 
-const profile = { sender_key: "alice", name: "Alice", short: "Likes hiking", updated_at: Date.now(), messageCount: 5 };
+const profile = { sender_key: '["group@g.us","alice"]', chat_id: "group@g.us", chat_name: "Friends", name: "Alice", short: "Likes hiking", updated_at: Date.now(), messageCount: 5 };
 const clients: QueryClient[] = [];
 
 beforeEach(() => {
@@ -24,6 +24,22 @@ function mount() {
 }
 
 describe("profile error states", () => {
+  it("distinguishes identical person and chat names and deletes only the chosen scoped entry", async () => {
+    const other = { ...profile, sender_key: '["other@g.us","alice"]', chat_id: "other@g.us" };
+    vi.mocked(api.getProfiles).mockResolvedValue({ profiles: [profile, other] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const forget = vi.spyOn(api, "deleteProfile").mockResolvedValue({ ok: true });
+    mount();
+    const buttons = await screen.findAllByTitle("Forget this user");
+    expect(screen.getByText("(group@g.us)")).toBeTruthy();
+    expect(screen.getByText("(other@g.us)")).toBeTruthy();
+    fireEvent.click(buttons[1]);
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("in Friends"));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("(other@g.us)"));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("this chat only"));
+    await waitFor(() => expect(forget).toHaveBeenCalledWith(other.sender_key));
+  });
+
   it("shows failed dossier loading and supports retry", async () => {
     const get = vi.spyOn(api, "getProfile").mockRejectedValue(new Error("dossier unavailable"));
     mount();

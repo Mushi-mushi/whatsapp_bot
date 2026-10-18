@@ -3,6 +3,7 @@ import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.j
 import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
 import type { Contact } from "../../../shared/api.js";
+import { memoryChat } from "./identity.js";
 
 const CONFIG_KEY = "config";
 const CONFIG_VERSION_KEY = "config_version";
@@ -241,18 +242,14 @@ export interface UserMessage {
   ts: number;
 }
 
-// A distinct person the bot has heard from, identified by a stable sender_key
-// (phone digits, else the raw jid/lid) with their latest display name.
+// A person within one chat, with their latest display name.
 export interface KnownUser {
   sender_key: string;
   name: string;
   name_norm: string;
 }
 
-// Rolling, bounded record of what each user says, keyed by a STABLE identity
-// (phone/jid) rather than display name so two people sharing a pushName never
-// merge. The display name is kept only to resolve name-based lookups (bot.profile
-// Alice) and to label output. Powers personalization for bot.ask / bot.profile.
+// Rolling history keyed by an opaque (chat ID, person ID) tuple.
 export class UserMemoryStore {
   constructor(private readonly db: Database.Database) {}
 
@@ -260,9 +257,9 @@ export class UserMemoryStore {
   record(senderKey: string, name: string, chatName: string | null, message: string, limit: number): void {
     this.db
       .prepare(
-        "INSERT INTO user_messages (sender_key, name_norm, name, chat_name, message, ts) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO user_messages (sender_key, chat_id, name_norm, name, chat_name, message, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(senderKey, normalizeName(name), name, chatName, message, Date.now());
+      .run(senderKey, memoryChat(senderKey), normalizeName(name), name, chatName, message, Date.now());
     this.db
       .prepare(
         `DELETE FROM user_messages
@@ -301,36 +298,27 @@ export class UserMemoryStore {
     return row.n;
   }
 
-  // Resolve a typed name to the most-recently-active identity using it. When two
-  // people share a name, the one who spoke most recently wins.
-  keyForName(nameNorm: string): KnownUser | undefined {
+  usersForNameInChat(nameNorm: string, chatId: string): KnownUser[] {
     return this.db
       .prepare(
         `SELECT sender_key, name, name_norm FROM user_messages
-         WHERE name_norm = ? ORDER BY id DESC LIMIT 1`,
+         WHERE chat_id = ? AND id IN (
+           SELECT MAX(id) FROM user_messages WHERE chat_id = ? GROUP BY sender_key
+         ) AND name_norm = ? ORDER BY id DESC`,
       )
-      .get(nameNorm) as KnownUser | undefined;
-  }
-
-  // Like keyForName, but only among people who have spoken in a given chat — used
-  // to restrict profile lookups to participants of the current chat.
-  keyForNameInChat(nameNorm: string, chatName: string): KnownUser | undefined {
-    return this.db
-      .prepare(
-        `SELECT sender_key, name, name_norm FROM user_messages
-         WHERE name_norm = ? AND chat_name = ? ORDER BY id DESC LIMIT 1`,
-      )
-      .get(nameNorm, chatName) as KnownUser | undefined;
+      .all(chatId, chatId, nameNorm) as KnownUser[];
   }
 
   // Distinct identities the bot has heard from (most recently active first).
-  knownUsers(limit = 200): KnownUser[] {
+  knownUsers(chatId: string): KnownUser[] {
     return this.db
       .prepare(
-        `SELECT sender_key, name, name_norm, MAX(id) AS last_id FROM user_messages
-         GROUP BY sender_key ORDER BY last_id DESC LIMIT ?`,
+        `SELECT sender_key, name, name_norm FROM user_messages
+         WHERE chat_id = ? AND id IN (
+           SELECT MAX(id) FROM user_messages WHERE chat_id = ? GROUP BY sender_key
+         ) ORDER BY id DESC`,
       )
-      .all(limit) as (KnownUser & { last_id: number })[];
+      .all(chatId, chatId) as KnownUser[];
   }
 
   forget(senderKey: string): number {
@@ -341,6 +329,7 @@ export class UserMemoryStore {
 
 export interface UserProfile {
   sender_key: string;
+  chat_id: string;
   name: string;
   deep: string;
   short: string;
@@ -357,7 +346,7 @@ export class UserProfileStore {
   get(senderKey: string): UserProfile | undefined {
     return this.db
       .prepare(
-        "SELECT sender_key, name, deep, short, last_profiled_id, updated_at FROM user_profiles WHERE sender_key = ?",
+        "SELECT sender_key, chat_id, name, deep, short, last_profiled_id, updated_at FROM user_profiles WHERE sender_key = ?",
       )
       .get(senderKey) as UserProfile | undefined;
   }
@@ -366,21 +355,21 @@ export class UserProfileStore {
   list(): Omit<UserProfile, "deep" | "last_profiled_id">[] {
     return this.db
       .prepare(
-        "SELECT sender_key, name, short, updated_at FROM user_profiles ORDER BY updated_at DESC",
+        "SELECT sender_key, chat_id, name, short, updated_at FROM user_profiles ORDER BY updated_at DESC",
       )
       .all() as Omit<UserProfile, "deep" | "last_profiled_id">[];
   }
 
-  upsert(p: Omit<UserProfile, "updated_at">): void {
+  upsert(p: Omit<UserProfile, "updated_at" | "chat_id">): void {
     this.db
       .prepare(
-        `INSERT INTO user_profiles (sender_key, name, deep, short, last_profiled_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO user_profiles (sender_key, chat_id, name, deep, short, last_profiled_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(sender_key) DO UPDATE SET
            name = excluded.name, deep = excluded.deep, short = excluded.short,
            last_profiled_id = excluded.last_profiled_id, updated_at = excluded.updated_at`,
       )
-      .run(p.sender_key, p.name, p.deep, p.short, p.last_profiled_id, Date.now());
+      .run(p.sender_key, memoryChat(p.sender_key), p.name, p.deep, p.short, p.last_profiled_id, Date.now());
   }
 
   forget(senderKey: string): void {

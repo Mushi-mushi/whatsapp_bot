@@ -299,10 +299,15 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     return petActionView(chatId);
   });
 
-  // Learned personality profiles (deep dossier + short briefing) per user.
+  const profileChatName = (chatId: string): string | null =>
+    deps.knownChats.list().find((chat) => chat.id === chatId)?.name ?? null;
+
+  // Learned personality profiles belong to a person within one chat.
   app.get("/api/profiles", async () => {
+    const chatNames = new Map(deps.knownChats.list().map((chat) => [chat.id, chat.name]));
     const profiles = deps.userProfiles.list().map((p) => ({
       ...p,
+      chat_name: chatNames.get(p.chat_id) ?? null,
       messageCount: deps.userMemory.countSince(p.sender_key, 0),
     }));
     return { profiles } satisfies ProfilesResponse;
@@ -314,7 +319,8 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       reply.code(404);
       return { ok: false, error: "No profile for that user yet." };
     }
-    return { ...profile, messageCount: deps.userMemory.countSince(profile.sender_key, 0) } satisfies ProfileDetail;
+    return { ...profile, chat_name: profileChatName(profile.chat_id),
+      messageCount: deps.userMemory.countSince(profile.sender_key, 0) } satisfies ProfileDetail;
   });
 
   // Force an immediate rebuild (two LLM calls; the /api route allows long reads).
@@ -327,7 +333,8 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
         reply.code(422);
         return { ok: false, error: "Not enough messages to build a profile yet." };
       }
-      return { ok: true, profile: { ...profile, messageCount: deps.userMemory.countSince(key, 0) } } satisfies ProfileRefreshResponse;
+      return { ok: true, profile: { ...profile, chat_name: profileChatName(profile.chat_id),
+        messageCount: deps.userMemory.countSince(key, 0) } } satisfies ProfileRefreshResponse;
     } catch (err) {
       deps.logger.warn({ err, key }, "requested profile refresh failed");
       reply.code(err instanceof ProfileQueueError ? 503 : 502);
@@ -335,7 +342,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     }
   });
 
-  // Forget a user: drop their profile and recorded messages.
+  // Forget this person's profile and messages in this chat only.
   app.delete<{ Params: { key: string } }>("/api/profiles/:key", async (req) => {
     deps.profiler.forget(req.params.key);
     return { ok: true };

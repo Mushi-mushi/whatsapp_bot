@@ -12,6 +12,10 @@ import { RuntimeState } from "../src/state/runtime.js";
 import { DEFAULT_CONFIG } from "../src/config/schema.js";
 import { REDACTED } from "../src/config/secrets.js";
 import type { BotConfig, ConfigSaveResponse, ProfileDetail, ProfilesResponse } from "../../shared/api.js";
+import { memoryKey } from "../src/state/identity.js";
+
+const ALICE = memoryKey("group@g.us", "alice");
+const ALICE_PATH = `/api/profiles/${encodeURIComponent(ALICE)}`;
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -59,7 +63,7 @@ describe("profile lifecycle controls", () => {
     jobs.submit("chat", () => gate);
     const refresh = vi.spyOn(deps.profiler, "refresh").mockResolvedValue(null);
     const requested = vi.spyOn(deps.profiler, "requestRefresh");
-    const response = app.inject({ method: "POST", url: "/api/profiles/alice/refresh", headers });
+    const response = app.inject({ method: "POST", url: `${ALICE_PATH}/refresh`, headers });
     const pending = Promise.resolve(response);
     await vi.waitFor(() => expect(requested).toHaveBeenCalledOnce());
     expect(refresh).not.toHaveBeenCalled();
@@ -71,21 +75,26 @@ describe("profile lifecycle controls", () => {
   it("reports a busy queue as a retryable failure", async () => {
     const { app, deps } = await setup();
     vi.spyOn(deps.profiler, "requestRefresh").mockRejectedValue(new ProfileQueueError());
-    const response = await app.inject({ method: "POST", url: "/api/profiles/alice/refresh", headers });
+    const response = await app.inject({ method: "POST", url: `${ALICE_PATH}/refresh`, headers });
     expect(response.statusCode).toBe(503);
     expect(response.json().error).toContain("Try again");
   });
 
   it("delegates forgetting to the service that invalidates outstanding work", async () => {
     const { app, deps } = await setup();
-    deps.userMemory.record("alice", "Alice", null, "a remembered message", 50);
-    deps.userProfiles.upsert({ sender_key: "alice", name: "Alice", deep: "deep", short: "short", last_profiled_id: 0 });
+    deps.userMemory.record(ALICE, "Alice", null, "a remembered message", 50);
+    deps.userProfiles.upsert({ sender_key: ALICE, name: "Alice", deep: "deep", short: "short", last_profiled_id: 0 });
+    const other = memoryKey("other@g.us", "alice");
+    deps.userMemory.record(other, "Alice", null, "another chat", 50);
+    deps.userProfiles.upsert({ sender_key: other, name: "Alice", deep: "other deep", short: "other short", last_profiled_id: 0 });
     const forget = vi.spyOn(deps.profiler, "forget");
-    const response = await app.inject({ method: "DELETE", url: "/api/profiles/alice", headers });
+    const response = await app.inject({ method: "DELETE", url: ALICE_PATH, headers });
     expect(response.statusCode).toBe(200);
-    expect(forget).toHaveBeenCalledWith("alice");
-    expect(deps.userMemory.countSince("alice", 0)).toBe(0);
-    expect(deps.userProfiles.get("alice")).toBeUndefined();
+    expect(forget).toHaveBeenCalledWith(ALICE);
+    expect(deps.userMemory.countSince(ALICE, 0)).toBe(0);
+    expect(deps.userProfiles.get(ALICE)).toBeUndefined();
+    expect(deps.userMemory.countSince(other, 0)).toBe(1);
+    expect(deps.userProfiles.get(other)?.deep).toBe("other deep");
   });
 });
 
@@ -252,15 +261,39 @@ describe("configuration revisions", () => {
     it("lists summaries and returns the full existing detail payload", async () => {
       const { app, deps } = await setup();
       const headers = { authorization: "Bearer test-token" };
-      deps.userMemory.record("123", "Alice", null, "Remember this message", 50);
-      deps.userProfiles.upsert({ sender_key: "123", name: "Alice", deep: "A dossier", short: "A summary", last_profiled_id: 1 });
+      deps.userMemory.record(ALICE, "Alice", null, "Remember this message", 50);
+      deps.userProfiles.upsert({ sender_key: ALICE, name: "Alice", deep: "A dossier", short: "A summary", last_profiled_id: 1 });
       const list = await app.inject({ url: "/api/profiles", headers });
       const summary = list.json<ProfilesResponse>().profiles[0];
-      expect(summary).toMatchObject({ sender_key: "123", name: "Alice", short: "A summary", messageCount: 1 });
+      expect(summary).toMatchObject({ sender_key: ALICE, chat_id: "group@g.us", chat_name: null, name: "Alice", short: "A summary", messageCount: 1 });
       expect(summary).not.toHaveProperty("deep");
       expect(summary).not.toHaveProperty("last_profiled_id");
-      const detail = await app.inject({ url: "/api/profiles/123", headers });
+      const detail = await app.inject({ url: ALICE_PATH, headers });
       expect(detail.json<ProfileDetail>()).toEqual({ ...summary, deep: "A dossier", last_profiled_id: 1 });
+    });
+
+    it("keeps duplicate chat names distinct and uses current names for list/detail/refresh", async () => {
+      const { app, deps } = await setup();
+      const headers = { authorization: "Bearer test-token" };
+      const other = memoryKey("other@g.us", "alice");
+      deps.knownChats.upsert([{ id: "group@g.us", name: "Friends" }, { id: "other@g.us", name: "Friends" }]);
+      for (const key of [ALICE, other]) {
+        deps.userProfiles.upsert({ sender_key: key, name: "Alice", deep: key === ALICE ? "local" : "other", short: "summary", last_profiled_id: 0 });
+        deps.userMemory.record(key, "Alice", "Friends", "message", 50);
+      }
+      const list = (await app.inject({ url: "/api/profiles", headers })).json<ProfilesResponse>();
+      expect(list.profiles).toHaveLength(2);
+      expect(new Set(list.profiles.map((p) => p.sender_key)).size).toBe(2);
+      expect(list.profiles.every((p) => p.chat_name === "Friends" && p.messageCount === 1)).toBe(true);
+      deps.knownChats.upsert([{ id: "group@g.us", name: "Renamed" }]);
+      const detail = (await app.inject({ url: ALICE_PATH, headers })).json<ProfileDetail>();
+      expect(detail).toMatchObject({ sender_key: ALICE, chat_id: "group@g.us", chat_name: "Renamed", deep: "local" });
+      const stored = deps.userProfiles.get(ALICE)!;
+      const refresh = vi.spyOn(deps.profiler, "requestRefresh").mockResolvedValue(stored);
+      const refreshed = await app.inject({ method: "POST", url: `${ALICE_PATH}/refresh`, headers });
+      expect(refreshed.statusCode).toBe(200);
+      expect(refreshed.json()).toEqual({ ok: true, profile: detail });
+      expect(refresh).toHaveBeenCalledWith(ALICE, "Alice");
     });
   });
 

@@ -131,7 +131,7 @@ function buildMemoryPrompt(
   const askerBlock = personBlock(store, profiler, askerKey, askerName, "the person asking", contextLimit);
   if (askerBlock) blocks.push(askerBlock);
 
-  for (const u of mentionedUsers(store, input.prompt, askerKey)) {
+  for (const u of mentionedUsers(store, input.prompt, askerKey, input.msg.chatId)) {
     const block = personBlock(store, profiler, u.sender_key, u.name, "mentioned in the question", contextLimit);
     if (block) blocks.push(block);
   }

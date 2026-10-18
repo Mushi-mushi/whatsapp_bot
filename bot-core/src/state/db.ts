@@ -14,7 +14,7 @@ export function openDatabase(path: string): Database.Database {
 
 function migrate(db: Database.Database): void {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 3) throw new Error("Database schema is newer than this application");
+  if (version > 4) throw new Error("Database schema is newer than this application");
   db.exec(`
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
@@ -230,6 +230,38 @@ function migrate(db: Database.Database): void {
           PRIMARY KEY (chat_id, sender_id)
         );
         PRAGMA user_version = 3;
+      `);
+    })();
+  }
+  if (version < 4) {
+    db.transaction(() => {
+      // Legacy chat names cannot safely identify a conversation. Never seed
+      // isolated profiles with dossiers assembled from multiple chats.
+      db.exec(`
+        DROP TABLE user_messages;
+        DROP TABLE user_profiles;
+        CREATE TABLE user_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          sender_key TEXT NOT NULL,
+          chat_id TEXT NOT NULL CHECK(length(chat_id) > 0),
+          name_norm TEXT NOT NULL,
+          name TEXT NOT NULL,
+          chat_name TEXT,
+          message TEXT NOT NULL,
+          ts INTEGER NOT NULL
+        );
+        CREATE INDEX idx_user_messages_key ON user_messages(sender_key, id);
+        CREATE INDEX idx_user_messages_chat ON user_messages(chat_id, id);
+        CREATE TABLE user_profiles (
+          sender_key TEXT PRIMARY KEY,
+          chat_id TEXT NOT NULL CHECK(length(chat_id) > 0),
+          name TEXT NOT NULL,
+          deep TEXT NOT NULL,
+          short TEXT NOT NULL,
+          last_profiled_id INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL
+        );
+        PRAGMA user_version = 4;
       `);
     })();
   }

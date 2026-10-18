@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import pino from "pino";
 import { makeAsk, models as modelsCmd } from "../src/handlers/commands/ask.js";
 import { makeAsUser } from "../src/handlers/commands/asuser.js";
+import { makeProfile } from "../src/handlers/commands/profile.js";
 import { makeTranslate } from "../src/handlers/commands/translate.js";
 import { Context, type Services } from "../src/router/context.js";
 import { DEFAULT_CONFIG, type BotConfig } from "../src/config/schema.js";
@@ -11,6 +12,8 @@ import { BackgroundJobs } from "../src/router/jobs.js";
 import { ProfileService } from "../src/handlers/profiles/service.js";
 import type { IncomingMessage } from "../src/transport/types.js";
 import type { WAMessage } from "@whiskeysockets/baileys";
+
+import { memoryKey } from "../src/state/identity.js";
 
 const ollama = vi.hoisted(() => ({ chat: vi.fn(), listModels: vi.fn() }));
 vi.mock("../src/util/ollama.js", () => ({
@@ -29,14 +32,15 @@ beforeEach(() => {
 function setup(cfg: BotConfig = DEFAULT_CONFIG) {
   const db = openDatabase(":memory:");
   const userMemory = new UserMemoryStore(db);
+  const profiles = new UserProfileStore(db);
   const profiler = new ProfileService(
     userMemory,
-    new UserProfileStore(db),
+    profiles,
     new BackgroundJobs(() => {}),
     () => cfg,
     pino({ level: "silent" }),
   );
-  return { userMemory, profiler, ask: makeAsk(userMemory, profiler) };
+  return { userMemory, profiles, profiler, ask: makeAsk(userMemory, profiler) };
 }
 
 function makeCtx(args: string, cfg: BotConfig = DEFAULT_CONFIG) {
@@ -93,7 +97,7 @@ describe("bot.ask records the question for profiling", () => {
   it("stores the asked question under the asker's identity", async () => {
     const { userMemory, ask } = setup();
     await ask(makeCtx("What are the best trail running shoes?"));
-    const msgs = userMemory.recentFor("34600000001");
+    const msgs = userMemory.recentFor(memoryKey("c@g.us", "34600000001"));
     expect(msgs).toHaveLength(1);
     expect(msgs[0].message).toBe("(asked the bot) What are the best trail running shoes?");
   });
@@ -102,14 +106,14 @@ describe("bot.ask records the question for profiling", () => {
     const cfg = { ...DEFAULT_CONFIG, userMemoryEnabled: false };
     const { userMemory, ask } = setup(cfg);
     await ask(makeCtx("anything", cfg));
-    expect(userMemory.recentFor("34600000001")).toHaveLength(0);
+    expect(userMemory.recentFor(memoryKey("c@g.us", "34600000001"))).toHaveLength(0);
   });
 });
 
 describe("bot.ask.raw skips profile injection", () => {
   it("injects the asker's context for a normal ask", async () => {
     const { userMemory, ask } = setup();
-    userMemory.record("34600000001", "Alice", null, "I love trail running in the Alps", 50);
+    userMemory.record(memoryKey("c@g.us", "34600000001"), "Alice", null, "I love trail running in the Alps", 50);
     await ask(makeCtx("recommend a hobby"));
     const systems = ollama.chat.mock.calls[0][1]
       .filter((m: { role: string }) => m.role === "system")
@@ -118,9 +122,73 @@ describe("bot.ask.raw skips profile injection", () => {
     expect(systems).toContain("About Alice");
   });
 
+  describe("chat-scoped command context", () => {
+    it.each(["other@g.us", "private@lid"])("does not inject profiles or mentioned users from %s", async (otherChat) => {
+      const { userMemory, profiles, ask } = setup();
+      const self = memoryKey(otherChat, "34600000001");
+      const bob = memoryKey(otherChat, "34600000002");
+      userMemory.record(self, "Alice", "Group", "SECRET ALICE MEMORY", 50);
+      userMemory.record(bob, "Bob", "Group", "SECRET BOB MEMORY", 50);
+      profiles.upsert({ sender_key: self, name: "Alice", deep: "secret", short: "SECRET ALICE PROFILE", last_profiled_id: 0 });
+      profiles.upsert({ sender_key: bob, name: "Bob", deep: "secret", short: "SECRET BOB PROFILE", last_profiled_id: 0 });
+      await ask(makeCtx("what does Bob think?"));
+      const sent = JSON.stringify(ollama.chat.mock.calls[0][1]);
+      expect(sent).not.toContain("SECRET");
+      expect(sent).not.toContain("About Alice");
+      expect(sent).not.toContain("About Bob");
+    });
+
+    it("uses local memory and profiles when the same sender also has a profile elsewhere", async () => {
+      const { userMemory, profiles, ask } = setup();
+      profiles.upsert({ sender_key: memoryKey("other@g.us", "34600000001"), name: "Alice", deep: "other", short: "PRIVATE ELSEWHERE", last_profiled_id: 0 });
+      profiles.upsert({ sender_key: memoryKey("c@g.us", "34600000001"), name: "Alice", deep: "local", short: "LOCAL SUMMARY", last_profiled_id: 0 });
+      userMemory.record(memoryKey("c@g.us", "2"), "Bob", "Group", "LOCAL BOB MESSAGE", 50);
+      await ask(makeCtx("what does Bob think?"));
+      const sent = JSON.stringify(ollama.chat.mock.calls[0][1]);
+      expect(sent).toContain("LOCAL SUMMARY");
+      expect(sent).toContain("LOCAL BOB MESSAGE");
+      expect(sent).not.toContain("PRIVATE ELSEWHERE");
+    });
+
+    it.each(["profile", "as", "as-no-colon"])("refuses ambiguous names for %s without inference", async (command) => {
+      const { userMemory, profiler } = setup();
+      userMemory.record(memoryKey("c@g.us", "1"), "Alex", "Group", "one", 50);
+      userMemory.record(memoryKey("c@g.us", "2"), "Alex", "Group", "two", 50);
+      const { ctx, sendText } = makeCtxWithReply(command === "profile" ? "Alex" : command === "as" ? "Alex: hello" : "Alex say hello");
+      await (command === "profile" ? makeProfile(userMemory, profiler) : makeAsUser(userMemory, profiler))(ctx);
+      expect(sendText.mock.calls[0][1]).toContain("More than one person");
+      expect(ollama.chat).not.toHaveBeenCalled();
+    });
+
+    it("does not fall back to global name lookup in an unnamed DM", async () => {
+      const { userMemory, profiles, profiler } = setup();
+      const key = memoryKey("c@g.us", "2");
+      userMemory.record(key, "Bob", "Group", "private group memory", 50);
+      profiles.upsert({ sender_key: key, name: "Bob", deep: "PRIVATE DOSSIER", short: "private", last_profiled_id: 0 });
+      const { ctx, sendText } = makeCtxWithReply("Bob");
+      ctx.msg.chatId = "private@lid";
+      ctx.msg.chatName = "";
+      ctx.msg.isGroup = false;
+      await makeProfile(userMemory, profiler)(ctx);
+      expect(sendText.mock.calls[0][1]).toContain("in this chat yet");
+      expect(sendText.mock.calls[0][1]).not.toContain("PRIVATE DOSSIER");
+      expect(ollama.chat).not.toHaveBeenCalled();
+    });
+
+    it("allows self profiles even when another person has the same display name", async () => {
+      const { userMemory, profiles, profiler } = setup();
+      userMemory.record(memoryKey("c@g.us", "34600000001"), "Alice", "Group", "self", 50);
+      userMemory.record(memoryKey("c@g.us", "2"), "Alice", "Group", "other", 50);
+      profiles.upsert({ sender_key: memoryKey("c@g.us", "34600000001"), name: "Alice", deep: "MY DOSSIER", short: "me", last_profiled_id: 1 });
+      const { ctx, sendText } = makeCtxWithReply("");
+      await makeProfile(userMemory, profiler)(ctx);
+      expect(sendText.mock.calls[0][1]).toContain("MY DOSSIER");
+    });
+  });
+
   it("omits profile context when invoked as bot.ask.raw", async () => {
     const { userMemory, ask } = setup();
-    userMemory.record("34600000001", "Alice", null, "I love trail running in the Alps", 50);
+    userMemory.record(memoryKey("c@g.us", "34600000001"), "Alice", null, "I love trail running in the Alps", 50);
     const ctx = makeCtx("recommend a hobby");
     ctx.commandTrigger = "bot.ask.raw";
     await ask(ctx);
@@ -161,7 +229,7 @@ describe("bot.ask inline model override", () => {
   it("records the question without the model token", async () => {
     const { userMemory, ask } = setup();
     await ask(makeCtx("model=llama3 best trail shoes?"));
-    const msgs = userMemory.recentFor("34600000001");
+    const msgs = userMemory.recentFor(memoryKey("c@g.us", "34600000001"));
     expect(msgs[0].message).toBe("(asked the bot) best trail shoes?");
   });
 });
@@ -229,7 +297,7 @@ describe("bot.as impersonates a profiled user", () => {
   it("answers in the voice of the named person", async () => {
     const { userMemory, profiler } = setup();
     for (const m of ["I love trail running", "France is the best", "I bake bread on weekends", "Mondays are rough"]) {
-      userMemory.record("34600000009", "Hernan", "Group", m, 50);
+      userMemory.record(memoryKey("c@g.us", "34600000009"), "Hernan", "Group", m, 50);
     }
     const asUser = makeAsUser(userMemory, profiler);
     const ctx = makeCtx("");
@@ -244,7 +312,7 @@ describe("bot.as impersonates a profiled user", () => {
   it("parses a multi-word name without a colon", async () => {
     const { userMemory, profiler } = setup();
     for (const m of ["hola a todos", "me encanta el cafe", "vamos a la playa", "feliz lunes"]) {
-      userMemory.record("34600000007", "Si Ying", "Group", m, 50);
+      userMemory.record(memoryKey("c@g.us", "34600000007"), "Si Ying", "Group", m, 50);
     }
     const asUser = makeAsUser(userMemory, profiler);
     const ctx = makeCtx("");
@@ -258,7 +326,7 @@ describe("bot.as impersonates a profiled user", () => {
   it("refuses to impersonate someone not active in this chat", async () => {
     const { userMemory, profiler } = setup();
     for (const m of ["hola", "que tal", "me gusta el asado", "argentina campeon"]) {
-      userMemory.record("34600000009", "Hernan", "Otra Fiesta", m, 50);
+      userMemory.record(memoryKey("other@g.us", "34600000009"), "Hernan", "Otra Fiesta", m, 50);
     }
     const asUser = makeAsUser(userMemory, profiler);
     const transport = { sendText: vi.fn(async () => {}) };
@@ -270,7 +338,7 @@ describe("bot.as impersonates a profiled user", () => {
     const ctx = new Context(msg, { transport: transport as unknown as Services["transport"], getConfig: () => DEFAULT_CONFIG });
     ctx.args = "Hernan: what do you think of Mondays?";
     await asUser(ctx);
-    expect(transport.sendText).toHaveBeenCalledWith(expect.any(String), expect.stringContaining("isn't active in this chat"));
+    expect(transport.sendText).toHaveBeenCalledWith(expect.any(String), expect.stringContaining("in this chat yet"));
     expect(ollama.chat).not.toHaveBeenCalled();
   });
 
@@ -304,7 +372,7 @@ describe("bot.translate records the input for profiling", () => {
     );
     const translate = makeTranslate(userMemory, profiler);
     await translate(makeCtx("Spanish I love cycling in the mountains"));
-    const msgs = userMemory.recentFor("34600000001");
+    const msgs = userMemory.recentFor(memoryKey("c@g.us", "34600000001"));
     expect(msgs).toHaveLength(1);
     expect(msgs[0].message).toBe("(asked to translate to Spanish) I love cycling in the mountains");
   });

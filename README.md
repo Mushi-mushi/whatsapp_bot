@@ -65,7 +65,11 @@ dashboard's manual re-link action is still available when fresh pairing is neede
   restore a valid configuration from your backup before restarting.
 - Database migration version 1 adds the durable outbox; version 2 adds group
   pets and picture-delivery metadata; version 3 adds per-chat siesta discipline
-  (daily limits and forced-sleep state). All preserve existing configuration,
+  (daily limits and forced-sleep state). Version 4 introduces chat-scoped user
+  memory and profiles. **It permanently deletes existing global user messages
+  and profiles** because their chat names cannot safely establish chat identity.
+  Profiles rebuild from new messages; no legacy dossiers are carried forward.
+  All preserve existing configuration,
   contacts, reminders and tells. Back up before upgrading; older binaries
   cannot open a newer database.
 - The backend runs as UID 1000. On Linux, ensure the mounted `data/` directory
@@ -96,8 +100,21 @@ logged and end the affected session rather than becoming unhandled rejections.
 Command names match exactly: `bot.asking` does not execute `bot.ask`.
 
 Profile refreshes only mark the messages sampled for generation as processed.
-Forgetting a user invalidates queued and running refreshes before deleting their
-profile and stored messages. Later new messages may start learning again;
+AI memory, personalization, named profile lookups and impersonation are isolated by
+stable WhatsApp chat ID, never chat display name. The same person has separate
+history, retention limits and profiles in each group or DM. Renaming a chat
+does not change its memory; two chats with the same name never share it. Unknown
+phone/LID aliases remain separate rather than being merged by display name.
+Named lookups use the latest display name recorded in the current chat and refuse
+ambiguous matches; automatic mention context skips ambiguous names.
+
+The profiles API exposes an opaque `sender_key` for each chat/person pair plus
+`chat_id` and `chat_name` (null if unknown). URL-encode the key in API paths. The dashboard
+shows both chat name and ID so duplicate chat names can be distinguished.
+Refreshing or forgetting an entry affects that chat/person pair only.
+
+Forgetting a user invalidates queued and running refreshes in that chat before
+deleting their profile and stored messages. Later new messages may start learning again;
 forgetting is not a permanent opt-out.
 
 The dashboard reconnects its live status stream when the API token changes and

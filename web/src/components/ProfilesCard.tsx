@@ -67,7 +67,7 @@ export function ProfilesCard() {
         )}
         {!profilesQuery.isLoading && !profilesQuery.isError && profiles.length === 0 && (
           <p className="text-sm text-muted-foreground">
-            No profiles yet. The bot builds one once a person has chatted enough.
+            No profiles yet. The bot learns separately about each person in each chat.
           </p>
         )}
 
@@ -83,7 +83,7 @@ export function ProfilesCard() {
             onToggle={() => setOpenKey((k) => (k === p.sender_key ? null : p.sender_key))}
             onRefresh={() => refreshMutation.mutate(p.sender_key)}
             onDelete={() => {
-              if (window.confirm(`Forget everything learned about ${p.name}? This deletes their profile and stored messages.`)) {
+              if (window.confirm(`Forget everything learned about ${p.name} in ${p.chat_name ? `${p.chat_name} (${p.chat_id})` : p.chat_id}? This deletes their profile and stored messages in this chat only.`)) {
                 deleteMutation.mutate(p.sender_key);
               }
             }}
@@ -132,6 +132,9 @@ function ProfileRow({ profile, open, deep, deepLoading, deepError, onRetryDetail
             <Badge variant="muted">{profile.messageCount} msgs</Badge>
             <span className="text-xs text-muted-foreground">{timeAgo(profile.updated_at)}</span>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {profile.chat_name ?? "Chat"} <span className="break-all">({profile.chat_id})</span>
+          </p>
           <p className="mt-1 text-sm text-muted-foreground">{profile.short || "(no summary)"}</p>
           {open && (
             <div className="mt-2 border-t pt-2">

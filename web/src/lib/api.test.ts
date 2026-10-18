@@ -27,7 +27,8 @@ const settings: PetSettings = {
   activityWindowHours: 6, responseMinutes: 30, silenceMinutes: 2,
 };
 const profile: ProfileDetail = {
-  sender_key: "123", name: "Alice", short: "A summary", updated_at: 100,
+  sender_key: '["group@g.us","123"]', name: "Alice", short: "A summary", updated_at: 100,
+  chat_id: "group@g.us", chat_name: "Friends",
   messageCount: 5, last_profiled_id: 12, deep: "A dossier",
 };
 const petAction: PetActionResponse = {
@@ -86,8 +87,10 @@ describe("shared API wire contracts", () => {
       .mockResolvedValueOnce(Response.json(profile))
       .mockResolvedValueOnce(Response.json({ ok: true, profile } satisfies ProfileRefreshResponse));
     expect(await api.getProfiles()).toEqual({ profiles: [summary] });
-    expect(await api.getProfile("123")).toEqual(profile);
-    expect(await api.refreshProfile("123")).toEqual({ ok: true, profile });
+    expect(await api.getProfile(profile.sender_key)).toEqual(profile);
+    expect(await api.refreshProfile(profile.sender_key)).toEqual({ ok: true, profile });
+    const path = `/api/profiles/${encodeURIComponent(profile.sender_key)}`;
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["/api/profiles", path, `${path}/refresh`]);
   });
 
   it("preserves the pet action envelope and settings revision", async () => {

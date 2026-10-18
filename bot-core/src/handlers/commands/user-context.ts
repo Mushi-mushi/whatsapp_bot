@@ -3,13 +3,13 @@ import type { IncomingMessage } from "../../transport/types.js";
 import type { BotConfig } from "../../config/schema.js";
 import type { ProfileService } from "../profiles/service.js";
 import { normalizeName } from "../../router/normalize.js";
+import { memoryKey } from "../../state/identity.js";
 
 const MAX_MSG_LEN = 200;
 
-// Stable per-person identity: the real phone digits when known (unifies the same
-// person across a DM @lid and a group), otherwise the raw jid/lid. Never the name.
+// Memory belongs to a sender within one stable chat ID, never a display name.
 export function senderKey(msg: IncomingMessage): string {
-  return msg.senderPhone || msg.senderId;
+  return memoryKey(msg.chatId, msg.senderId, msg.senderPhone);
 }
 
 // Record a piece of text under the sender's identity and schedule a profile
@@ -60,13 +60,16 @@ export function mentionedUsers(
   store: UserMemoryStore,
   prompt: string,
   excludeKey: string,
+  chatId: string,
   max = 2,
 ): KnownUser[] {
   const haystack = normalizeName(prompt);
   if (!haystack) return [];
   const found: KnownUser[] = [];
-  for (const u of store.knownUsers()) {
+  const users = store.knownUsers(chatId);
+  for (const u of users) {
     if (u.sender_key === excludeKey || u.name_norm.length < 3) continue;
+    if (users.some((other) => other.sender_key !== u.sender_key && other.name_norm === u.name_norm)) continue;
     // Word-ish boundary match to avoid matching short names inside other words.
     const re = new RegExp(`(?:^|\\W)${escapeRegExp(u.name_norm)}(?:\\W|$)`);
     if (re.test(haystack)) {

@@ -6,7 +6,7 @@ import { senderKey } from "./user-context.js";
 
 // bot.profile [name] — rebuild and show the deep personality dossier the bot has
 // learned about a person. With no name, profiles the sender. Resolves a typed
-// name back to the most-recently-active identity using it.
+// name only when it identifies one person in this chat.
 export function makeProfile(userMemory: UserMemoryStore, profiler: ProfileService): Handler {
   return async (ctx) => {
     const cfg = ctx.config;
@@ -32,17 +32,14 @@ export function makeProfile(userMemory: UserMemoryStore, profiler: ProfileServic
       displayName = ctx.msg.senderName?.trim() || "you";
     } else {
       const nameNorm = normalizeName(target);
-      const chatName = ctx.msg.chatName?.trim();
-      const match = chatName ? userMemory.keyForNameInChat(nameNorm, chatName) : userMemory.keyForName(nameNorm);
-      if (!match) {
-        const elsewhere = userMemory.keyForName(nameNorm);
-        await ctx.reply(
-          elsewhere
-            ? `"${target}" isn't active in this chat, so I won't share their profile here.`
-            : `I haven't heard from anyone called "${target}" yet.`,
-        );
+      const matches = userMemory.usersForNameInChat(nameNorm, ctx.msg.chatId);
+      if (matches.length !== 1) {
+        await ctx.reply(matches.length > 1
+          ? `More than one person is called "${target}" in this chat. Ask them to use bot.profile without a name.`
+          : `I haven't heard from anyone called "${target}" in this chat yet.`);
         return;
       }
+      const match = matches[0];
       key = match.sender_key;
       displayName = match.name;
     }

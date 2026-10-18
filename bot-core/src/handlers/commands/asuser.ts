@@ -26,11 +26,13 @@ export function makeAsUser(userMemory: UserMemoryStore, profiler: ProfileService
       return;
     }
 
-    const chatName = ctx.msg.chatName?.trim();
+    let ambiguous = false;
     const resolve = (n: string): KnownUser | undefined => {
       const norm = normalizeName(n);
       if (!norm) return undefined;
-      return chatName ? userMemory.keyForNameInChat(norm, chatName) : userMemory.keyForName(norm);
+      const matches = userMemory.usersForNameInChat(norm, ctx.msg.chatId);
+      ambiguous = matches.length > 1;
+      return matches.length === 1 ? matches[0] : undefined;
     };
 
     let name = "";
@@ -46,7 +48,7 @@ export function makeAsUser(userMemory: UserMemoryStore, profiler: ProfileService
       // No separator: greedily match the longest leading name (supports multi-word
       // names like "Si Ying") against people active in this chat.
       const words = raw.split(/\s+/);
-      for (let n = Math.min(words.length - 1, 5); n >= 1 && !match; n--) {
+      for (let n = Math.min(words.length - 1, 5); n >= 1 && !match && !ambiguous; n--) {
         const candidate = words.slice(0, n).join(" ");
         const m = resolve(candidate);
         if (m) {
@@ -61,6 +63,10 @@ export function makeAsUser(userMemory: UserMemoryStore, profiler: ProfileService
       }
     }
 
+    if (ambiguous) {
+      await ctx.reply("More than one person has that name in this chat, so I won't guess who to impersonate.");
+      return;
+    }
     if (!name || !question) {
       await ctx.reply("Usage: `bot.as <name>: <question>` — e.g. `bot.as Alice: what do you think of Mondays?`");
       return;
@@ -69,12 +75,7 @@ export function makeAsUser(userMemory: UserMemoryStore, profiler: ProfileService
     // Only impersonate people active in THIS chat, so you can't conjure the
     // persona of someone who isn't here.
     if (!match) {
-      const elsewhere = userMemory.keyForName(normalizeName(name));
-      await ctx.reply(
-        elsewhere
-          ? `"${name}" isn't active in this chat, so I won't impersonate them here.`
-          : `I haven't heard from anyone called "${name}" yet, so I can't speak as them.`,
-      );
+      await ctx.reply(`I haven't heard from anyone called "${name}" in this chat yet, so I can't speak as them.`);
       return;
     }
 
