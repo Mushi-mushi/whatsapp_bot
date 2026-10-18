@@ -8,5 +8,6 @@ export function removeScopedSchema(db: Database.Database): void {
     DROP INDEX idx_sentiment_person; DROP INDEX idx_sentiment_chat_polarity; DROP INDEX idx_tells_scope;
     ALTER TABLE tells DROP COLUMN chat_id; ALTER TABLE tells DROP COLUMN target_id;
     ALTER TABLE sentiment_log DROP COLUMN chat_id; ALTER TABLE sentiment_log DROP COLUMN sender_id;
+    ALTER TABLE reminders DROP COLUMN recurrence;
   `);
 }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import { createApi, type ApiDeps } from "../src/api/server.js";
 import { openDatabase } from "../src/state/db.js";
-import { ConfigStore, ContactsStore, KnownChatsStore, RemindersStore, SiestaDisciplineStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
+import { ConfigStore, ContactsStore, DuelWinStore, KarmaStore, KnownChatsStore, RemindersStore, SeenActivityStore, SiestaDisciplineStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
 import { ProfileQueueError, ProfileService } from "../src/handlers/profiles/service.js";
 import { PetService } from "../src/pets/service.js";
@@ -45,7 +45,11 @@ async function setup(apiToken: string | undefined = "test-token", allowInsecureA
     audit: new AuditStore(db),
     backups: new BackupWorker(db, { retentionDays: 14 }, logger),
     configStore, knownChats: new KnownChatsStore(db),
-    triviaScores: new TriviaScoreStore(db), userMemory, userProfiles, profiler, logger,
+    triviaScores: new TriviaScoreStore(db),
+    duelScores: new DuelWinStore(db),
+    karma: new KarmaStore(db),
+    seenActivity: new SeenActivityStore(db),
+    userMemory, userProfiles, profiler, logger,
     pets: new PetService(new PetStore(db), () => configStore.load(), () => true),
     runtime,
     discipline,
@@ -379,7 +383,7 @@ describe("scheduled reminders API", () => {
     expect(data).toMatchObject({ total: 3, page: 1, pageSize: 50, sampledAt: expect.any(Number) });
     expect(data.reminders.map((r) => r.id)).toEqual([2, 3, 1]);
     expect(data.reminders[0]).toEqual({
-      id: 2, chatId: "first@g.us", chatName: "Shared name", targetName: "Alice", text: "<script>plain text</script>", dueAt: 1,
+      id: 2, chatId: "first@g.us", chatName: "Shared name", targetName: "Alice", text: "<script>plain text</script>", dueAt: 1, recurrence: "once",
     });
     expect(data.reminders[2]).toMatchObject({ chatName: null, targetName: null });
     expect(deps.outbox.snapshot(Date.now()).counts.pending).toBe(0);
@@ -443,6 +447,66 @@ describe("scheduled reminders API", () => {
     expect(response.json().error).toContain("no delivery was cancelled");
     expect(db.prepare("SELECT * FROM outbox").all()).toEqual(before);
     expect((await app.inject({ url: "/api/reminders", headers })).json<RemindersResponse>().total).toBe(0);
+  });
+
+  it("creates and updates one-time and recurring reminders with audit logging and validation", async () => {
+    const { app, deps } = await setup();
+    const dueAt = Date.now() + 3600_000;
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/reminders",
+      headers,
+      payload: { chatId: "group@g.us", targetName: "Alice", text: "Standup", dueAt, recurrence: "daily" },
+    });
+    expect(created.statusCode).toBe(200);
+    expect(created.json().reminder).toMatchObject({
+      id: 1, chatId: "group@g.us", targetName: "Alice", text: "Standup", dueAt, recurrence: "daily",
+    });
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: "/api/reminders/1",
+      headers,
+      payload: { targetName: null, text: "Weekly review", dueAt: dueAt + 60_000, recurrence: "weekly" },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().reminder).toMatchObject({
+      id: 1, targetName: null, text: "Weekly review", recurrence: "weekly",
+    });
+
+    expect((await app.inject({
+      method: "POST", url: "/api/reminders", headers,
+      payload: { chatId: "group@g.us", targetName: null, text: "past", dueAt: Date.now() - 1000, recurrence: "once" },
+    })).statusCode).toBe(400);
+    expect((await app.inject({
+      method: "PUT", url: "/api/reminders/999", headers,
+      payload: { targetName: null, text: "missing", dueAt, recurrence: "once" },
+    })).statusCode).toBe(409);
+
+    const actions = deps.audit.list(1).entries.map((e) => e.action);
+    expect(actions.slice(0, 4)).toEqual(["reminder.update", "reminder.create", "reminder.update", "reminder.create"]);
+  });
+
+  it("exposes per-chat leaderboards and participant last-seen activity", async () => {
+    const { app, deps } = await setup();
+    deps.knownChats.upsert([{ id: "group@g.us", name: "Friends" }]);
+    deps.triviaScores.add("group@g.us", "34600000001@s.whatsapp.net", "Alice", 5);
+    deps.duelScores!.add("group@g.us", "34600000001@s.whatsapp.net", "Alice");
+    deps.karma!.adjust("group@g.us", "34600000001@s.whatsapp.net", "Alice", 3);
+    deps.seenActivity!.record("group@g.us", "34600000001@s.whatsapp.net", "Alice", 12345, "Friends");
+
+    const res = await app.inject({ url: "/api/leaderboards", headers });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.chats).toHaveLength(1);
+    expect(body.chats[0]).toMatchObject({
+      chatId: "group@g.us",
+      chatName: "Friends",
+      trivia: { monthly: [{ senderId: "34600000001@s.whatsapp.net", name: "Alice", score: 5 }] },
+      duel: { monthly: [{ senderId: "34600000001@s.whatsapp.net", name: "Alice", score: 1 }] },
+      karma: [{ senderId: "34600000001@s.whatsapp.net", name: "Alice", score: 3 }],
+      participants: [{ senderId: "34600000001@s.whatsapp.net", name: "Alice", lastSeenAt: 12345 }],
+    });
   });
 
   it("does not claim cancellation while a worker is already sending the reminder", async () => {

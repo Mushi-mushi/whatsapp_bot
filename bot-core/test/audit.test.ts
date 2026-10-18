@@ -125,8 +125,9 @@ describe("administrative audit persistence", () => {
     const before = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(9);
-    expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+    expect(db.pragma("user_version", { simple: true })).toBe(10);
+    expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before.map((rows, idx) =>
+      tables[idx] === "reminders" ? rows.map((r) => ({ ...r as object, recurrence: "once" })) : rows));
     const audit = new AuditStore(db);
     const id = audit.begin("delivery.retry", "1", "authenticated-api", NOW);
     audit.complete(id, "delivery.retry", "1", 200, NOW + 1);

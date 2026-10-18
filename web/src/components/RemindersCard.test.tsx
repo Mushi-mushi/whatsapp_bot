@@ -7,8 +7,8 @@ import { RemindersCard } from "./RemindersCard";
 const sample: RemindersResponse = {
   total: 2, page: 1, pageSize: 50, sampledAt: 1700000000000,
   reminders: [
-    { id: 1, chatId: "first@g.us", chatName: "Friends", targetName: "Alice", text: "Water plants", dueAt: 1700000060000 },
-    { id: 2, chatId: "second@g.us", chatName: "Friends", targetName: null, text: "<script>plain text</script>\nsecond line", dueAt: 1699999990000 },
+    { id: 1, chatId: "first@g.us", chatName: "Friends", targetName: "Alice", text: "Water plants", dueAt: 1700000060000, recurrence: "once" },
+    { id: 2, chatId: "second@g.us", chatName: "Friends", targetName: null, text: "<script>plain text</script>\nsecond line", dueAt: 1699999990000, recurrence: "daily" },
   ],
 };
 const empty: RemindersResponse = { ...sample, reminders: [], total: 0 };
@@ -178,5 +178,40 @@ describe("scheduled reminders", () => {
     await screen.findByRole("alert");
     expect(screen.queryByText("Water plants")).toBeNull();
     expect(screen.getByText(/Last successful reminder snapshot \(may be stale\)/)).toBeTruthy();
+  });
+
+  it("creates and edits reminders with recurrence options", async () => {
+    vi.spyOn(api, "createReminder").mockResolvedValue({
+      ok: true,
+      reminder: { id: 3, chatId: "first@g.us", chatName: "Friends", targetName: "Bob", text: "New task", dueAt: Date.now() + 7200_000, recurrence: "daily" },
+    });
+    vi.spyOn(api, "updateReminder").mockResolvedValue({
+      ok: true,
+      reminder: { id: 1, chatId: "first@g.us", chatName: "Friends", targetName: "Alice", text: "Updated plants", dueAt: Date.now() + 7200_000, recurrence: "weekly" },
+    });
+    mount();
+    await screen.findByText("Water plants");
+    expect(screen.getByText("Repeats daily")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Target chat"), { target: { value: "first@g.us" } });
+    fireEvent.change(screen.getByLabelText("Recipient name (optional)"), { target: { value: "Bob" } });
+    fireEvent.change(screen.getByLabelText("Recurrence"), { target: { value: "daily" } });
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "New task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Schedule reminder" }));
+    expect(await screen.findByText("Reminder #3 scheduled.")).toBeTruthy();
+    expect(api.createReminder).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: "first@g.us", targetName: "Bob", text: "New task", recurrence: "daily",
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit reminder 1" }));
+    const futureStr = "2099-01-01T12:00";
+    fireEvent.change(screen.getByLabelText("Due date & time", { selector: "#edit-due-1" }), { target: { value: futureStr } });
+    fireEvent.change(screen.getByLabelText("Message", { selector: "#edit-text-1" }), { target: { value: "Updated plants" } });
+    fireEvent.change(screen.getByLabelText("Recurrence", { selector: "#edit-rec-1" }), { target: { value: "weekly" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save reminder" }));
+    expect(await screen.findByText("Reminder #1 updated.")).toBeTruthy();
+    expect(api.updateReminder).toHaveBeenCalledWith(1, expect.objectContaining({
+      text: "Updated plants", recurrence: "weekly",
+    }));
   });
 });

@@ -29,7 +29,16 @@ export class OutboxStore {
         const who = reminder.target_name ? ` ${reminder.target_name},` : "";
         this.db.prepare("INSERT INTO outbox (chat_id, body, available_at, created_at) VALUES (?, ?, ?, ?)")
           .run(reminder.chat_id, `Reminder:${who} ${reminder.text}`, now, now);
-        this.db.prepare("DELETE FROM reminders WHERE id = ?").run(reminder.id);
+        if (reminder.recurrence === "daily" || reminder.recurrence === "weekly") {
+          const step = reminder.recurrence === "daily" ? 86_400_000 : 7 * 86_400_000;
+          let nextDue = reminder.due_ts + step;
+          if (nextDue <= now) {
+            nextDue += Math.ceil((now - nextDue + 1) / step) * step;
+          }
+          this.db.prepare("UPDATE reminders SET due_ts = ? WHERE id = ?").run(nextDue, reminder.id);
+        } else {
+          this.db.prepare("DELETE FROM reminders WHERE id = ?").run(reminder.id);
+        }
       }
     })();
   }

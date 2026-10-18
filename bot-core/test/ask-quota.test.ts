@@ -73,7 +73,7 @@ describe("persistent ask quota", () => {
       const before = snapshot();
       db.close();
       db = openDatabase(path);
-      expect(db.pragma("user_version", { simple: true })).toBe(9);
+      expect(db.pragma("user_version", { simple: true })).toBe(10);
       expect(snapshot()).toEqual(before);
       const quota = new AskQuotaStore(db);
       for (let i = 0; i < 10; i++) quota.consume("group@g.us", PN, null, NOW);

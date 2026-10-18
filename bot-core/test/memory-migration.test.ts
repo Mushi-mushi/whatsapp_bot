@@ -54,10 +54,11 @@ describe("chat memory migration", () => {
     removeScopedSchema(db);
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(9);
+    expect(db.pragma("user_version", { simple: true })).toBe(10);
     expect(db.prepare("SELECT * FROM user_messages").all()).toEqual([]);
     expect(db.prepare("SELECT * FROM user_profiles").all()).toEqual([]);
-    expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+    expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before.map((rows, idx) =>
+      tables[idx] === "reminders" ? rows.map((r) => ({ ...r as object, recurrence: "once" })) : rows));
 
     const key = memoryKey("group@g.us", "123");
     new UserMemoryStore(db).record(key, "Alice", "Friends", "fresh scoped message", 50);
@@ -68,10 +69,11 @@ describe("chat memory migration", () => {
     removeScopedSchema(db);
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(9);
+    expect(db.pragma("user_version", { simple: true })).toBe(10);
     expect(new UserMemoryStore(db).recentFor(key)[0].message).toBe("fresh scoped message");
     expect(new UserProfileStore(db).get(key)?.deep).toBe("fresh dossier");
-    expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+    expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before.map((rows, idx) =>
+      tables[idx] === "reminders" ? rows.map((r) => ({ ...r as object, recurrence: "once" })) : rows));
     const outbox = new OutboxStore(db);
     expect(outbox.snapshot(3).recentFailures[0]).toMatchObject({ failedAt: null, status: "sending", attempts: 2 });
     outbox.failed({ id: 2, chat_id: "group@g.us", body: "claimed", attempts: 2, claim_token: "existing-claim" }, "new failure", 3);

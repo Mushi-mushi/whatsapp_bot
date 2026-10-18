@@ -229,7 +229,7 @@ Verified identity aliases share quota, including after an alias is learned;
 duplicate display names do not. Quotas survive restarts. The additive **schema 8**
 migration creates `ask_quota` without modifying existing bot data. Back up before
 deploying: older binaries cannot open a newer schema. The current application
-and backup verifier require schema 9 (older backups need a matching-version verifier).
+and backup verifier require schema 10 (older backups need a matching-version verifier).
 
 The profiles API exposes an opaque `sender_key` for each chat/person pair plus
 `chat_id` and `chat_name` (null if unknown). URL-encode the key in API paths. The dashboard
@@ -280,17 +280,23 @@ This does not purge existing backups or WhatsApp authentication. SQLite may
 reuse freed pages without shrinking the file; cleanup is not secure erasure.
 Protect backups separately and retain them according to your own policy.
 
-## Reminder Management
+## Reminder Management & Recurring Reminders
 
 The authenticated dashboard's **Reminders** tab lists reminders still in the
-scheduler, with chat name and stable ID, recipient (if named), message and due
-time in the browser's local timezone. It refreshes every 10 seconds while open.
-Overdue reminders may briefly remain scheduled until the delivery worker's next
-pass. Create reminders in WhatsApp using `bot.remind`; dashboard creation and
-editing are intentionally not provided.
+scheduler, with chat name and stable ID, recipient (if named), recurrence
+(`once`, `daily`, or `weekly`), message and due time in the browser's local
+timezone. It refreshes every 10 seconds while open. You can **create** new
+reminders and **edit** or **cancel** scheduled reminders directly in the
+dashboard, or schedule them in WhatsApp with `bot.remind [daily|weekly] <delay> <text>`.
+When a recurring (`daily` or `weekly`) reminder becomes due, it is enqueued to
+the durable outbox and its `due_ts` advances to the next future occurrence
+instead of being deleted. The additive **schema 10** migration adds the
+`recurrence` column (`'once'` by default) to `reminders`.
 
 `GET /api/reminders?page=1` returns `{ reminders, total, page, pageSize, sampledAt }`
-with 50 rows per page, ordered by due time then ID. Pages are positive whole
+with 50 rows per page, ordered by due time then ID. `POST /api/reminders` creates
+a reminder and `PUT /api/reminders/:id` updates an existing scheduled reminder
+(returning 409 if already handed off or cancelled). Pages are positive whole
 numbers up to 1000000. Chat names come from the current chat directory and can be
 null; IDs remain visible to distinguish duplicate/unknown names. Listing never
 enqueues, claims or delivers a reminder. Pages reflect a changing scheduler, not
@@ -301,16 +307,18 @@ and returns `{ ok: true, cancelledId }`. The atomic scheduler-to-outbox handoff
 and cancellation cannot both win: if the row has already left the scheduler (or
 was cancelled elsewhere), the API returns **409**, not a success. Queued,
 sending, sent and failed outbox records are never cancelled by this endpoint.
-Invalid IDs/pages return 400; all reads and cancellations use existing API
+Invalid IDs/pages return 400; all reads and mutations use existing API
 authentication and send `Cache-Control: no-store`. The reminder list contains
 private message text and identities; only expose the dashboard to trusted users.
 
-Cancellation takes effect immediately, independently of configuration Save.
-Errors are explicit; stale lists are marked and stale cancellation controls are
-disabled until a successful refresh. A confirmed cancellation is removed locally
-even if the subsequent refresh fails. Delivery aggregate counts are available in
-Operations; individual reminder delivery history is not provided.
-No schema migration or changes to existing reminder creation/delivery are needed.
+## Leaderboards & Activity Dashboard
+
+The **Leaderboards** tab (`GET /api/leaderboards`) provides a read-only view for
+each known/approved chat showing:
+- **Trivia** monthly standings, all-time scores, trophy counts and recent monthly winners
+- **Duel** monthly wins, all-time wins, trophy counts and recent monthly winners
+- **Karma** standings
+- **Participants & last seen** directory for the selected chat
 
 ## Pending Tells
 

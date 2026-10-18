@@ -5,18 +5,19 @@ import type {
   ChatsResponse, ContactsResponse, DisciplineResponse, DisciplineMutationResponse,
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
   OperationsResponse, ServiceDiagnosticsResponse,
-  RemindersResponse, ReminderCancelResponse,
+  RemindersResponse, ReminderCancelResponse, ReminderCreateRequest, ReminderUpdateRequest, ReminderMutationResponse,
   TellsResponse, TellCancelResponse, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest, DeliveryRetryResponse,
-  AuditResponse,
+  AuditResponse, LeaderboardsResponse,
 } from "../../../shared/api.js";
 export type {
   BotConfig, ConfigSnapshot, Status, ConnectionState, ConnectionHealth,
   ChatIdentity, SiestaStatus, DisciplinePlayer, Contact, ProfileSummary,
   ProfileDetail, PetSettings, GroupPet, PetGroup, PetsResponse, PetUpdate, PetRequestChoice,
   OperationsResponse, ServiceDiagnosticsResponse,
-  ScheduledReminder, RemindersResponse,
+  ScheduledReminder, RemindersResponse, ReminderCreateRequest, ReminderUpdateRequest, ReminderMutationResponse, ReminderRecurrence,
   PendingTell, TellsResponse, FailedDelivery, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest,
   AuditEntry, AuditResponse,
+  LeaderboardEntry, TrophyEntry, TrophyHistoryEntry, ChatParticipantEntry, ChatLeaderboards, LeaderboardsResponse,
 } from "../../../shared/api.js";
 
 const TOKEN_KEY = "apiToken";
@@ -84,8 +85,18 @@ export const api = {
     }).then(json<DeliveryRetryResponse>),
   getReminders: (page = 1) =>
     fetch(`/api/reminders?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<RemindersResponse>),
+  createReminder: (request: ReminderCreateRequest) =>
+    fetch("/api/reminders", {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request),
+    }).then(json<ReminderMutationResponse>),
+  updateReminder: (id: number, request: ReminderUpdateRequest) =>
+    fetch(`/api/reminders/${id}`, {
+      method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request),
+    }).then(json<ReminderMutationResponse>),
   cancelReminder: (id: number) =>
     fetch(`/api/reminders/${id}`, { method: "DELETE", headers: authHeaders() }).then(json<ReminderCancelResponse>),
+  getLeaderboards: () =>
+    fetch("/api/leaderboards", { headers: authHeaders(), cache: "no-store" }).then(json<LeaderboardsResponse>),
   getServiceDiagnostics: () =>
     fetch("/api/operations/services", { headers: authHeaders(), cache: "no-store" }).then(json<ServiceDiagnosticsResponse>),
   getOperations: () =>

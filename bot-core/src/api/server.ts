@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
 import { redactSecrets, restoreSecrets } from "../config/secrets.js";
-import type { ConfigStore, ContactsStore, KnownChatsStore, RemindersStore, SiestaDisciplineStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
+import type { ConfigStore, ContactsStore, DuelWinStore, KarmaStore, KnownChatsStore, RemindersStore, SeenActivityStore, SiestaDisciplineStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
 import { ContactResolver } from "../transport/contacts.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import { ProfileQueueError } from "../handlers/profiles/service.js";
@@ -28,8 +28,9 @@ import type {
   ProfileRefreshResponse,
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
   OperationsResponse,
-  ReminderCancelResponse,
+  ReminderCreateRequest, ReminderUpdateRequest, ReminderMutationResponse, ReminderCancelResponse,
   TellCancelResponse, DeliveryRetryResponse,
+  LeaderboardsResponse,
 } from "../../../shared/api.js";
 
 export interface ApiDeps {
@@ -37,6 +38,9 @@ export interface ApiDeps {
   configStore: ConfigStore;
   knownChats: KnownChatsStore;
   triviaScores: TriviaScoreStore;
+  duelScores?: DuelWinStore;
+  karma?: KarmaStore;
+  seenActivity?: SeenActivityStore;
   userMemory: UserMemoryStore;
   userProfiles: UserProfileStore;
   profiler: ProfileService;
@@ -109,6 +113,17 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     if (!parsed.success) return reply.code(400).send({ ok: false, error: "Invalid audit page. Use a whole number from 1 to 1000000." });
     return deps.audit.list(parsed.data.page);
   });
+  const reminderFields = z.object({
+    targetName: z.string().trim().max(80).nullable().transform((v) => (v && v.length > 0 ? v : null)),
+    text: z.string().trim().min(1, "Reminder message is required.").max(500, "Reminder message is too long (max 500 chars)."),
+    dueAt: z.number().int().safe(),
+    recurrence: z.enum(["once", "daily", "weekly"]).default("once"),
+  });
+  const reminderCreateSchema = reminderFields.extend({
+    chatId: z.string().trim().min(1, "Target chat is required."),
+  }).strict() satisfies z.ZodType<ReminderCreateRequest, z.ZodTypeDef, unknown>;
+  const reminderUpdateSchema = reminderFields.strict() satisfies z.ZodType<ReminderUpdateRequest, z.ZodTypeDef, unknown>;
+
   app.get("/api/reminders", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
     const parsed = listPage.safeParse(req.query);
@@ -117,6 +132,46 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       return { ok: false, error: "Invalid reminders page. Use a whole number from 1 to 1000000." };
     }
     return deps.reminders.list(parsed.data.page);
+  });
+  app.post("/api/reminders", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = reminderCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, error: parsed.error.issues.map((i) => i.message).join(" ") || "Invalid reminder." };
+    }
+    const now = Date.now();
+    if (parsed.data.dueAt <= now || parsed.data.dueAt > now + 365 * 86_400_000) {
+      reply.code(400);
+      return { ok: false, error: "Due time must be in the future (up to 365 days ahead)." };
+    }
+    const id = deps.reminders.add(parsed.data.chatId, parsed.data.targetName, parsed.data.text, parsed.data.dueAt, parsed.data.recurrence);
+    const reminder = deps.reminders.get(id)!;
+    return { ok: true, reminder } satisfies ReminderMutationResponse;
+  });
+  app.put("/api/reminders/:id", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsedId = recordId.safeParse(req.params);
+    if (!parsedId.success) {
+      reply.code(400);
+      return { ok: false, error: "Invalid reminder ID." };
+    }
+    const parsed = reminderUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, error: parsed.error.issues.map((i) => i.message).join(" ") || "Invalid reminder." };
+    }
+    const now = Date.now();
+    if (parsed.data.dueAt <= now || parsed.data.dueAt > now + 365 * 86_400_000) {
+      reply.code(400);
+      return { ok: false, error: "Due time must be in the future (up to 365 days ahead)." };
+    }
+    const updated = deps.reminders.update(parsedId.data.id, parsed.data.targetName, parsed.data.text, parsed.data.dueAt, parsed.data.recurrence);
+    if (!updated) {
+      reply.code(409);
+      return { ok: false, error: "Reminder is no longer scheduled. It may already be queued, sent or cancelled." };
+    }
+    return { ok: true, reminder: updated } satisfies ReminderMutationResponse;
   });
   app.delete("/api/reminders/:id", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
@@ -453,6 +508,46 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   app.post("/api/trivia/reset", async () => {
     deps.triviaScores.clearAll();
     return { ok: true };
+  });
+
+  app.get("/api/leaderboards", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const sampledAt = Date.now();
+    const directory = contactDirectory();
+    const known = deps.knownChats.list();
+    const chatIds = new Set<string>();
+    const chatNames = new Map<string, string>();
+    for (const c of known) {
+      const canonical = directory.canonical(c.id);
+      chatIds.add(canonical);
+      if (c.name.trim()) chatNames.set(canonical, c.name);
+    }
+    for (const approved of deps.configStore.load().approvedSenders) {
+      if (approved.includes("@")) chatIds.add(directory.canonical(approved));
+    }
+    const chats = [...chatIds]
+      .sort((a, b) => (chatNames.get(a) ?? a).localeCompare(chatNames.get(b) ?? b) || a.localeCompare(b))
+      .map((chatId) => ({
+        chatId,
+        chatName: chatNames.get(chatId) ?? null,
+        trivia: {
+          monthly: deps.triviaScores.top(chatId, 20, sampledAt).map(({ senderId, name, correct }) => ({ senderId, name, score: correct })),
+          allTime: deps.triviaScores.allTime(chatId, 20).map(({ senderId, name, total }) => ({ senderId, name, score: total })),
+          trophies: deps.triviaScores.trophies(chatId, 20),
+          history: deps.triviaScores.history(chatId, 12),
+        },
+        duel: {
+          monthly: (deps.duelScores?.top(chatId, 20, sampledAt) ?? []).map(({ senderId, name, wins }) => ({ senderId, name, score: wins })),
+          allTime: (deps.duelScores?.allTime(chatId, 20) ?? []).map(({ senderId, name, total }) => ({ senderId, name, score: total })),
+          trophies: deps.duelScores?.trophies(chatId, 20) ?? [],
+          history: deps.duelScores?.history(chatId, 12) ?? [],
+        },
+        karma: (deps.karma?.top(chatId, 20) ?? []).map(({ senderId, name, points }) => ({ senderId, name, score: points })),
+        participants: (deps.seenActivity?.people(chatId) ?? [])
+          .map((p) => ({ senderId: p.sender_id, name: p.name, lastSeenAt: p.last_ts }))
+          .sort((a, b) => b.lastSeenAt - a.lastSeenAt || a.name.localeCompare(b.name)),
+      }));
+    return { chats, sampledAt } satisfies LeaderboardsResponse;
   });
 
   // Award trophies for a month (default: last month) from the current scores, then reset them.

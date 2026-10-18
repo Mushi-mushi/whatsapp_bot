@@ -16,13 +16,14 @@ import { DisciplineCard } from "@/components/DisciplineCard";
 import { OperationsCard } from "@/components/OperationsCard";
 import { RemindersCard } from "@/components/RemindersCard";
 import { PendingTellsCard } from "@/components/PendingTellsCard";
+import { LeaderboardsCard } from "@/components/LeaderboardsCard";
 import { FieldValidationProvider, useFieldErrors } from "@/components/fields";
 import { LoadingState, QueryError } from "@/components/QueryFeedback";
-import { AlarmClock, Bot, Brain, Check, Image, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles } from "lucide-react";
+import { AlarmClock, Bot, Brain, Check, Image, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles, Trophy } from "lucide-react";
 
 const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;
 
-type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations" | "reminders" | "tells";
+type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations" | "reminders" | "tells" | "leaderboards";
 
 // Which config fields live on which tab — drives the per-tab "unsaved" dot.
 const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
@@ -32,6 +33,7 @@ const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
   operations: [],
   reminders: [],
   tells: [],
+  leaderboards: [],
   general: [
     "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia", "deleteInstagramPosts",
     "instagramDeleteSenders", "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl",
@@ -236,12 +238,16 @@ function Dashboard() {
         <TabButton active={tab === "tells"} onClick={() => selectTab("tells")}>
           <Bot className="h-4 w-4" /> Pending tells
         </TabButton>
+        <TabButton active={tab === "leaderboards"} onClick={() => selectTab("leaderboards")}>
+          <Trophy className="h-4 w-4" /> Leaderboards
+        </TabButton>
       </nav>
 
       {tab === "pets" && <PetsCard />}
       {tab === "operations" && <OperationsCard />}
-      {tab === "reminders" && <RemindersCard />}
+      {tab === "reminders" && <RemindersCard chats={chatsQuery.data?.chats ?? []} />}
       {tab === "tells" && <PendingTellsCard />}
+      {tab === "leaderboards" && <LeaderboardsCard />}
 
       {tab === "discipline" && (
         <div className="grid min-w-0 gap-4">

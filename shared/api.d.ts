@@ -70,6 +70,8 @@ export interface SiestaStatus {
   until: number | null;
 }
 
+export type ReminderRecurrence = "once" | "daily" | "weekly";
+
 export interface ScheduledReminder {
   id: number;
   chatId: string;
@@ -77,6 +79,27 @@ export interface ScheduledReminder {
   targetName: string | null;
   text: string;
   dueAt: number;
+  recurrence: ReminderRecurrence;
+}
+
+export interface ReminderCreateRequest {
+  chatId: string;
+  targetName: string | null;
+  text: string;
+  dueAt: number;
+  recurrence: ReminderRecurrence;
+}
+
+export interface ReminderUpdateRequest {
+  targetName: string | null;
+  text: string;
+  dueAt: number;
+  recurrence: ReminderRecurrence;
+}
+
+export interface ReminderMutationResponse {
+  ok: true;
+  reminder: ScheduledReminder;
 }
 
 export interface RemindersResponse {
@@ -158,11 +181,60 @@ export interface DeliveryRetryResponse {
   retriedId: number;
 }
 
-export type AuditAction = "reminder.cancel" | "tell.cancel" | "delivery.retry" | "config.save"
+export type AuditAction = "reminder.create" | "reminder.update" | "reminder.cancel" | "tell.cancel" | "delivery.retry" | "config.save"
   | "pet.update" | "pet.save" | "pet.enable" | "pet.disable" | "pet.pause" | "pet.resume"
   | "pet.request" | "pet.evolve" | "profile.refresh" | "profile.forget"
   | "siesta.cancel" | "discipline.sleep" | "discipline.arm" | "discipline.wake"
   | "trivia.reset" | "trivia.close-month" | "connection.pair" | "connection.resync" | "connection.relink";
+
+export interface LeaderboardEntry {
+  senderId: string;
+  name: string;
+  score: number;
+}
+
+export interface TrophyEntry {
+  senderId: string;
+  name: string;
+  trophies: number;
+}
+
+export interface TrophyHistoryEntry {
+  period: string;
+  senderId: string;
+  name: string;
+  score: number;
+}
+
+export interface ChatParticipantEntry {
+  senderId: string;
+  name: string;
+  lastSeenAt: number;
+}
+
+export interface ChatLeaderboards {
+  chatId: string;
+  chatName: string | null;
+  trivia: {
+    monthly: LeaderboardEntry[];
+    allTime: LeaderboardEntry[];
+    trophies: TrophyEntry[];
+    history: TrophyHistoryEntry[];
+  };
+  duel: {
+    monthly: LeaderboardEntry[];
+    allTime: LeaderboardEntry[];
+    trophies: TrophyEntry[];
+    history: TrophyHistoryEntry[];
+  };
+  karma: LeaderboardEntry[];
+  participants: ChatParticipantEntry[];
+}
+
+export interface LeaderboardsResponse {
+  chats: ChatLeaderboards[];
+  sampledAt: number;
+}
 
 export interface AuditEntry {
   id: number;

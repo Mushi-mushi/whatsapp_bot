@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const DATABASE_SCHEMA_VERSION = 9;
+export const DATABASE_SCHEMA_VERSION = 10;
 
 // Single SQLite database (WAL) for config, dedup, and analytics.
 export function openDatabase(path: string): Database.Database {
@@ -368,6 +368,14 @@ function migrate(db: Database.Database): void {
           PRIMARY KEY(game, chat_id, sender_id, period)
         );
         PRAGMA user_version = 9;
+      `);
+    })();
+  }
+  if (version < 10) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE reminders ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'once' CHECK(recurrence IN ('once','daily','weekly'));
+        PRAGMA user_version = 10;
       `);
     })();
   }

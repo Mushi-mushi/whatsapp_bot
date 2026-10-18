@@ -4,6 +4,8 @@ import type { AuditAction } from "../../../shared/api.js";
 import type { AuditStore } from "../state/audit.js";
 
 const ACTIONS: Record<string, AuditAction> = {
+  "POST /api/reminders": "reminder.create",
+  "PUT /api/reminders/:id": "reminder.update",
   "DELETE /api/reminders/:id": "reminder.cancel",
   "DELETE /api/tells/:id": "tell.cancel",
   "POST /api/operations/deliveries/:id/retry": "delivery.retry",
@@ -38,6 +40,10 @@ export function registerAudit(app: FastifyInstance, store: AuditStore, apiToken?
     if (typeof params.id === "string") {
       const id = Number(params.id);
       return /^[1-9]\d*$/.test(params.id) && Number.isSafeInteger(id) ? String(id) : null;
+    }
+    if (action === "reminder.create") {
+      const body = object(req.body);
+      if (typeof body.chatId === "string" && body.chatId.trim()) return opaque("chat", body.chatId.trim());
     }
     if (typeof params.chatId === "string") return opaque("chat", params.chatId);
     if (typeof params.key === "string") return opaque("profile", params.key);

@@ -365,7 +365,7 @@ describe("legacy feature preservation", () => {
       const before = snapshot();
       db.close();
       db = openDatabase(path);
-      expect(db.pragma("user_version", { simple: true })).toBe(9);
+      expect(db.pragma("user_version", { simple: true })).toBe(10);
       expect(snapshot()).toEqual(before);
       expect(new KarmaStore(db).top(CHAT)).toEqual([]);
       expect(new SeenActivityStore(db).resolve(CHAT, "Alex")).toEqual([]);

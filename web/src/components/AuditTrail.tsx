@@ -5,6 +5,7 @@ import { Button } from "./ui/button";
 import { EmptyState, LoadingState, QueryError } from "./QueryFeedback";
 
 const actions: Record<AuditEntry["action"], string> = {
+  "reminder.create": "Create reminder", "reminder.update": "Update reminder",
   "reminder.cancel": "Cancel reminder", "tell.cancel": "Cancel tell", "delivery.retry": "Retry delivery",
   "config.save": "Save configuration", "pet.update": "Update pet", "pet.save": "Save pet settings",
   "pet.enable": "Enable/spawn pet", "pet.disable": "Disable pet", "pet.pause": "Pause pet", "pet.resume": "Resume pet",

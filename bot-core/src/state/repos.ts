@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.js";
 import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
-import type { Contact, PendingTell, RemindersResponse, ScheduledReminder, TellsResponse } from "../../../shared/api.js";
+import type { Contact, PendingTell, ReminderRecurrence, RemindersResponse, ScheduledReminder, TellsResponse } from "../../../shared/api.js";
 import { type IdentityResolver, memoryChat, normalizeJid, phoneDigits, phoneFromJid } from "./identity.js";
 import { canonicalMemoryKey, canonicalScope, forPerson, identitiesFor, inChat, memoryKeyAliases, type PersonScope } from "./scoped.js";
 import { PlayerScores } from "./player-scores.js";
@@ -583,22 +583,41 @@ export interface Reminder {
   target_name: string | null;
   text: string;
   due_ts: number;
+  recurrence: ReminderRecurrence;
 }
 
 export class RemindersStore {
   constructor(private readonly db: Database.Database) {}
 
-  add(chatId: string, targetName: string | null, text: string, dueTs: number): void {
-    this.db
+  add(chatId: string, targetName: string | null, text: string, dueTs: number, recurrence: ReminderRecurrence = "once"): number {
+    const info = this.db
       .prepare(
-        "INSERT INTO reminders (chat_id, target_name, text, due_ts, created_ts) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO reminders (chat_id, target_name, text, due_ts, created_ts, recurrence) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(chatId, targetName, text, dueTs, Date.now());
+      .run(chatId, targetName, text, dueTs, Date.now(), recurrence);
+    return Number(info.lastInsertRowid);
+  }
+
+  get(id: number): ScheduledReminder | undefined {
+    return this.db.prepare(`SELECT r.id, r.chat_id AS chatId, c.name AS chatName,
+      r.target_name AS targetName, r.text, r.due_ts AS dueAt, r.recurrence
+      FROM reminders r LEFT JOIN chat_directory c ON c.id = r.chat_id
+      WHERE r.id = ?`).get(id) as ScheduledReminder | undefined;
+  }
+
+  update(id: number, targetName: string | null, text: string, dueTs: number, recurrence: ReminderRecurrence): ScheduledReminder | undefined {
+    return this.db.transaction(() => {
+      const info = this.db
+        .prepare("UPDATE reminders SET target_name = ?, text = ?, due_ts = ?, recurrence = ? WHERE id = ?")
+        .run(targetName, text, dueTs, recurrence, id);
+      if (info.changes !== 1) return undefined;
+      return this.get(id);
+    })();
   }
 
   due(now: number): Reminder[] {
     return this.db
-      .prepare("SELECT id, chat_id, target_name, text, due_ts FROM reminders WHERE due_ts <= ? ORDER BY due_ts")
+      .prepare("SELECT id, chat_id, target_name, text, due_ts, recurrence FROM reminders WHERE due_ts <= ? ORDER BY due_ts")
       .all(now) as Reminder[];
   }
 
@@ -607,7 +626,7 @@ export class RemindersStore {
     return this.db.transaction(() => {
       const { total } = this.db.prepare("SELECT COUNT(*) AS total FROM reminders").get() as { total: number };
       const reminders = this.db.prepare(`SELECT r.id, r.chat_id AS chatId, c.name AS chatName,
-        r.target_name AS targetName, r.text, r.due_ts AS dueAt
+        r.target_name AS targetName, r.text, r.due_ts AS dueAt, r.recurrence
         FROM reminders r LEFT JOIN chat_directory c ON c.id = r.chat_id
         ORDER BY r.due_ts, r.id LIMIT ? OFFSET ?`).all(pageSize, (page - 1) * pageSize) as ScheduledReminder[];
       return { reminders, total, page, pageSize, sampledAt: now };

@@ -177,7 +177,7 @@ describe("failed delivery recovery", () => {
     const before = db.prepare("SELECT * FROM outbox").get();
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(9);
+    expect(db.pragma("user_version", { simple: true })).toBe(10);
     expect(db.prepare("SELECT * FROM outbox").get()).toEqual({ ...before as object, manual_retry_count: 0 });
     let store = new OutboxStore(db);
     expect(store.history(1)!.attempts).toEqual([]);
