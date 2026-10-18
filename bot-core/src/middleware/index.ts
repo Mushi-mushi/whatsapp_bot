@@ -8,6 +8,7 @@ import type { ProfileService } from "../handlers/profiles/service.js";
 import type { PetService } from "../pets/service.js";
 import { rememberMessage } from "../handlers/commands/user-context.js";
 import { extractCommandToken, normalizeLooseName, normalizeName } from "../router/normalize.js";
+import { normalizeJid } from "../state/identity.js";
 
 // Passively learn from the owner's own messages so they build a profile like
 // everyone else, and track their activity so others can `bot.seen` them. Runs
@@ -72,7 +73,8 @@ export const approvedSenderGuard: Middleware = async (ctx, next) => {
   }
   for (const entry of ctx.config.approvedSenders) {
     const phone = ctx.msg.senderPhone;
-    const matchesChat = entry.includes("@") && entry === ctx.msg.chatId;
+    const matchesChat = entry.includes("@") &&
+      (entry === ctx.msg.chatId || (!ctx.msg.isGroup && ctx.msg.chatAliases?.includes(normalizeJid(entry))));
     const matchesDm = !ctx.msg.isGroup && /^\d{6,15}$/.test(phone) &&
       (entry === `${phone}@s.whatsapp.net` || (/^\+?[\d ()-]+$/.test(entry) && entry.replace(/\D/g, "") === phone));
     if (matchesChat || matchesDm) {
@@ -207,7 +209,7 @@ export function sleepGuard(discipline: SiestaDisciplineStore, logger: Logger): M
       await next();
       return;
     }
-    const senderId = disciplineKey(ctx.msg.senderId, ctx.msg.senderPhone);
+    const senderId = disciplineKey(ctx.msg.senderIdentity ?? ctx.msg.senderId, ctx.msg.senderPhone);
     if (discipline.sleepUntil(ctx.msg.chatId, senderId) == null) {
       await next();
       return;

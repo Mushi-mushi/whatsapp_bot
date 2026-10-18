@@ -2,7 +2,7 @@ import type { Handler } from "../../router/router.js";
 import type { UserMemoryStore } from "../../state/repos.js";
 import type { ProfileService } from "../profiles/service.js";
 import { normalizeName } from "../../router/normalize.js";
-import { senderKey } from "./user-context.js";
+import { chatKey, senderKey } from "./user-context.js";
 
 // bot.profile [name] — rebuild and show the deep personality dossier the bot has
 // learned about a person. With no name, profiles the sender. Resolves a typed
@@ -32,7 +32,7 @@ export function makeProfile(userMemory: UserMemoryStore, profiler: ProfileServic
       displayName = ctx.msg.senderName?.trim() || "you";
     } else {
       const nameNorm = normalizeName(target);
-      const matches = userMemory.usersForNameInChat(nameNorm, ctx.msg.chatId);
+      const matches = userMemory.usersForNameInChat(nameNorm, chatKey(ctx.msg));
       if (matches.length !== 1) {
         await ctx.reply(matches.length > 1
           ? `More than one person is called "${target}" in this chat. Ask them to use bot.profile without a name.`

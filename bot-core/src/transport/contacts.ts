@@ -1,4 +1,5 @@
 import type { Contact } from "@whiskeysockets/baileys";
+import { IdentityResolver, normalizeJid, phoneDigits, phoneFromJid } from "../state/identity.js";
 
 export interface ContactRecord {
   jid: string;
@@ -6,30 +7,41 @@ export interface ContactRecord {
   name: string;
 }
 
-const digits = (s: string): string => s.replace(/\D/g, "");
-
 // Best display name for a WhatsApp contact, or null if none is set.
 export function contactDisplayName(c: Partial<Contact>): string | null {
   const name = (c.name || c.notify || c.verifiedName || "").trim();
   return name || null;
 }
 
-// Owns the contact/name directory and the (bug-prone) DM name-resolution cascade.
-// WhatsApp routes modern DMs under an opaque LID, so names must be resolvable by
-// phone digits, phone JID, chat id, or the profile pushName — in that order.
-export class ContactResolver {
+export class ContactResolver extends IdentityResolver {
   private byJid = new Map<string, string>();
   private byPhone = new Map<string, string>();
+  private records = new Map<string, ContactRecord>();
   private hydrated = false;
 
   // Load the persisted directory once (name resolution across restarts).
   hydrate(load?: () => ContactRecord[]): void {
     if (this.hydrated || !load) return;
-    for (const r of load()) {
-      if (r.jid && r.name) this.byJid.set(r.jid, r.name);
-      if (r.phone) this.byPhone.set(digits(r.phone), r.name);
-    }
+    for (const r of load()) this.record(r);
     this.hydrated = true;
+  }
+
+  clone(): ContactResolver {
+    const copy = new ContactResolver();
+    copy.hydrate(() => [...this.records.values()]);
+    return copy;
+  }
+
+  private record(r: ContactRecord): ContactRecord {
+    const jid = normalizeJid(r.jid);
+    if (r.phone) this.associate(jid, r.phone);
+    const phone = this.phoneFor(jid) ?? null;
+    const name = r.name.trim() || this.byJid.get(jid) || "";
+    const record = { jid, phone, name };
+    this.records.set(jid, record);
+    if (name) this.byJid.set(jid, name);
+    if (phone && name) this.byPhone.set(phone, name);
+    return record;
   }
 
   // Ingest a batch of contacts into the maps. Returns the display names to feed
@@ -39,28 +51,25 @@ export class ContactResolver {
     const records: ContactRecord[] = [];
     for (const c of contacts) {
       const name = contactDisplayName(c);
-      if (!c.id || !name) continue;
-      const phone = c.id.endsWith("@s.whatsapp.net") ? digits(c.id.split(":")[0]) : null;
-      this.byJid.set(c.id, name);
-      if (phone) this.byPhone.set(phone, name);
-      records.push({ jid: c.id, phone, name });
-      // A contact's LID (privacy identity) maps to the same saved name.
-      const lid = (c as { lid?: string }).lid;
-      if (lid) {
-        this.byJid.set(lid, name);
-        records.push({ jid: lid, phone, name });
+      if (!c.id) continue;
+      const phone = phoneFromJid(c.jid ?? "") ?? phoneFromJid(c.id) ?? this.phoneFor(c.id);
+      // Nameless aliases still carry identity information and must survive restart.
+      if (!name && !phone) continue;
+      for (const jid of new Set([c.id, c.jid, c.lid])) {
+        if (jid) records.push(this.record({ jid, phone: phone ?? null, name: name ?? "" }));
       }
-      if (!c.id.endsWith("@g.us")) names.push(name);
+      if (name && !c.id.endsWith("@g.us")) names.push(name);
     }
     return { names, records };
   }
 
   nameForJid(jid: string): string | undefined {
-    return this.byJid.get(jid);
+    return this.byJid.get(normalizeJid(jid));
   }
 
   nameForPhone(phone: string): string | undefined {
-    return phone ? this.byPhone.get(digits(phone)) : undefined;
+    const digits = phoneDigits(phone);
+    return digits ? this.nameForJid(`${digits}@s.whatsapp.net`) ?? this.byPhone.get(digits) : undefined;
   }
 
   // Resolve a DM chat name: saved name by phone, then by phone JID, then by chat

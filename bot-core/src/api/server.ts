@@ -5,7 +5,7 @@ import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
 import { redactSecrets, restoreSecrets } from "../config/secrets.js";
 import type { ConfigStore, ContactsStore, KnownChatsStore, RemindersStore, SiestaDisciplineStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
-import { disciplineKey } from "../state/repos.js";
+import { ContactResolver } from "../transport/contacts.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import { ProfileQueueError } from "../handlers/profiles/service.js";
 import type { Transport } from "../transport/types.js";
@@ -196,26 +196,19 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     cancelled: deps.runtime.cancelSiesta(),
   }));
 
-  // Forced-sleep discipline: list sleeping/armed players and manage their state.
-  // Resolve a friendly name for a sender JID from the synced contacts (exact JID
-  // first, then by phone digits), falling back to null so the UI can show the JID.
+  const contactDirectory = (): ContactResolver => {
+    const directory = new ContactResolver();
+    directory.hydrate(() => deps.contacts.all());
+    return directory;
+  };
   const resolveName = (jid: string): string | null => {
-    const contacts = deps.contacts.all();
-    const direct = contacts.find((c) => c.jid === jid);
-    if (direct?.name) return direct.name;
-    const digits = jid.split("@")[0].replace(/\D/g, "");
-    if (digits) {
-      const byPhone = contacts.find((c) => c.phone && c.phone.replace(/\D/g, "") === digits);
-      if (byPhone?.name) return byPhone.name;
-    }
-    return null;
+    const directory = contactDirectory();
+    return directory.nameForJid(jid) ?? directory.nameForPhone(directory.phoneFor(jid) ?? "") ?? null;
   };
   // Collapse a dashboard-supplied JID to the same identity the bot sees at message
   // time (phone-based), using the contact's phone when the JID is a LID.
   const canonicalTarget = (jid: string): string => {
-    const contact = deps.contacts.all().find((c) => c.jid === jid);
-    const phone = contact?.phone ?? (jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : "");
-    return disciplineKey(jid, phone);
+    return contactDirectory().canonical(jid);
   };
   const disciplineView = (now = Date.now()): DisciplinePlayer[] => {
     const chats = new Map(deps.knownChats.list().map((c) => [c.id, c.name]));
@@ -229,7 +222,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     }));
   };
   const disciplineTarget = z.object({
-    chatId: z.string().min(1), senderId: z.string().min(1),
+    chatId: z.string().trim().min(1), senderId: z.string().trim().min(1),
   }) satisfies z.ZodType<DisciplineTarget, z.ZodTypeDef, unknown>;
   const disciplineSleep = disciplineTarget.extend({
     minutes: z.number().int().min(1).max(60),

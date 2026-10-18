@@ -45,8 +45,8 @@ export function DisciplineCard({ chats }: { chats: ChatIdentity[] }) {
     if (!jid) return null;
     const direct = contactByJid.get(jid);
     if (direct) return direct;
-    const digits = jid.split("@")[0].replace(/\D/g, "");
-    return contactList.find((c) => c.phone && c.phone.replace(/\D/g, "") === digits)?.name ?? null;
+    const phone = /^(\d+)(?::\d+)?@s\.whatsapp\.net$/.exec(jid)?.[1];
+    return phone ? contactList.find((c) => c.phone === phone)?.name ?? null : null;
   }, [senderId, contactByJid, contactList]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["discipline"] });

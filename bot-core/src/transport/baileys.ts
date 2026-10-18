@@ -2,7 +2,6 @@ import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
-  jidNormalizedUser,
   useMultiFileAuthState,
   type Chat,
   type Contact,
@@ -15,6 +14,7 @@ import type { Logger } from "pino";
 import QRCode from "qrcode";
 import { rm } from "node:fs/promises";
 import { ContactResolver } from "./contacts.js";
+import { phoneFromJid } from "../state/identity.js";
 import type {
   ChatIdentity,
   ConnectionStatus,
@@ -94,8 +94,10 @@ export class BaileysTransport implements Transport {
   async isGroupAdmin(chatId: string, senderId: string): Promise<boolean> {
     if (!this.sock || this.status.state !== "open") throw new Error("WhatsApp is disconnected");
     const metadata = await this.sock.groupMetadata(chatId);
+    this.ingestContacts(metadata.participants);
+    const sender = this.contacts.canonical(senderId);
     return metadata.participants.some((participant) =>
-      jidNormalizedUser(participant.id) === jidNormalizedUser(senderId) &&
+      this.contacts.canonical(participant.id) === sender &&
       (participant.admin === "admin" || participant.admin === "superadmin"));
   }
 
@@ -322,8 +324,12 @@ export class BaileysTransport implements Transport {
           const ts = Number(raw.messageTimestamp ?? 0) * 1000;
           if (!ts || Date.now() - ts > 120_000) continue;
         }
-        const incoming = await this.toIncoming(raw);
-        if (incoming) for (const cb of this.messageCbs) cb(incoming);
+        try {
+          const incoming = await this.toIncoming(raw);
+          if (incoming) for (const cb of this.messageCbs) cb(incoming);
+        } catch (err) {
+          this.opts.logger.error({ err }, "Failed to resolve incoming WhatsApp message");
+        }
       }
     });
 
@@ -339,11 +345,11 @@ export class BaileysTransport implements Transport {
 
     // Contacts + recent chats sync (populates individual/DM chats in the picker).
     sock.ev.on("messaging-history.set", ({ chats, contacts }) => {
-      this.ingestContacts(contacts);
+      this.syncContacts(contacts);
       this.ingestChats(chats);
     });
-    sock.ev.on("contacts.upsert", (contacts) => this.ingestContacts(contacts));
-    sock.ev.on("contacts.update", (contacts) => this.ingestContacts(contacts));
+    sock.ev.on("contacts.upsert", (contacts) => this.syncContacts(contacts));
+    sock.ev.on("contacts.update", (contacts) => this.syncContacts(contacts));
     sock.ev.on("chats.upsert", (chats) => this.ingestChats(chats));
     } finally {
       this.starting = false;
@@ -365,9 +371,19 @@ export class BaileysTransport implements Transport {
 
   private ingestContacts(contacts: Partial<Contact>[]): void {
     if (this.stopped) return;
-    const { records } = this.contacts.ingest(contacts);
+    const staged = this.contacts.clone();
+    const { records } = staged.ingest(contacts);
     if (records.length) this.opts.persistContacts?.(records);
-    this.emitChats(records.map((record) => ({ id: record.jid, name: record.name })));
+    this.contacts = staged;
+    this.emitChats(records.filter((r) => r.name).map((record) => ({ id: record.jid, name: record.name })));
+  }
+
+  private syncContacts(contacts: Partial<Contact>[]): void {
+    try {
+      this.ingestContacts(contacts);
+    } catch (err) {
+      this.opts.logger.error({ err }, "Failed to update WhatsApp contact identities");
+    }
   }
 
   private ingestChats(chats: Chat[]): void {
@@ -427,14 +443,24 @@ export class BaileysTransport implements Transport {
     // to the linked account instead — otherwise the owner's profile/activity would
     // be keyed to whoever they were talking to.
     const ownJid = fromMe ? this.sock?.user?.id : undefined;
+    if (fromMe && !ownJid) throw new Error("Linked account identity is unavailable");
     const senderId = ownJid ?? (isGroup ? raw.key.participant ?? chatId : chatId);
 
-    // WhatsApp now routes DMs under an opaque LID; the real phone JID (when the
-    // chat id is a @lid) arrives in senderPn / participantPn.
-    const key = raw.key as { senderPn?: string; participantPn?: string };
+    const key = raw.key;
     const phoneJid = (isGroup ? key.participantPn : key.senderPn) ?? undefined;
-    const phoneSource = ownJid ?? phoneJid ?? (senderId.endsWith("@s.whatsapp.net") ? senderId : "");
-    const senderPhone = phoneSource.split("@")[0].split(":")[0].replace(/\D/g, "");
+    const lid = (isGroup ? key.participantLid : key.senderLid) ?? undefined;
+    if (phoneJid && !phoneFromJid(phoneJid)) throw new Error("Invalid WhatsApp phone alias");
+    if (lid && !/^\d+(?::\d+)?@lid$/.test(lid)) throw new Error("Invalid WhatsApp LID alias");
+    const phone = phoneFromJid(phoneJid ?? "") ?? this.contacts.phoneFor(senderId);
+    // Sender hints describe the author, including on outgoing DMs; never bind
+    // the recipient's remoteJid to the linked account's phone.
+    if ((phoneJid && this.contacts.phoneFor(senderId) !== phone) ||
+        (lid && phone && this.contacts.phoneFor(lid) !== phone)) {
+      this.ingestContacts([{ id: senderId, jid: phoneJid, lid }]);
+    }
+    const senderPhone = this.contacts.phoneFor(senderId) ?? "";
+    const senderIdentity = this.contacts.canonical(senderId);
+    const chatIdentity = isGroup ? chatId : this.contacts.canonical(chatId);
 
     const m = raw.message;
     let kind: MessageKind = "other";
@@ -465,16 +491,19 @@ export class BaileysTransport implements Transport {
       ? await this.resolveGroupSubject(chatId)
       : this.contacts.resolveDmName({
           chatId,
-          phoneJid,
-          senderPhone,
-          pushName: raw.pushName,
-          senderId,
+          phoneJid: this.contacts.phoneFor(chatId) ? chatIdentity : undefined,
+          senderPhone: this.contacts.phoneFor(chatId) ?? "",
+          pushName: fromMe ? null : raw.pushName,
+          senderId: chatId,
         });
 
     return {
       chatId,
+      chatIdentity,
+      chatAliases: isGroup ? [chatId] : this.contacts.aliasesFor(chatId),
       chatName,
       senderId,
+      senderIdentity,
       senderName: (fromMe ? this.sock?.user?.name ?? this.sock?.user?.notify : null) ?? raw.pushName ?? senderId,
       senderPhone,
       messageId: raw.key.id ?? "",

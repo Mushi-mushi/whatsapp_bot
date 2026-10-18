@@ -21,6 +21,20 @@ function mount() {
 }
 
 describe("discipline query and form states", () => {
+  it("resolves device phone addresses but never treats opaque LID digits as a phone number", async () => {
+    vi.mocked(api.getContacts).mockResolvedValue({
+      contacts: [{ jid: "34600000001@s.whatsapp.net", phone: "34600000001", name: "Alice" }],
+    });
+    mount();
+    await screen.findByText("No players are sleeping or armed.");
+    const player = screen.getByLabelText("Player");
+    fireEvent.change(player, { target: { value: "34600000001:2@s.whatsapp.net" } });
+    expect(await screen.findByText("Resolved: Alice")).toBeTruthy();
+    fireEvent.change(player, { target: { value: "34600000001@lid" } });
+    expect(screen.getByText("Unknown contact — the JID will be used as-is")).toBeTruthy();
+    expect(screen.queryByText("Resolved: Alice")).toBeNull();
+  });
+
   it("shows loading instead of claiming there are no active players", () => {
     vi.mocked(api.getDiscipline).mockReturnValue(new Promise(() => {}));
     vi.mocked(api.getContacts).mockReturnValue(new Promise(() => {}));

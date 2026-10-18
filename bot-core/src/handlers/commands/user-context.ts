@@ -9,7 +9,11 @@ const MAX_MSG_LEN = 200;
 
 // Memory belongs to a sender within one stable chat ID, never a display name.
 export function senderKey(msg: IncomingMessage): string {
-  return memoryKey(msg.chatId, msg.senderId, msg.senderPhone);
+  return memoryKey(chatKey(msg), msg.senderIdentity ?? msg.senderId, msg.senderPhone);
+}
+
+export function chatKey(msg: IncomingMessage): string {
+  return msg.chatIdentity ?? msg.chatId;
 }
 
 // Record a piece of text under the sender's identity and schedule a profile

@@ -687,6 +687,10 @@ describe("sleep discipline controls", () => {
 
     const bad = await app.inject({ method: "POST", url: "/api/discipline/sleep", headers, payload: { chatId: "c", senderId: "s", minutes: 999 } });
     expect(bad.statusCode).toBe(400);
+    for (const invalid of [{ chatId: " ", senderId: "s" }, { chatId: "c", senderId: " " }]) {
+      expect((await app.inject({ method: "POST", url: "/api/discipline/arm", headers, payload: invalid })).statusCode)
+        .toBe(400);
+    }
   });
 
   it("resolves a player's display name from synced contacts", async () => {
@@ -698,6 +702,38 @@ describe("sleep discipline controls", () => {
 
     const contacts = await app.inject({ url: "/api/contacts", headers });
     expect(contacts.json().contacts).toEqual([{ jid: "34602@s.whatsapp.net", name: "Alice", phone: "34602" }]);
+  });
+
+  it("uses the same verified aliases and device normalization as incoming discipline", async () => {
+    const { app, deps, discipline } = await setup();
+    deps.contacts.upsertMany([
+      { jid: "900@lid", phone: "34600000001", name: "" },
+      { jid: "34600000001@s.whatsapp.net", phone: "34600000001", name: "Alice" },
+    ]);
+    deps.contacts.upsertMany([{ jid: "900@lid", phone: null, name: "" }]);
+    for (const senderId of ["900@lid", "34600000001:2@s.whatsapp.net"]) {
+      const armed = await app.inject({ method: "POST", url: "/api/discipline/arm", headers,
+        payload: { chatId: "group@g.us", senderId } });
+      expect(armed.statusCode).toBe(200);
+      expect(armed.json().players).toHaveLength(1);
+      expect(armed.json().players[0]).toMatchObject({
+        senderId: "34600000001@s.whatsapp.net", displayName: "Alice",
+      });
+      expect(discipline.isArmed("group@g.us", "900@lid")).toBe(true);
+    }
+    const woken = await app.inject({ method: "POST", url: "/api/discipline/wake", headers,
+      payload: { chatId: "group@g.us", senderId: "900@lid" } });
+    expect(woken.json().players).toEqual([]);
+    expect((await app.inject({ url: "/api/contacts", headers })).json().contacts)
+      .toEqual([{ jid: "34600000001@s.whatsapp.net", phone: "34600000001", name: "Alice" }]);
+  });
+
+  it("does not resolve a LID to an unrelated person with the same phone digits", async () => {
+    const { app, deps } = await setup();
+    deps.contacts.upsertMany([{ jid: "900@s.whatsapp.net", phone: "900", name: "Unrelated" }]);
+    const armed = await app.inject({ method: "POST", url: "/api/discipline/arm", headers,
+      payload: { chatId: "group@g.us", senderId: "900@lid" } });
+    expect(armed.json().players[0]).toMatchObject({ senderId: "900@lid", displayName: null });
   });
 });
 

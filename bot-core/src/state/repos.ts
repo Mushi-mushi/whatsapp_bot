@@ -3,7 +3,7 @@ import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.j
 import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
 import type { Contact, PendingTell, RemindersResponse, ScheduledReminder, TellsResponse } from "../../../shared/api.js";
-import { memoryChat } from "./identity.js";
+import { IdentityResolver, memoryChat, normalizeJid, phoneDigits, phoneFromJid } from "./identity.js";
 
 const CONFIG_KEY = "config";
 const CONFIG_VERSION_KEY = "config_version";
@@ -117,7 +117,7 @@ export class SeenStore {
 
 export class KnownChatsStore {
   constructor(private readonly db: Database.Database) {
-    this.db.prepare("INSERT OR IGNORE INTO chat_directory (id, name, updated_at) SELECT jid, name, updated_at FROM contacts").run();
+    this.db.prepare("INSERT OR IGNORE INTO chat_directory (id, name, updated_at) SELECT jid, name, updated_at FROM contacts WHERE length(trim(name)) > 0").run();
   }
 
   upsert(chats: ChatIdentity[]): void {
@@ -186,20 +186,27 @@ export class ComplaintStore {
 export type ContactRecord = Contact;
 
 // Persisted contact directory (jid/lid -> saved name + phone). Populated from the
-// WhatsApp contacts sync so DM name resolution + name-based approval survive restarts.
+// WhatsApp sync and verified message aliases. Empty names retain identity only.
 export class ContactsStore {
   constructor(private readonly db: Database.Database) {}
 
   upsertMany(records: ContactRecord[]): void {
     const stmt = this.db.prepare(
       `INSERT INTO contacts (jid, phone, name, updated_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(jid) DO UPDATE SET phone = excluded.phone, name = excluded.name, updated_at = excluded.updated_at`,
+       ON CONFLICT(jid) DO UPDATE SET phone = COALESCE(excluded.phone, contacts.phone),
+       name = CASE WHEN excluded.name = '' THEN contacts.name ELSE excluded.name END,
+       updated_at = excluded.updated_at`,
     );
     const now = Date.now();
     const tx = this.db.transaction((list: ContactRecord[]) => {
+      const identities = this.identities();
       for (const r of list) {
-        // Only keep human-readable names (skip raw JIDs).
-        if (r.jid && r.name && !r.name.includes("@")) stmt.run(r.jid, r.phone, r.name, now);
+        if (!r.jid) continue;
+        const jid = normalizeJid(r.jid);
+        if (r.phone) identities.associate(jid, r.phone);
+        const phone = identities.phoneFor(jid) ?? null;
+        const name = r.name.includes("@") ? "" : r.name.trim();
+        if (name || phone) stmt.run(jid, phone, name, now);
       }
     });
     tx(records);
@@ -207,6 +214,12 @@ export class ContactsStore {
 
   all(): ContactRecord[] {
     return this.db.prepare("SELECT jid, phone, name FROM contacts").all() as ContactRecord[];
+  }
+
+  identities(): IdentityResolver {
+    const identities = new IdentityResolver();
+    for (const r of this.all()) if (r.phone) identities.associate(r.jid, r.phone);
+    return identities;
   }
 }
 
@@ -705,13 +718,12 @@ export function utcDay(ts: number): string {
 // Stable per-person key for siesta discipline. Group participants arrive under an
 // opaque LID (raw.key.participant) while the dashboard arms them by their phone
 // JID from contacts, so both sides must collapse to the same identity. Prefer the
-// phone number (always present as senderPhone/contact phone), falling back to the
+// phone number when known, falling back to the
 // phone JID, then the raw id (LID) when no phone is known.
 export function disciplineKey(senderId: string, phone?: string | null): string {
-  const digits = (phone ?? "").replace(/\D/g, "");
+  const digits = phoneDigits(phone) || phoneFromJid(senderId);
   if (digits) return `${digits}@s.whatsapp.net`;
-  if (senderId.endsWith("@s.whatsapp.net")) return senderId;
-  return senderId;
+  return normalizeJid(senderId);
 }
 
 export interface DisciplineEntry {
@@ -736,6 +748,22 @@ interface DisciplineRow {
 export class SiestaDisciplineStore {
   constructor(private readonly db: Database.Database) {}
 
+  private matching(chatId: string, senderId: string): DisciplineRow[] {
+    const identities = new ContactsStore(this.db).identities();
+    const chat = identities.canonical(chatId);
+    const sender = identities.canonical(senderId);
+    const rows = (chat.endsWith("@g.us")
+      ? this.db.prepare("SELECT * FROM siesta_discipline WHERE chat_id = ?").all(chat)
+      : this.db.prepare("SELECT * FROM siesta_discipline").all()) as DisciplineRow[];
+    return rows.filter((r) => identities.canonical(r.chat_id) === chat &&
+      identities.canonical(r.sender_id) === sender);
+  }
+
+  private target(chatId: string, senderId: string): [string, string] {
+    const identities = new ContactsStore(this.db).identities();
+    return [identities.canonical(chatId), identities.canonical(senderId)];
+  }
+
   private toEntry(row: DisciplineRow): DisciplineEntry {
     return {
       chatId: row.chat_id,
@@ -747,10 +775,17 @@ export class SiestaDisciplineStore {
   }
 
   get(chatId: string, senderId: string): DisciplineEntry | null {
-    const row = this.db
-      .prepare("SELECT * FROM siesta_discipline WHERE chat_id = ? AND sender_id = ?")
-      .get(chatId, senderId) as DisciplineRow | undefined;
-    return row ? this.toEntry(row) : null;
+    const rows = this.matching(chatId, senderId);
+    if (!rows.length) return null;
+    // Read verified legacy aliases together without rekeying/deleting their rows.
+    const days = rows.flatMap((r) => r.last_siesta_day ? [r.last_siesta_day] : []).sort();
+    const untils = rows.flatMap((r) => r.sleep_until == null ? [] : [r.sleep_until]);
+    return {
+      chatId, senderId,
+      lastSiestaDay: days.at(-1) ?? null,
+      sleepUntil: untils.length ? Math.max(...untils) : null,
+      armed: rows.some((r) => r.armed !== 0),
+    };
   }
 
   // True once the sender has already spent their allowed siesta for `day`.
@@ -770,6 +805,7 @@ export class SiestaDisciplineStore {
 
   // Record the sender's one allowed siesta for the day (normal bot nap).
   recordAllowedSiesta(chatId: string, senderId: string, day: string): void {
+    [chatId, senderId] = this.target(chatId, senderId);
     this.db
       .prepare(
         `INSERT INTO siesta_discipline (chat_id, sender_id, last_siesta_day)
@@ -781,17 +817,22 @@ export class SiestaDisciplineStore {
 
   // Put the sender to sleep until `until`; also clears any armed flag.
   putToSleep(chatId: string, senderId: string, until: number): void {
-    this.db
-      .prepare(
-        `INSERT INTO siesta_discipline (chat_id, sender_id, sleep_until, armed)
-         VALUES (?, ?, ?, 0)
-         ON CONFLICT(chat_id, sender_id) DO UPDATE SET sleep_until = excluded.sleep_until, armed = 0`,
-      )
-      .run(chatId, senderId, until);
+    this.db.transaction(() => {
+      this.wake(chatId, senderId);
+      [chatId, senderId] = this.target(chatId, senderId);
+      this.db
+        .prepare(
+          `INSERT INTO siesta_discipline (chat_id, sender_id, sleep_until, armed)
+           VALUES (?, ?, ?, 0)
+           ON CONFLICT(chat_id, sender_id) DO UPDATE SET sleep_until = excluded.sleep_until, armed = 0`,
+        )
+        .run(chatId, senderId, until);
+    })();
   }
 
   // Arm the sender so their next bot.siesta puts them to sleep.
   arm(chatId: string, senderId: string): void {
+    [chatId, senderId] = this.target(chatId, senderId);
     this.db
       .prepare(
         `INSERT INTO siesta_discipline (chat_id, sender_id, armed)
@@ -803,11 +844,12 @@ export class SiestaDisciplineStore {
 
   // Wake the sender and disarm them, leaving the daily allowance untouched.
   wake(chatId: string, senderId: string): void {
-    this.db
-      .prepare(
+    this.db.transaction(() => {
+      const update = this.db.prepare(
         "UPDATE siesta_discipline SET sleep_until = NULL, armed = 0 WHERE chat_id = ? AND sender_id = ?",
-      )
-      .run(chatId, senderId);
+      );
+      for (const row of this.matching(chatId, senderId)) update.run(row.chat_id, row.sender_id);
+    })();
   }
 
   // Currently sleeping or armed senders, for the dashboard.

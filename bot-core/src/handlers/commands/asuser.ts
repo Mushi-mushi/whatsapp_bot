@@ -3,6 +3,7 @@ import type { KnownUser, UserMemoryStore } from "../../state/repos.js";
 import type { ProfileService } from "../profiles/service.js";
 import { ollamaChat, ollamaErrorMessage, type OllamaMessage } from "../../util/ollama.js";
 import { normalizeName } from "../../router/normalize.js";
+import { chatKey } from "./user-context.js";
 
 // bot.as <name>: <question> — answer a question in the voice of a profiled person,
 // using the dossier the bot has learned about them. The name and question may be
@@ -30,7 +31,7 @@ export function makeAsUser(userMemory: UserMemoryStore, profiler: ProfileService
     const resolve = (n: string): KnownUser | undefined => {
       const norm = normalizeName(n);
       if (!norm) return undefined;
-      const matches = userMemory.usersForNameInChat(norm, ctx.msg.chatId);
+      const matches = userMemory.usersForNameInChat(norm, chatKey(ctx.msg));
       ambiguous = matches.length > 1;
       return matches.length === 1 ? matches[0] : undefined;
     };

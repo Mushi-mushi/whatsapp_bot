@@ -150,6 +150,38 @@ phone/LID aliases remain separate rather than being merged by display name.
 Named lookups use the latest display name recorded in the current chat and refuse
 ambiguous matches; automatic mention context skips ambiguous names.
 
+### WhatsApp identity aliases
+
+Person identity, conversation scope, transport address and display name are
+separate. Verified PN/LID pairs from WhatsApp contacts, message metadata and group
+participants resolve to a device-normalized phone JID when available. Names
+never establish an alias, and opaque LID digits are never interpreted as a phone.
+Conflicting phone associations are rejected and logged, not silently reassigned.
+
+The existing contacts table also persists aliases with no display name; these
+entries do not appear in the contact/chat pickers. Partial updates preserve known
+phones and names, and saved phone-contact names take precedence over LID profile
+names. Alias updates are persisted before the transport accepts them.
+
+Incoming messages retain their original chat/sender addresses for replies,
+quoting and deletion. Separate resolved identities drive DM approvals, AI memory
+scope, discipline and group-admin matching. A participant's identity never approves
+an otherwise unapproved group. Outgoing DM labels describe the recipient, not the
+linked account.
+
+For new AI memory, verified PN/LID forms of one DM use the same conversation
+scope; groups remain isolated by their group IDs. Previously stored memory and
+profiles are **not migrated, merged or deleted**. Records created under an
+unresolved LID (or an older LID DM scope) remain available through the profiles
+dashboard but are not automatically included in the new canonical scope.
+Existing discipline rows remain effective through verified alias-aware reads;
+explicit sleep/wake actions update equivalent restrictions without rewriting
+historical daily allowances. No database schema change is required.
+
+This does not change the legacy name-based tells, last-seen, karma or game scores.
+Migrating those features and reconciling historical memory requires a separate
+data policy; matching display names is not sufficient evidence.
+
 The profiles API exposes an opaque `sender_key` for each chat/person pair plus
 `chat_id` and `chat_name` (null if unknown). URL-encode the key in API paths. The dashboard
 shows both chat name and ID so duplicate chat names can be distinguished.

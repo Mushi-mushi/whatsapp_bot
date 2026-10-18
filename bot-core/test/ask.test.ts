@@ -94,6 +94,49 @@ function makeCtxWithReply(args: string, cfg: BotConfig = DEFAULT_CONFIG) {
 }
 
 describe("bot.ask records the question for profiling", () => {
+  it("uses the resolved DM scope for recording and mention context without reading legacy or other chat memory", async () => {
+    const { userMemory, ask } = setup();
+    const ctx = makeCtx("what does Bob think?");
+    ctx.msg.chatId = "900@lid";
+    ctx.msg.chatIdentity = "34600000001@s.whatsapp.net";
+    ctx.msg.senderId = "900@lid";
+    ctx.msg.senderIdentity = ctx.msg.chatIdentity;
+    ctx.msg.isGroup = false;
+    userMemory.record(memoryKey(ctx.msg.chatIdentity, "2"), "Bob", "DM", "CANONICAL CONTEXT", 50);
+    userMemory.record(memoryKey(ctx.msg.chatId, "3"), "Bob", "DM", "LEGACY CONTEXT", 50);
+    userMemory.record(memoryKey("other@g.us", "4"), "Bob", "Other", "OTHER CHAT CONTEXT", 50);
+    await ask(ctx);
+    const messages = ollama.chat.mock.calls[0][1] as { role: string; content: string }[];
+    const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
+    expect(system).toContain("CANONICAL CONTEXT");
+    expect(system).not.toContain("LEGACY CONTEXT");
+    expect(system).not.toContain("OTHER CHAT CONTEXT");
+    expect(userMemory.recentFor(memoryKey(ctx.msg.chatIdentity, "34600000001"))).toHaveLength(1);
+    expect(userMemory.recentFor(memoryKey(ctx.msg.chatId, "3"))).toHaveLength(1);
+  });
+
+  it.each(["profile", "as"])("resolves named %s requests in the canonical DM scope", async (command) => {
+    const { userMemory, profiles, profiler } = setup();
+    const { ctx, sendText } = makeCtxWithReply(command === "profile" ? "Bob" : "Bob: hello");
+    ctx.msg.chatId = "900@lid";
+    ctx.msg.chatIdentity = "34600000001@s.whatsapp.net";
+    ctx.msg.isGroup = false;
+    const key = memoryKey(ctx.msg.chatIdentity, "2");
+    userMemory.record(key, "Bob", "DM", "hello", 50);
+    profiles.upsert({ sender_key: key, name: "Bob", deep: "CANONICAL DOSSIER", short: "Bob", last_profiled_id: 1 });
+    const refresh = vi.spyOn(profiler, "refresh").mockResolvedValue(null);
+    if (command === "profile") {
+      vi.spyOn(profiler, "maybeRefresh").mockImplementation(() => {});
+      await makeProfile(userMemory, profiler)(ctx);
+      expect(sendText.mock.calls[0][1]).toContain("CANONICAL DOSSIER");
+    } else {
+      await makeAsUser(userMemory, profiler)(ctx);
+      expect(refresh).toHaveBeenCalledWith(key, "Bob", ctx.config);
+      const messages = ollama.chat.mock.calls[0][1] as { role: string; content: string }[];
+      expect(messages[0].content).toContain("CANONICAL DOSSIER");
+    }
+  });
+
   it("stores the asked question under the asker's identity", async () => {
     const { userMemory, ask } = setup();
     await ask(makeCtx("What are the best trail running shoes?"));

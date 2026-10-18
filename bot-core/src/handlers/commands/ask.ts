@@ -3,7 +3,7 @@ import type { UserMemoryStore } from "../../state/repos.js";
 import type { IncomingMessage } from "../../transport/types.js";
 import type { ProfileService } from "../profiles/service.js";
 import { ollamaChat, ollamaErrorMessage, ollamaListModels, type OllamaMessage } from "../../util/ollama.js";
-import { mentionedUsers, rememberMessage, senderKey, userContextBlock } from "./user-context.js";
+import { chatKey, mentionedUsers, rememberMessage, senderKey, userContextBlock } from "./user-context.js";
 
 // Pipe the user's prompt to a local Ollama model and reply with the answer.
 // When user memory is enabled, the system prompt is enriched with what the bot
@@ -131,7 +131,7 @@ function buildMemoryPrompt(
   const askerBlock = personBlock(store, profiler, askerKey, askerName, "the person asking", contextLimit);
   if (askerBlock) blocks.push(askerBlock);
 
-  for (const u of mentionedUsers(store, input.prompt, askerKey, input.msg.chatId)) {
+  for (const u of mentionedUsers(store, input.prompt, askerKey, chatKey(input.msg))) {
     const block = personBlock(store, profiler, u.sender_key, u.name, "mentioned in the question", contextLimit);
     if (block) blocks.push(block);
   }

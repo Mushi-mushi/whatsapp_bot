@@ -52,7 +52,7 @@ export function makeSiesta(runtime: RuntimeState, discipline: SiestaDisciplineSt
     }
 
     const { chatId } = ctx.msg;
-    const senderId = disciplineKey(ctx.msg.senderId, ctx.msg.senderPhone);
+    const senderId = disciplineKey(ctx.msg.senderIdentity ?? ctx.msg.senderId, ctx.msg.senderPhone);
     const now = Date.now();
     const armed = discipline.isArmed(chatId, senderId);
     const usedToday = discipline.usedToday(chatId, senderId, utcDay(now));

@@ -8,8 +8,12 @@ export type MessageKind = "text" | "audio" | "image" | "video" | "sticker" | "ot
 
 export interface IncomingMessage {
   chatId: string;
+  // Logical scope and verified aliases; chatId/senderId remain transport addresses.
+  chatIdentity?: string;
+  chatAliases?: string[];
   chatName: string;
   senderId: string;
+  senderIdentity?: string;
   senderName: string;
   senderPhone: string;
   messageId: string;
