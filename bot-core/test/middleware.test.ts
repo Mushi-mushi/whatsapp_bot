@@ -302,6 +302,15 @@ describe("siestaGuard", () => {
     }
   });
 
+  it("allows audio messages through for transcription during siesta", async () => {
+    const runtime = new RuntimeState();
+    runtime.siestaUntil = Date.now() + 60_000;
+    const { ctx } = makeCtx({ kind: "audio", text: null });
+    const { next, called } = nextSpy();
+    await siestaGuard(runtime)(ctx, next);
+    expect(called.value).toBe(true);
+  });
+
   it("allows all messages when siesta has ended", async () => {
     const runtime = new RuntimeState();
     runtime.siestaUntil = Date.now() - 1;

@@ -179,7 +179,7 @@ export const mediaPolicy: Middleware = async (ctx, next) => {
 // Siesta pauses ordinary bot commands but leaves the group pet available.
 export function siestaGuard(runtime: RuntimeState): Middleware {
   return async (ctx, next) => {
-    if (runtime.isSleeping()) {
+    if (runtime.isSleeping() && ctx.msg.kind !== "audio") {
       const command = extractCommandToken(ctx.text)?.split(/\s+/, 1)[0].toLowerCase();
       const isPetCommand = command != null &&
         Object.entries(ctx.config.commands).some(
