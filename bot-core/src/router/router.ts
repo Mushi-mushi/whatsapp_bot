@@ -1,6 +1,6 @@
 import type { MessageKind } from "../transport/types.js";
 import { Context } from "./context.js";
-import { extractCommandToken } from "./normalize.js";
+import { extractCommandToken, matchesCommand } from "./normalize.js";
 
 export type Middleware = (ctx: Context, next: () => Promise<void>) => Promise<void> | void;
 export type Handler = (ctx: Context) => Promise<void> | void;
@@ -111,8 +111,7 @@ export class Bot {
     // Command match on any embedded "bot.*" token (handles group "Name bot.x" prefixes).
     const token = extractCommandToken(ctx.text);
     if (token) {
-      const lower = token.toLowerCase();
-      const entry = this.commands.find((c) => lower.startsWith(c.trigger));
+      const entry = this.commands.find((c) => matchesCommand(token, c.trigger));
       if (entry) {
         ctx.commandTrigger = entry.trigger;
         ctx.args = token.slice(entry.trigger.length).trim();

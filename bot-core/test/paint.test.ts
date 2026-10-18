@@ -27,6 +27,14 @@ function context(prompt: string, photo: boolean) {
 describe("paint model routing", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it.each(["bot.painting a bird", "bot.paint.extra a bird"])("ignores caption command prefixes: %s", async (text) => {
+    const ctx = { ...context("a bird", false), text };
+    await paintImage(ctx as unknown as Context);
+    expect(ctx.downloadImage).not.toHaveBeenCalled();
+    expect(comfy.queuePrompt).not.toHaveBeenCalled();
+    expect(ctx.reply).not.toHaveBeenCalled();
+  });
+
   it.each(["retroanime", "model=retroanime"])("uses %s for text and both photo paths", async (selector) => {
     for (const mode of ["text", "reply", "caption"]) {
       vi.clearAllMocks();

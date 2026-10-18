@@ -71,7 +71,7 @@ export default function App() {
   const [draft, setDraft] = useState<BotConfig | null>(null);
   const [baseline, setBaseline] = useState<BotConfig | null>(null);
   const [saved, setSaved] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const dirty = draft !== null && baseline !== null && JSON.stringify(draft) !== JSON.stringify(baseline);
   const [revision, setRevision] = useState("");
   const [tab, setTab] = useState<Tab>("connection");
 
@@ -97,7 +97,6 @@ export default function App() {
       setBaseline(res.config);
       setRevision(res.revision);
       queryClient.setQueryData(["config"], res);
-      setDirty(false);
       setSaved(true);
     },
   });
@@ -123,7 +122,6 @@ export default function App() {
 
   const patch = (p: Partial<BotConfig>) => {
     setDraft((current) => current ? { ...current, ...p } : current);
-    setDirty(true);
     setSaved(false);
     saveMutation.reset();
   };
@@ -153,7 +151,6 @@ export default function App() {
                 setDraft(result.data.config);
                 setBaseline(result.data.config);
                 setRevision(result.data.revision);
-                setDirty(false);
                 saveMutation.reset();
               }
               void chatsQuery.refetch();
@@ -208,6 +205,11 @@ export default function App() {
 
       {tab === "discipline" && (
         <div className="grid min-w-0 gap-4">
+          {chatsQuery.isPending && <p role="status">Loading chats...</p>}
+          {chatsQuery.error && <div>
+            <p role="alert">Chat list could not be loaded: {chatsQuery.error.message}</p>
+            <Button variant="outline" disabled={chatsQuery.isFetching} onClick={() => void chatsQuery.refetch()}>Retry chat list</Button>
+          </div>}
           <DisciplineCard chats={chatsQuery.data?.chats ?? []} />
         </div>
       )}
@@ -231,6 +233,9 @@ export default function App() {
             chats={chatsQuery.data?.chats ?? []}
             onChange={(approvedSenders) => patch({ approvedSenders })}
             onRefreshChats={() => chatsQuery.refetch()}
+            loading={chatsQuery.isPending}
+            refreshing={chatsQuery.isFetching}
+            error={chatsQuery.error?.message}
           />
         </fieldset>
       )}

@@ -13,7 +13,11 @@ import { Context, type Services } from "../src/router/context.js";
 import { DEFAULT_CONFIG, type BotConfig } from "../src/config/schema.js";
 import { RuntimeState } from "../src/state/runtime.js";
 import { openDatabase } from "../src/state/db.js";
-import { SeenStore, SiestaDisciplineStore } from "../src/state/repos.js";
+import { SeenActivityStore, SeenStore, SiestaDisciplineStore, UserMemoryStore } from "../src/state/repos.js";
+import { Bot } from "../src/router/router.js";
+import { ProfileService } from "../src/handlers/profiles/service.js";
+import { UserProfileStore } from "../src/state/repos.js";
+import { BackgroundJobs } from "../src/router/jobs.js";
 import type { IncomingMessage, MessageKind } from "../src/transport/types.js";
 import type { WAMessage } from "@whiskeysockets/baileys";
 import type { Logger } from "pino";
@@ -56,6 +60,30 @@ const nextSpy = () => {
   };
   return { next, called };
 };
+
+describe("owner learning after deduplication", () => {
+  it("records one memory for duplicate owner events while still learning non-command chatter", async () => {
+    const db = openDatabase(":memory:");
+    const memory = new UserMemoryStore(db);
+    const jobs = new BackgroundJobs(() => {});
+    const profiler = new ProfileService(memory, new UserProfileStore(db), jobs, () => DEFAULT_CONFIG, silentLogger);
+    const bot = new Bot()
+      .use(approvedSenderGuard)
+      .use(dedupe(new SeenStore(db)))
+      .use(learnFromOwner(memory, profiler, new SeenActivityStore(db)))
+      .use(ignoreOwn(new RuntimeState()));
+    try {
+      for (let i = 0; i < 2; i++) {
+        await bot.handle(makeCtx({ fromMe: true, text: "ordinary owner chatter" }).ctx);
+      }
+      expect(memory.countSince("34696451685", 0)).toBe(1);
+    } finally {
+      await bot.stop();
+      await jobs.stop();
+      db.close();
+    }
+  });
+});
 
 describe("approvedSenderGuard", () => {
   it("allows an approved chat by ID even after a rename", async () => {

@@ -29,6 +29,24 @@ function makeCtx(text: string, kind: MessageKind = "text"): Context {
 }
 
 describe("Bot router dispatch", () => {
+  it.each(["bot.asking hello", "bot.ask.raw hello", "bot.ask-extra hello"])("does not match an unregistered command prefix: %s", async (text) => {
+    const bot = new Bot();
+    const hits: string[] = [];
+    bot.command("bot.ask", () => void hits.push("ask"));
+    bot.fallback(() => void hits.push("fallback"));
+    await bot.handle(makeCtx(text));
+    expect(hits).toEqual(["fallback"]);
+  });
+
+  it("matches command boundaries case-insensitively", async () => {
+    const bot = new Bot();
+    const args: string[] = [];
+    bot.command("bot.ask", (ctx) => void args.push(ctx.args));
+    await bot.handle(makeCtx("BOT.ASK"));
+    await bot.handle(makeCtx("BOT.ASK hello"));
+    expect(args).toEqual(["", "hello"]);
+  });
+
   it("prefers the longest matching trigger", async () => {
     const bot = new Bot();
     const hits: string[] = [];

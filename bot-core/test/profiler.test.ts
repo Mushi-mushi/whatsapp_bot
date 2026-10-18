@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import pino from "pino";
 import { openDatabase } from "../src/state/db.js";
 import { UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
-import { ProfileService } from "../src/handlers/profiles/service.js";
+import { ProfileQueueError, ProfileService } from "../src/handlers/profiles/service.js";
 import { DEFAULT_CONFIG, type BotConfig } from "../src/config/schema.js";
 
 const ollama = vi.hoisted(() => ({ chat: vi.fn() }));
@@ -13,14 +13,19 @@ vi.mock("../src/util/ollama.js", () => ({
 }));
 
 const silent = pino({ level: "silent" });
+const databases: ReturnType<typeof openDatabase>[] = [];
+afterEach(() => {
+  for (const db of databases.splice(0)) db.close();
+});
 
 function setup(cfg: BotConfig = DEFAULT_CONFIG) {
   const db = openDatabase(":memory:");
+  databases.push(db);
   const memory = new UserMemoryStore(db);
   const profiles = new UserProfileStore(db);
   const jobs = new BackgroundJobs(() => {});
   const service = new ProfileService(memory, profiles, jobs, () => cfg, silent);
-  return { memory, profiles, service };
+  return { memory, profiles, service, jobs };
 }
 
 beforeEach(() => {
@@ -32,6 +37,85 @@ beforeEach(() => {
 });
 
 describe("ProfileService.refresh", () => {
+  it("only advances the watermark through messages included in the input", async () => {
+    const { memory, profiles, service } = setup();
+    for (let i = 0; i < 5; i++) memory.record("k1", "Alice", null, `sample ${i}`, 50);
+    const sampledId = memory.latestId("k1");
+    let release!: (value: { ok: true; content: string }) => void;
+    ollama.chat.mockReset().mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+      .mockResolvedValueOnce({ ok: true, content: "short" });
+    const refresh = service.refresh("k1", "Alice");
+    memory.record("k1", "Alice", null, "arrived during generation", 50);
+    release({ ok: true, content: "deep" });
+    await refresh;
+    expect(profiles.get("k1")?.last_profiled_id).toBe(sampledId);
+    expect(memory.countSince("k1", sampledId)).toBe(1);
+  });
+
+  it.each(["deep", "short"])("does not resurrect a forgotten profile during the %s call", async (phase) => {
+    const { memory, profiles, service } = setup();
+    for (let i = 0; i < 5; i++) memory.record("k1", "Alice", null, `sample ${i}`, 50);
+    let release!: (value: { ok: true; content: string }) => void;
+    ollama.chat.mockReset();
+    if (phase === "short") ollama.chat.mockResolvedValueOnce({ ok: true, content: "deep" });
+    ollama.chat.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const refresh = service.refresh("k1", "Alice");
+    if (phase === "short") await vi.waitFor(() => expect(ollama.chat).toHaveBeenCalledTimes(2));
+    service.forget("k1");
+    release({ ok: true, content: "outdated" });
+    expect(await refresh).toBeNull();
+    expect(profiles.get("k1")).toBeUndefined();
+    expect(memory.countSince("k1", 0)).toBe(0);
+  });
+
+  it("queues refreshes behind accepted work and invalidates queued work when forgotten", async () => {
+    const { memory, profiles, service, jobs } = setup();
+    for (let i = 0; i < 5; i++) memory.record("k1", "Alice", null, `sample ${i}`, 50);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    jobs.submit("chat", () => gate);
+    const pending = service.requestRefresh("k1", "Alice");
+    await Promise.resolve();
+    expect(ollama.chat).not.toHaveBeenCalled();
+    service.forget("k1");
+    // Fresh chatter must not revive the refresh requested before the deletion.
+    for (let i = 0; i < 5; i++) memory.record("k1", "Alice", null, `new ${i}`, 50);
+    release();
+    expect(await pending).toBeNull();
+    await jobs.stop();
+    expect(ollama.chat).not.toHaveBeenCalled();
+    expect(profiles.get("k1")).toBeUndefined();
+  });
+
+  it("returns an explicit error when the refresh queue is stopped", async () => {
+    const { service, jobs } = setup();
+    await jobs.stop();
+    await expect(service.requestRefresh("k1", "Alice")).rejects.toBeInstanceOf(ProfileQueueError);
+  });
+
+  it("rejects duplicate requests and propagates execution failures without blocking the queue", async () => {
+    const { memory, service, jobs } = setup();
+    for (let i = 0; i < 5; i++) memory.record("k1", "Alice", null, `sample ${i}`, 50);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    jobs.submit("chat", () => gate);
+    const requested = service.requestRefresh("k1", "Alice");
+    await expect(service.requestRefresh("k1", "Alice")).rejects.toBeInstanceOf(ProfileQueueError);
+    ollama.chat.mockReset().mockRejectedValueOnce(new Error("generation failed"));
+    const failed = expect(requested).rejects.toThrow("generation failed");
+    release();
+    await failed;
+    await jobs.stop();
+  });
+
+  it("can learn again from new messages after forgetting", async () => {
+    const { memory, profiles, service } = setup();
+    service.forget("k1");
+    for (let i = 0; i < 5; i++) memory.record("k1", "Alice", null, `fresh sample ${i}`, 50);
+    expect(await service.refresh("k1", "Alice")).not.toBeNull();
+    expect(profiles.get("k1")?.deep).toContain("hiking");
+  });
+
   it("builds and stores a deep + short profile", async () => {
     const { memory, profiles, service } = setup();
     for (let i = 0; i < 5; i++) memory.record("k1", "Alice", null, `message about hiking ${i}`, 50);

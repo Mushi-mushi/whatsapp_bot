@@ -5,6 +5,17 @@ import { DEFAULT_CONFIG, type BotConfig } from "../src/config/schema.js";
 import { REDACTED, redactSecrets, restoreSecrets } from "../src/config/secrets.js";
 
 describe("ConfigStore.load", () => {
+  it.each(["{broken", JSON.stringify({ askEnabled: "invalid" })])("rejects invalid saved configuration without replacing it", (value) => {
+    const db = openDatabase(":memory:");
+    try {
+      db.prepare("INSERT INTO kv (key, value) VALUES ('config', ?)").run(value);
+      expect(() => new ConfigStore(db).load()).toThrow("Stored bot configuration is invalid");
+      expect(db.prepare("SELECT value FROM kv WHERE key = 'config'").get()).toEqual({ value });
+    } finally {
+      db.close();
+    }
+  });
+
   it("seeds DEFAULT_CONFIG on a fresh database", () => {
     const db = openDatabase(":memory:");
     const store = new ConfigStore(db);

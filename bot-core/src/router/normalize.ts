@@ -18,6 +18,12 @@ export function normalizeLooseName(name: string | null | undefined): string {
     .trim();
 }
 
+export function matchesCommand(token: string, trigger: string): boolean {
+  const lower = token.toLowerCase();
+  const command = trigger.toLowerCase();
+  return lower === command || lower.startsWith(`${command} `);
+}
+
 // Extract a bot command token (supports dotted subcommands like "bot.roast.neg")
 // from mixed text, ignoring a trailing "HH:MM" timestamp.
 export function extractCommandToken(text: string | null | undefined): string | null {

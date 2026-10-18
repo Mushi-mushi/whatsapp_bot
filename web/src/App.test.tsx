@@ -10,7 +10,6 @@ vi.mock("./lib/api", async (original) => ({
 }));
 vi.mock("@/components/StatusCard", () => ({ StatusCard: () => null }));
 vi.mock("@/lib/useStatusStream", () => ({ useStatusStream: () => null }));
-vi.mock("@/components/ApprovedSenders", () => ({ ApprovedSenders: () => null }));
 vi.mock("@/components/GeneralCard", () => ({
   GeneralCard: ({ config, onChange }: { config: BotConfig; onChange: (patch: Partial<BotConfig>) => void }) =>
     <input aria-label="Prefix" value={config.botReplyPrefix} onChange={(event) => onChange({ botReplyPrefix: event.target.value })} />,
@@ -43,6 +42,36 @@ async function openPrefix() {
 }
 
 describe("configuration editor", () => {
+  it("clears dirty state when edits are reverted", async () => {
+    mount();
+    const input = await openPrefix();
+    fireEvent.change(input, { target: { value: "changed" } });
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.change(input, { target: { value: "original" } });
+    await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull());
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows chat loading rather than an empty directory", async () => {
+    vi.mocked(api.getChats).mockReturnValue(new Promise(() => {}));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Access" }));
+    expect(screen.getByText("Loading chats...")).toBeTruthy();
+    expect(screen.queryByText("No chats synced yet.")).toBeNull();
+    expect((screen.getByRole("button", { name: "Refresh chat list" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows chat failures and allows retrying", async () => {
+    vi.mocked(api.getChats).mockRejectedValue(new Error("directory offline"));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Access" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("directory offline");
+    expect(screen.queryByText("No chats synced yet.")).toBeNull();
+    vi.mocked(api.getChats).mockResolvedValue({ chats: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh chat list" }));
+    expect(await screen.findByText("No chats synced yet.")).toBeTruthy();
+  });
+
   it("orders Connection and General first, with Pets after the existing tabs", async () => {
     mount();
     await screen.findByRole("button", { name: "Connection" });

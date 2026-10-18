@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   const userMemory = new UserMemoryStore(db);
   const userProfiles = new UserProfileStore(db);
   const discipline = new SiestaDisciplineStore(db);
-  const runtime = new RuntimeState();
+  const runtime = new RuntimeState((err, chatId) => logger.error({ err, chatId }, "trivia scheduled work failed"));
 
   // Cached config, refreshed when the API saves changes.
   let config: BotConfig = configStore.load();
@@ -113,10 +113,10 @@ async function main(): Promise<void> {
   const jobs = new BackgroundJobs((err) => logger.error({ err }, "background job failed"));
   const profiler = new ProfileService(userMemory, userProfiles, jobs, getConfig, logger);
   bot
-    .use(learnFromOwner(userMemory, profiler, seenActivity))
     .use(logging(logger))
     .use(approvedSenderGuard)
     .use(dedupe(seen))
+    .use(learnFromOwner(userMemory, profiler, seenActivity))
     .use(petObserver(pets))
     .use(ignoreOwn(runtime))
     .use(sleepGuard(discipline, logger))

@@ -60,6 +60,9 @@ dashboard's manual re-link action is still available when fresh pairing is neede
   to direct conversations, not every group containing that contact.
 - Configuration writes require the `ETag` from `GET /api/config` as an
   `If-Match` header. Stale writes return 412; missing revisions return 428.
+- Invalid persisted configuration now stops startup (or fails an API read)
+  instead of silently loading defaults. The original database value is preserved;
+  restore a valid configuration from your backup before restarting.
 - Database migration version 1 adds the durable outbox; version 2 adds group
   pets and picture-delivery metadata; version 3 adds per-chat siesta discipline
   (daily limits and forced-sleep state). All preserve existing configuration,
@@ -79,11 +82,29 @@ blindly replay failed jobs: a timeout may mean WhatsApp accepted the message
 but its acknowledgment was lost. Delivery is at-least-once, not exactly-once.
 
 Chat handlers execute in order per chat with bounded intake. Expensive AI/media
-jobs use a separate bounded queue with one job per chat and one running job
-globally. These interactive jobs and trivia/duel games are not durable across
+jobs use a separate bounded queue with up to three pending jobs per chat and one
+running job globally. Dashboard profile refreshes share that queue; a full queue
+or a duplicate pending profile refresh returns HTTP 503 so the owner can retry.
+These interactive jobs and trivia/duel games are not durable across
 restarts. Group pets, rescue progress and pet deliveries are durable.
 Shutdown stops intake, drains accepted work, disposes timers/streams and then
 closes SQLite. After 30 seconds the process exits; outbox leases recover later.
+
+`bot.trivia stop` cancels a session even between questions. Pending question
+preparation cannot revive a stopped session, and scheduled send failures are
+logged and end the affected session rather than becoming unhandled rejections.
+Command names match exactly: `bot.asking` does not execute `bot.ask`.
+
+Profile refreshes only mark the messages sampled for generation as processed.
+Forgetting a user invalidates queued and running refreshes before deleting their
+profile and stored messages. Later new messages may start learning again;
+forgetting is not a permanent opt-out.
+
+The dashboard reconnects its live status stream when the API token changes and
+uses `/api/status` snapshots while retrying interrupted streams. Reverting
+configuration edits to the saved values clears the unsaved-changes indicator.
+Chat-directory and profile errors are displayed with retry actions where
+applicable instead of appearing as empty results.
 
 Message bodies are no longer logged by incoming-message middleware. Analytics
 and delivered outbox rows still contain message text: apply a retention policy

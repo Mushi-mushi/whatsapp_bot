@@ -83,15 +83,24 @@ export interface Contact {
 
 const TOKEN_KEY = "apiToken";
 let authToken = localStorage.getItem(TOKEN_KEY) ?? "";
+const tokenListeners = new Set<() => void>();
+
+export function subscribeToken(listener: () => void): () => void {
+  tokenListeners.add(listener);
+  return () => { tokenListeners.delete(listener); };
+}
 
 export function getToken(): string {
   return authToken;
 }
 
 export function setToken(token: string): void {
-  authToken = token.trim();
-  if (authToken) localStorage.setItem(TOKEN_KEY, authToken);
+  const next = token.trim();
+  if (next) localStorage.setItem(TOKEN_KEY, next);
   else localStorage.removeItem(TOKEN_KEY);
+  if (next === authToken) return;
+  authToken = next;
+  for (const listener of tokenListeners) listener();
 }
 
 export function clearToken(): void {
@@ -232,7 +241,10 @@ export const api = {
     const result = await json<{ ok: boolean; config: BotConfig }>(response);
     return { config: result.config, revision: response.headers.get("etag") ?? "" };
   },
-  getStatus: () => fetch("/api/status", { headers: authHeaders() }).then(json<Status>),
+  getStatus: (signal?: AbortSignal) => fetch("/api/status", {
+    headers: authHeaders(),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
+  }).then(json<Status>),
   getChats: () => fetch("/api/chats", { headers: authHeaders() }).then(json<{ chats: ChatIdentity[] }>),
   getOllamaModels: () =>
     fetch("/api/ollama/models", { headers: authHeaders() }).then(

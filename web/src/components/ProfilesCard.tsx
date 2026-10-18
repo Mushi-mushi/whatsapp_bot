@@ -39,6 +39,7 @@ export function ProfilesCard() {
     mutationFn: (key: string) => api.deleteProfile(key),
     onSuccess: (_res, key) => {
       if (openKey === key) setOpenKey(null);
+      queryClient.removeQueries({ queryKey: ["profile", key], exact: true });
       void queryClient.invalidateQueries({ queryKey: ["profiles"] });
     },
   });
@@ -64,7 +65,7 @@ export function ProfilesCard() {
         {profilesQuery.isError && (
           <p role="alert" className="text-sm text-destructive">{profilesQuery.error.message}</p>
         )}
-        {!profilesQuery.isLoading && profiles.length === 0 && (
+        {!profilesQuery.isLoading && !profilesQuery.isError && profiles.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No profiles yet. The bot builds one once a person has chatted enough.
           </p>
@@ -77,6 +78,8 @@ export function ProfilesCard() {
             open={openKey === p.sender_key}
             deep={openKey === p.sender_key ? detailQuery.data?.deep : undefined}
             deepLoading={openKey === p.sender_key && detailQuery.isLoading}
+            deepError={openKey === p.sender_key ? detailQuery.error?.message : undefined}
+            onRetryDetail={() => void detailQuery.refetch()}
             onToggle={() => setOpenKey((k) => (k === p.sender_key ? null : p.sender_key))}
             onRefresh={() => refreshMutation.mutate(p.sender_key)}
             onDelete={() => {
@@ -91,6 +94,8 @@ export function ProfilesCard() {
                 ? refreshMutation.error.message
                 : undefined
             }
+            deleteError={deleteMutation.isError && deleteMutation.variables === p.sender_key
+              ? deleteMutation.error.message : undefined}
           />
         ))}
       </CardContent>
@@ -103,15 +108,18 @@ interface RowProps {
   open: boolean;
   deep?: string;
   deepLoading: boolean;
+  deepError?: string;
+  onRetryDetail: () => void;
   onToggle: () => void;
   onRefresh: () => void;
   onDelete: () => void;
   refreshing: boolean;
   deleting: boolean;
   refreshError?: string;
+  deleteError?: string;
 }
 
-function ProfileRow({ profile, open, deep, deepLoading, onToggle, onRefresh, onDelete, refreshing, deleting, refreshError }: RowProps) {
+function ProfileRow({ profile, open, deep, deepLoading, deepError, onRetryDetail, onToggle, onRefresh, onDelete, refreshing, deleting, refreshError, deleteError }: RowProps) {
   return (
     <div className="rounded-md border">
       <div className="flex items-start gap-2 p-3">
@@ -131,12 +139,18 @@ function ProfileRow({ profile, open, deep, deepLoading, onToggle, onRefresh, onD
                 <p className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading dossier…
                 </p>
+              ) : deepError ? (
+                <div>
+                  <p role="alert" className="text-sm text-destructive">{deepError}</p>
+                  <Button variant="outline" size="sm" onClick={onRetryDetail}>Retry dossier</Button>
+                </div>
               ) : (
                 <pre className="whitespace-pre-wrap break-words font-sans text-sm text-foreground">{deep}</pre>
               )}
             </div>
           )}
           {refreshError && <p role="alert" className="mt-1 text-xs text-destructive">{refreshError}</p>}
+          {deleteError && <p role="alert" className="mt-1 text-xs text-destructive">{deleteError}</p>}
         </div>
         <div className="flex shrink-0 gap-1">
           <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing} title="Rebuild profile now">

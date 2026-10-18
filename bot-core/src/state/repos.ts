@@ -31,8 +31,8 @@ export class ConfigStore {
     let config: BotConfig;
     try {
       config = ConfigSchema.parse(JSON.parse(row.value));
-    } catch {
-      return DEFAULT_CONFIG;
+    } catch (cause) {
+      throw new Error("Stored bot configuration is invalid. Restore a valid configuration from backup; the original value has been preserved.", { cause });
     }
     return this.backfillCommands(config);
   }

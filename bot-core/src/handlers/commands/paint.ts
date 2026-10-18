@@ -1,5 +1,5 @@
 import type { Handler } from "../../router/router.js";
-import { extractCommandToken } from "../../router/normalize.js";
+import { extractCommandToken, matchesCommand } from "../../router/normalize.js";
 import { parseGuidance, parseModel, parsePixelate, parseRestyle } from "./paint/parse.js";
 import {
   buildAmanesseWorkflow,
@@ -150,9 +150,8 @@ export const paintImage: Handler = async (ctx) => {
   const cfg = ctx.config;
   const token = extractCommandToken(ctx.text);
   if (!token) return;
-  const lower = token.toLowerCase();
   const trigger = Object.entries(cfg.commands).find(
-    ([t, name]) => name === "paint" && lower.startsWith(t),
+    ([t, name]) => name === "paint" && matchesCommand(token, t),
   )?.[0];
   if (!trigger) return;
 

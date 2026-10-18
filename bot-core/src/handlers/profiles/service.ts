@@ -8,10 +8,19 @@ import { ollamaChat } from "../../util/ollama.js";
 const MIN_MESSAGES = 4;
 const MAX_MSG_LEN = 220;
 
+export class ProfileQueueError extends Error {
+  constructor() {
+    super("Profile refresh queue is busy or shutting down. Try again shortly.");
+    this.name = "ProfileQueueError";
+  }
+}
+
 // Builds and maintains the two-tier user profiles. Refreshes run on the shared
 // background queue so the (slow, GPU-bound) LLM calls never block message handling
 // and never compete with paint/film for the GPU.
 export class ProfileService {
+  private generations = new Map<string, number>();
+
   constructor(
     private readonly memory: UserMemoryStore,
     private readonly profiles: UserProfileStore,
@@ -31,18 +40,35 @@ export class ProfileService {
     return this.profiles.get(senderKey) ?? null;
   }
 
+  forget(senderKey: string): void {
+    this.generations.set(senderKey, (this.generations.get(senderKey) ?? 0) + 1);
+    this.profiles.forget(senderKey);
+    this.memory.forget(senderKey);
+  }
+
+  requestRefresh(senderKey: string, name: string): Promise<UserProfile | null> {
+    const generation = this.generations.get(senderKey) ?? 0;
+    return new Promise((resolve, reject) => {
+      const accepted = this.jobs.submit(`profile:${senderKey}`, async () => {
+        try {
+          resolve(generation === (this.generations.get(senderKey) ?? 0)
+            ? await this.refresh(senderKey, name) : null);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      if (!accepted) reject(new ProfileQueueError());
+    });
+  }
+
   // Called after each recorded message: schedule a background rebuild if the
   // profile is missing/stale. Cheap and idempotent (deduped by sender key).
   maybeRefresh(senderKey: string, name: string): void {
     const cfg = this.getConfig();
     if (!cfg.userMemoryEnabled || !cfg.askEnabled) return;
     if (!this.isStale(senderKey, cfg)) return;
-    this.jobs.submit(`profile:${senderKey}`, async () => {
-      try {
-        await this.refresh(senderKey, name, cfg);
-      } catch (err) {
-        this.logger.warn({ err, senderKey }, "profile refresh failed");
-      }
+    void this.requestRefresh(senderKey, name).catch((err: unknown) => {
+      this.logger.warn({ err, senderKey }, "profile refresh was not completed");
     });
   }
 
@@ -59,6 +85,8 @@ export class ProfileService {
   // go on or the LLM was unreachable. Safe to call directly (e.g. bot.profile).
   async refresh(senderKey: string, name: string, cfg = this.getConfig()): Promise<UserProfile | null> {
     if (!cfg.userMemoryEnabled || !cfg.askEnabled) return null;
+    const generation = this.generations.get(senderKey) ?? 0;
+    const lastProfiledId = this.memory.latestId(senderKey);
     const recent = this.memory.recentFor(senderKey, cfg.profileSampleSize);
     if (recent.length < MIN_MESSAGES) return null;
 
@@ -88,7 +116,11 @@ export class ProfileService {
       ],
       { numPredict: 600, numCtx: 8192 },
     );
-    if (!deepRes.ok) return null;
+    if (generation !== (this.generations.get(senderKey) ?? 0)) return null;
+    if (!deepRes.ok) {
+      this.logger.warn({ senderKey, result: deepRes }, "profile generation failed");
+      return null;
+    }
     const deep = deepRes.content.trim();
 
     const shortRes = await ollamaChat(
@@ -105,6 +137,8 @@ export class ProfileService {
       ],
       { numPredict: 300 },
     );
+    if (generation !== (this.generations.get(senderKey) ?? 0)) return null;
+    if (!shortRes.ok) this.logger.warn({ senderKey, result: shortRes }, "profile briefing failed; using dossier excerpt");
     const short = shortRes.ok
       ? shortRes.content.trim().slice(0, cfg.profileShortMaxChars)
       : deep.slice(0, cfg.profileShortMaxChars);
@@ -114,7 +148,7 @@ export class ProfileService {
       name,
       deep,
       short,
-      last_profiled_id: this.memory.latestId(senderKey),
+      last_profiled_id: lastProfiledId,
     });
     this.logger.info({ senderKey, name }, "profile refreshed");
     return this.profiles.get(senderKey) ?? null;

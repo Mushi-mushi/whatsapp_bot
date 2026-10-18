@@ -19,9 +19,12 @@ interface Props {
   chats: ChatIdentity[];
   onChange: (senders: string[]) => void;
   onRefreshChats: () => void;
+  loading?: boolean;
+  refreshing?: boolean;
+  error?: string;
 }
 
-export function ApprovedSenders({ senders, chats, onChange, onRefreshChats }: Props) {
+export function ApprovedSenders({ senders, chats, onChange, onRefreshChats, loading, refreshing, error }: Props) {
   const [search, setSearch] = useState("");
 
   const approvedNorms = useMemo(() => new Set(senders.map(normalize)), [senders]);
@@ -93,16 +96,21 @@ export function ApprovedSenders({ senders, chats, onChange, onRefreshChats }: Pr
               size="icon"
               onClick={onRefreshChats}
               title="Refresh chat list"
+              aria-label="Refresh chat list"
+              disabled={refreshing}
               className="shrink-0"
             >
-              <RefreshCw className="h-4 w-4" />
+              <RefreshCw className={`h-4 w-4${refreshing ? " animate-spin" : ""}`} />
             </Button>
           </div>
 
           <div className="max-h-56 overflow-auto p-1">
-            {shown.length === 0 ? (
+            {error && <p role="alert" className="px-3 py-2 text-sm text-destructive">Chat list could not be loaded: {error}</p>}
+            {loading ? (
+              <p role="status" className="px-3 py-6 text-center text-sm text-muted-foreground">Loading chats...</p>
+            ) : shown.length === 0 ? (
               <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                {available.length === 0 ? "No chats synced yet." : "No matches."}
+                {error ? "Use Refresh chat list to try again." : chats.length === 0 ? "No chats synced yet." : available.length === 0 ? "All synced chats are already approved." : "No matches."}
               </div>
             ) : (
               shown.map((c) => (

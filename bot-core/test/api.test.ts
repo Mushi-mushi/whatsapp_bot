@@ -4,7 +4,7 @@ import { createApi, type ApiDeps } from "../src/api/server.js";
 import { openDatabase } from "../src/state/db.js";
 import { ConfigStore, ContactsStore, KnownChatsStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
-import { ProfileService } from "../src/handlers/profiles/service.js";
+import { ProfileQueueError, ProfileService } from "../src/handlers/profiles/service.js";
 import { PetService } from "../src/pets/service.js";
 import { PetStore } from "../src/pets/store.js";
 import { DEFAULT_PET_SETTINGS } from "../src/pets/settings.js";
@@ -22,7 +22,8 @@ async function setup(apiToken: string | undefined = "test-token") {
   const userProfiles = new UserProfileStore(db);
   const configStore = new ConfigStore(db);
   const discipline = new SiestaDisciplineStore(db);
-  const profiler = new ProfileService(userMemory, userProfiles, new BackgroundJobs(() => {}), () => configStore.load(), logger);
+  const jobs = new BackgroundJobs(() => {});
+  const profiler = new ProfileService(userMemory, userProfiles, jobs, () => configStore.load(), logger);
   const deps: ApiDeps = {
     apiToken,
     configStore, knownChats: new KnownChatsStore(db),
@@ -41,9 +42,49 @@ async function setup(apiToken: string | undefined = "test-token") {
     } as ApiDeps["transport"],
   };
   const app = await createApi(deps);
-  cleanup.push(async () => { await app.close(); db.close(); });
-  return { app, deps, listeners, runtime, discipline };
+  cleanup.push(async () => { await jobs.stop(); runtime.dispose(); await app.close(); db.close(); });
+  return { app, deps, listeners, runtime, discipline, jobs };
 }
+
+describe("profile lifecycle controls", () => {
+  const headers = { authorization: "Bearer test-token" };
+
+  it("queues a dashboard refresh behind other inference work", async () => {
+    const { app, deps, jobs } = await setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    jobs.submit("chat", () => gate);
+    const refresh = vi.spyOn(deps.profiler, "refresh").mockResolvedValue(null);
+    const requested = vi.spyOn(deps.profiler, "requestRefresh");
+    const response = app.inject({ method: "POST", url: "/api/profiles/alice/refresh", headers });
+    const pending = Promise.resolve(response);
+    await vi.waitFor(() => expect(requested).toHaveBeenCalledOnce());
+    expect(refresh).not.toHaveBeenCalled();
+    release();
+    expect((await pending).statusCode).toBe(422);
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("reports a busy queue as a retryable failure", async () => {
+    const { app, deps } = await setup();
+    vi.spyOn(deps.profiler, "requestRefresh").mockRejectedValue(new ProfileQueueError());
+    const response = await app.inject({ method: "POST", url: "/api/profiles/alice/refresh", headers });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error).toContain("Try again");
+  });
+
+  it("delegates forgetting to the service that invalidates outstanding work", async () => {
+    const { app, deps } = await setup();
+    deps.userMemory.record("alice", "Alice", null, "a remembered message", 50);
+    deps.userProfiles.upsert({ sender_key: "alice", name: "Alice", deep: "deep", short: "short", last_profiled_id: 0 });
+    const forget = vi.spyOn(deps.profiler, "forget");
+    const response = await app.inject({ method: "DELETE", url: "/api/profiles/alice", headers });
+    expect(response.statusCode).toBe(200);
+    expect(forget).toHaveBeenCalledWith("alice");
+    expect(deps.userMemory.countSince("alice", 0)).toBe(0);
+    expect(deps.userProfiles.get("alice")).toBeUndefined();
+  });
+});
 
 describe("API authentication", () => {
   it("fails closed without a token", async () => {

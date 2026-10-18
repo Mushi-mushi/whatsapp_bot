@@ -1,23 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getToken, type Status } from "./api";
+import { api, ApiError, getToken, subscribeToken, type Status } from "./api";
 
-// Live connection status via Server-Sent Events, falling back to the initial value.
+// Retry streaming after interruptions, using a status snapshot while reconnecting.
 export function useStatusStream(): Status | null {
   const [status, setStatus] = useState<Status | null>(null);
   const queryClient = useQueryClient();
+  const token = useSyncExternalStore(subscribeToken, getToken);
 
   useEffect(() => {
     const controller = new AbortController();
+    setStatus(null);
     let retry: ReturnType<typeof setTimeout> | undefined;
     const connect = async () => {
       try {
-        const token = getToken();
         const response = await fetch("/api/events", {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           signal: controller.signal,
         });
+        if (controller.signal.aborted) return;
         if (response.status === 401) {
+          setStatus(null);
           void queryClient.invalidateQueries({ queryKey: ["config"] });
           return;
         }
@@ -34,7 +37,7 @@ export function useStatusStream(): Status | null {
             while ((end = pending.indexOf("\n\n")) >= 0) {
               const frame = pending.slice(0, end);
               pending = pending.slice(end + 2);
-              if (frame.startsWith("data: ")) setStatus(JSON.parse(frame.slice(6)) as Status);
+              if (!controller.signal.aborted && frame.startsWith("data: ")) setStatus(JSON.parse(frame.slice(6)) as Status);
             }
           }
         } finally {
@@ -42,7 +45,19 @@ export function useStatusStream(): Status | null {
           reader.releaseLock();
         }
       } catch {
-        if (!controller.signal.aborted) setStatus(null);
+        if (controller.signal.aborted) return;
+      }
+      if (controller.signal.aborted) return;
+      try {
+        const snapshot = await api.getStatus(controller.signal);
+        if (!controller.signal.aborted) setStatus(snapshot);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setStatus(null);
+        if (error instanceof ApiError && error.status === 401) {
+          void queryClient.invalidateQueries({ queryKey: ["config"] });
+          return;
+        }
       }
       if (!controller.signal.aborted) retry = setTimeout(() => void connect(), 3000);
     };
@@ -51,7 +66,7 @@ export function useStatusStream(): Status | null {
       controller.abort();
       clearTimeout(retry);
     };
-  }, [queryClient]);
+  }, [queryClient, token]);
 
   return status;
 }

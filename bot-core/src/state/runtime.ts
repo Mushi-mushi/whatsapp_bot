@@ -65,6 +65,61 @@ export interface TriviaDuel {
 }
 
 export class RuntimeState {
+  private triviaTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
+  private disposed = false;
+
+  constructor(private readonly onError: (error: unknown, chatId: string) => void =
+    (error, chatId) => console.error("Trivia scheduled work failed", { error, chatId })) {}
+
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  scheduleTrivia(chatId: string, run: () => void | Promise<unknown>, delay: number): ReturnType<typeof setTimeout> {
+    if (this.disposed) throw new Error("Runtime is shutting down");
+    const timers = this.triviaTimers.get(chatId) ?? new Set<ReturnType<typeof setTimeout>>();
+    const session = this.triviaSessions.get(chatId);
+    const duel = this.triviaDuels.get(chatId);
+    this.triviaTimers.set(chatId, timers);
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      if (this.triviaTimers.get(chatId) === timers && timers.size === 0) this.triviaTimers.delete(chatId);
+      if (this.disposed) return;
+      void Promise.resolve().then(() => {
+        if (!this.disposed) return run();
+      }).catch((error: unknown) => {
+        if (this.triviaSessions.get(chatId) === session && this.triviaDuels.get(chatId) === duel) {
+          this.cancelTrivia(chatId);
+        }
+        this.onError(error, chatId);
+      });
+    }, delay);
+    timers.add(timer);
+    return timer;
+  }
+
+  cancelTriviaTimer(chatId: string, timer: ReturnType<typeof setTimeout> | undefined): void {
+    clearTimeout(timer);
+    if (timer === undefined) return;
+    const timers = this.triviaTimers.get(chatId);
+    timers?.delete(timer);
+    if (timers?.size === 0) this.triviaTimers.delete(chatId);
+  }
+
+  cancelTrivia(chatId: string): void {
+    for (const timer of this.triviaTimers.get(chatId) ?? []) clearTimeout(timer);
+    this.triviaTimers.delete(chatId);
+    const game = this.triviaGames.get(chatId);
+    clearTimeout(game?.timer);
+    clearTimeout(game?.closeTimer);
+    const duel = this.triviaDuels.get(chatId);
+    clearTimeout(duel?.lobbyTimer);
+    for (const timer of duel?.countdownTimers ?? []) clearTimeout(timer);
+    this.triviaGames.delete(chatId);
+    this.triviaSessions.delete(chatId);
+    this.triviaDuels.delete(chatId);
+  }
+
   // Global siesta: while set and in the future, the bot ignores messages.
   siestaUntil: number | null = null;
 
@@ -86,20 +141,14 @@ export class RuntimeState {
   triviaDuels = new Map<string, TriviaDuel>();
 
   dispose(): void {
+    this.disposed = true;
+    for (const chatId of new Set([
+      ...this.triviaTimers.keys(), ...this.triviaGames.keys(),
+      ...this.triviaSessions.keys(), ...this.triviaDuels.keys(),
+    ])) this.cancelTrivia(chatId);
     for (const timer of this.tortureTimers.values()) clearInterval(timer);
-    for (const game of this.triviaGames.values()) {
-      clearTimeout(game.timer);
-      clearTimeout(game.closeTimer);
-    }
-    for (const duel of this.triviaDuels.values()) {
-      clearTimeout(duel.lobbyTimer);
-      for (const t of duel.countdownTimers) clearTimeout(t);
-    }
     this.tortureTimers.clear();
     this.tortureCooldownUntil.clear();
-    this.triviaGames.clear();
-    this.triviaSessions.clear();
-    this.triviaDuels.clear();
     this.insultGames.clear();
   }
 

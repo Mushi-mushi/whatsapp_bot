@@ -7,6 +7,7 @@ import { redactSecrets, restoreSecrets } from "../config/secrets.js";
 import type { ConfigStore, ContactsStore, KnownChatsStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
 import { disciplineKey } from "../state/repos.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
+import { ProfileQueueError } from "../handlers/profiles/service.js";
 import type { Transport } from "../transport/types.js";
 import { ollamaListModels } from "../util/ollama.js";
 import { z } from "zod";
@@ -52,6 +53,9 @@ function extractToken(req: FastifyRequest): string | null {
 export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   if (!deps.apiToken && !deps.allowInsecureApi) throw new Error("API_TOKEN is required");
   const app = Fastify({ logger: false });
+  app.addHook("onError", async (req, _reply, error) => {
+    deps.logger.error({ err: error, method: req.method, url: req.routeOptions.url }, "API request failed");
+  });
   const streams = new Set<() => void>();
   app.addHook("preClose", async () => { for (const close of streams) close(); });
 
@@ -298,22 +302,22 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     const key = req.params.key;
     const name = deps.userProfiles.get(key)?.name ?? deps.userMemory.recentFor(key, 1)[0]?.name ?? key;
     try {
-      const profile = await deps.profiler.refresh(key, name);
+      const profile = await deps.profiler.requestRefresh(key, name);
       if (!profile) {
         reply.code(422);
         return { ok: false, error: "Not enough messages to build a profile yet." };
       }
       return { ok: true, profile: { ...profile, messageCount: deps.userMemory.countSince(key, 0) } };
     } catch (err) {
-      reply.code(502);
-      return { ok: false, error: String(err) };
+      deps.logger.warn({ err, key }, "requested profile refresh failed");
+      reply.code(err instanceof ProfileQueueError ? 503 : 502);
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
   // Forget a user: drop their profile and recorded messages.
   app.delete<{ Params: { key: string } }>("/api/profiles/:key", async (req) => {
-    deps.userProfiles.forget(req.params.key);
-    deps.userMemory.forget(req.params.key);
+    deps.profiler.forget(req.params.key);
     return { ok: true };
   });
 
