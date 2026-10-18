@@ -175,6 +175,7 @@ async function main(): Promise<void> {
       jobs,
       outbox,
       backups,
+      reminders,
       knownChats,
       triviaScores,
       userMemory,

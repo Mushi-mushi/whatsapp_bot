@@ -199,6 +199,38 @@ This does not purge existing backups or WhatsApp authentication. SQLite may
 reuse freed pages without shrinking the file; cleanup is not secure erasure.
 Protect backups separately and retain them according to your own policy.
 
+## Reminder Management
+
+The authenticated dashboard's **Reminders** tab lists reminders still in the
+scheduler, with chat name and stable ID, recipient (if named), message and due
+time in the browser's local timezone. It refreshes every 10 seconds while open.
+Overdue reminders may briefly remain scheduled until the delivery worker's next
+pass. Create reminders in WhatsApp using `bot.remind`; dashboard creation and
+editing are intentionally not provided.
+
+`GET /api/reminders?page=1` returns `{ reminders, total, page, pageSize, sampledAt }`
+with 50 rows per page, ordered by due time then ID. Pages are positive whole
+numbers up to 1000000. Chat names come from the current chat directory and can be
+null; IDs remain visible to distinguish duplicate/unknown names. Listing never
+enqueues, claims or delivers a reminder. Pages reflect a changing scheduler, not
+a frozen history: delivery handoffs can shift rows between pages.
+
+After confirmation, `DELETE /api/reminders/:id` cancels only the scheduled row
+and returns `{ ok: true, cancelledId }`. The atomic scheduler-to-outbox handoff
+and cancellation cannot both win: if the row has already left the scheduler (or
+was cancelled elsewhere), the API returns **409**, not a success. Queued,
+sending, sent and failed outbox records are never cancelled by this endpoint.
+Invalid IDs/pages return 400; all reads and cancellations use existing API
+authentication and send `Cache-Control: no-store`. The reminder list contains
+private message text and identities; only expose the dashboard to trusted users.
+
+Cancellation takes effect immediately, independently of configuration Save.
+Errors are explicit; stale lists are marked and stale cancellation controls are
+disabled until a successful refresh. A confirmed cancellation is removed locally
+even if the subsequent refresh fails. Delivery aggregate counts are available in
+Operations; individual reminder delivery history is not provided.
+No schema migration or changes to existing reminder creation/delivery are needed.
+
 ## Operations Overview
 
 The dashboard's **Operations** tab polls `GET /api/operations` every five seconds

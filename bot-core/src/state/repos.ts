@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.js";
 import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
-import type { Contact } from "../../../shared/api.js";
+import type { Contact, RemindersResponse, ScheduledReminder } from "../../../shared/api.js";
 import { memoryChat } from "./identity.js";
 
 const CONFIG_KEY = "config";
@@ -468,8 +468,20 @@ export class RemindersStore {
       .all(now) as Reminder[];
   }
 
-  remove(id: number): void {
-    this.db.prepare("DELETE FROM reminders WHERE id = ?").run(id);
+  list(page: number, now = Date.now()): RemindersResponse {
+    const pageSize = 50;
+    return this.db.transaction(() => {
+      const { total } = this.db.prepare("SELECT COUNT(*) AS total FROM reminders").get() as { total: number };
+      const reminders = this.db.prepare(`SELECT r.id, r.chat_id AS chatId, c.name AS chatName,
+        r.target_name AS targetName, r.text, r.due_ts AS dueAt
+        FROM reminders r LEFT JOIN chat_directory c ON c.id = r.chat_id
+        ORDER BY r.due_ts, r.id LIMIT ? OFFSET ?`).all(pageSize, (page - 1) * pageSize) as ScheduledReminder[];
+      return { reminders, total, page, pageSize, sampledAt: now };
+    })();
+  }
+
+  remove(id: number): boolean {
+    return this.db.prepare("DELETE FROM reminders WHERE id = ?").run(id).changes === 1;
   }
 }
 

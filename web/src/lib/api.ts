@@ -5,12 +5,14 @@ import type {
   ChatsResponse, ContactsResponse, DisciplineResponse, DisciplineMutationResponse,
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
   OperationsResponse, ServiceDiagnosticsResponse,
+  RemindersResponse, ReminderCancelResponse,
 } from "../../../shared/api.js";
 export type {
   BotConfig, ConfigSnapshot, Status, ConnectionState, ConnectionHealth,
   ChatIdentity, SiestaStatus, DisciplinePlayer, Contact, ProfileSummary,
   ProfileDetail, PetSettings, GroupPet, PetGroup, PetsResponse, PetUpdate, PetRequestChoice,
   OperationsResponse, ServiceDiagnosticsResponse,
+  ScheduledReminder, RemindersResponse,
 } from "../../../shared/api.js";
 
 const TOKEN_KEY = "apiToken";
@@ -62,6 +64,10 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  getReminders: (page = 1) =>
+    fetch(`/api/reminders?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<RemindersResponse>),
+  cancelReminder: (id: number) =>
+    fetch(`/api/reminders/${id}`, { method: "DELETE", headers: authHeaders() }).then(json<ReminderCancelResponse>),
   getServiceDiagnostics: () =>
     fetch("/api/operations/services", { headers: authHeaders(), cache: "no-store" }).then(json<ServiceDiagnosticsResponse>),
   getOperations: () =>

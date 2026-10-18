@@ -39,6 +39,21 @@ afterEach(() => {
 });
 
 describe("shared API wire contracts", () => {
+  it("lists reminder pages with authentication and no caching and cancels only by ID", async () => {
+    const data = { reminders: [], total: 0, page: 2, pageSize: 50, sampledAt: 100 };
+    fetcher.mockResolvedValue(Response.json(data));
+    expect(await api.getReminders(2)).toEqual(data);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/reminders?page=2");
+    expect(fetcher.mock.calls[0][1]?.cache).toBe("no-store");
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).has("Authorization")).toBe(true);
+    fetcher.mockResolvedValue(Response.json({ ok: true, cancelledId: 42 }));
+    expect(await api.cancelReminder(42)).toEqual({ ok: true, cancelledId: 42 });
+    expect(fetcher.mock.calls[1][0]).toBe("/api/reminders/42");
+    expect(fetcher.mock.calls[1][1]?.method).toBe("DELETE");
+    expect(new Headers(fetcher.mock.calls[1][1]?.headers).has("Authorization")).toBe(true);
+    fetcher.mockResolvedValue(Response.json({ error: "Reminder is no longer scheduled" }, { status: 409 }));
+    await expect(api.cancelReminder(42)).rejects.toMatchObject({ status: 409, message: "Reminder is no longer scheduled" });
+  });
   it("fetches service diagnostics with authentication and no browser caching", async () => {
     const result = { sampledAt: 100, cacheSeconds: 30, services: [] };
     fetcher.mockResolvedValue(Response.json(result));

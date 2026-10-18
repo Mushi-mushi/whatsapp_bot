@@ -14,13 +14,14 @@ import { ProfilesCard } from "@/components/ProfilesCard";
 import { PetsCard } from "@/components/PetsCard";
 import { DisciplineCard } from "@/components/DisciplineCard";
 import { OperationsCard } from "@/components/OperationsCard";
+import { RemindersCard } from "@/components/RemindersCard";
 import { FieldValidationProvider, useFieldErrors } from "@/components/fields";
 import { LoadingState, QueryError } from "@/components/QueryFeedback";
-import { Bot, Brain, Check, Image, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles } from "lucide-react";
+import { AlarmClock, Bot, Brain, Check, Image, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles } from "lucide-react";
 
 const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;
 
-type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations";
+type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations" | "reminders";
 
 // Which config fields live on which tab — drives the per-tab "unsaved" dot.
 const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
@@ -28,6 +29,7 @@ const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
   pets: [],
   discipline: [],
   operations: [],
+  reminders: [],
   general: [
     "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia", "deleteInstagramPosts",
     "instagramDeleteSenders", "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl",
@@ -226,10 +228,14 @@ function Dashboard() {
         <TabButton active={tab === "operations"} onClick={() => selectTab("operations")}>
           <SlidersHorizontal className="h-4 w-4" /> Operations
         </TabButton>
+        <TabButton active={tab === "reminders"} onClick={() => selectTab("reminders")}>
+          <AlarmClock className="h-4 w-4" /> Reminders
+        </TabButton>
       </nav>
 
       {tab === "pets" && <PetsCard />}
       {tab === "operations" && <OperationsCard />}
+      {tab === "reminders" && <RemindersCard />}
 
       {tab === "discipline" && (
         <div className="grid min-w-0 gap-4">

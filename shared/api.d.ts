@@ -70,6 +70,28 @@ export interface SiestaStatus {
   until: number | null;
 }
 
+export interface ScheduledReminder {
+  id: number;
+  chatId: string;
+  chatName: string | null;
+  targetName: string | null;
+  text: string;
+  dueAt: number;
+}
+
+export interface RemindersResponse {
+  reminders: ScheduledReminder[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sampledAt: number;
+}
+
+export interface ReminderCancelResponse {
+  ok: true;
+  cancelledId: number;
+}
+
 export interface DisciplinePlayer {
   chatId: string;
   chatName: string | null;

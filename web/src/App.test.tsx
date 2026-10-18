@@ -7,7 +7,7 @@ import { config } from "@/test/fixtures";
 
 vi.mock("./lib/api", async (original) => ({
   ...await original<typeof import("./lib/api")>(),
-  api: { getConfig: vi.fn(), getChats: vi.fn(), saveConfig: vi.fn(), getOperations: vi.fn() },
+  api: { getConfig: vi.fn(), getChats: vi.fn(), saveConfig: vi.fn(), getOperations: vi.fn(), getReminders: vi.fn(), cancelReminder: vi.fn() },
 }));
 vi.mock("@/components/StatusCard", () => ({ StatusCard: () => null }));
 vi.mock("@/components/ServiceDiagnostics", () => ({ ServiceDiagnostics: () => null }));
@@ -111,7 +111,7 @@ describe("configuration editor", () => {
     mount();
     await screen.findByRole("button", { name: "Connection" });
     expect(within(screen.getByRole("navigation")).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
-      "Connection", "General", "Access", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep", "Operations",
+      "Connection", "General", "Access", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep", "Operations", "Reminders",
     ]);
     expect(screen.queryByLabelText("Prefix")).toBeNull();
   });
@@ -232,5 +232,17 @@ describe("configuration editor", () => {
     expect(await screen.findByRole("heading", { name: "Operations overview" })).toBeTruthy();
     expect(api.getOperations).toHaveBeenCalledOnce();
     expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("opens reminders independently without dirtying or saving configuration", async () => {
+    vi.mocked(api.getReminders).mockResolvedValue({ reminders: [], total: 0, page: 1, pageSize: 50, sampledAt: 1000 });
+    mount();
+    await screen.findByRole("button", { name: "Reminders" });
+    expect(api.getReminders).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reminders" }));
+    expect(await screen.findByText("No scheduled reminders.")).toBeTruthy();
+    expect(api.getReminders).toHaveBeenCalledWith(1);
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(api.saveConfig).not.toHaveBeenCalled();
   });
 });

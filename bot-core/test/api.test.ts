@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import { createApi, type ApiDeps } from "../src/api/server.js";
 import { openDatabase } from "../src/state/db.js";
-import { ConfigStore, ContactsStore, KnownChatsStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
+import { ConfigStore, ContactsStore, KnownChatsStore, RemindersStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
 import { ProfileQueueError, ProfileService } from "../src/handlers/profiles/service.js";
 import { PetService } from "../src/pets/service.js";
@@ -12,10 +12,11 @@ import { RuntimeState } from "../src/state/runtime.js";
 import { DEFAULT_CONFIG } from "../src/config/schema.js";
 import { REDACTED } from "../src/config/secrets.js";
 import type { BotConfig, ConfigSaveResponse, ProfileDetail, ProfilesResponse } from "../../shared/api.js";
-import type { OperationsResponse } from "../../shared/api.js";
+import type { OperationsResponse, RemindersResponse, ReminderCancelResponse } from "../../shared/api.js";
 import { memoryKey } from "../src/state/identity.js";
 import { OutboxStore } from "../src/state/outbox.js";
 import { BackupWorker } from "../src/state/backups.js";
+import { DeliveryWorker } from "../src/state/deliveries.js";
 
 const ALICE = memoryKey("group@g.us", "alice");
 const ALICE_PATH = `/api/profiles/${encodeURIComponent(ALICE)}`;
@@ -37,6 +38,7 @@ async function setup(apiToken: string | undefined = "test-token") {
   const deps: ApiDeps = {
     apiToken,
     jobs, outbox: new OutboxStore(db),
+    reminders: new RemindersStore(db),
     backups: new BackupWorker(db, { retentionDays: 14 }, logger),
     configStore, knownChats: new KnownChatsStore(db),
     triviaScores: new TriviaScoreStore(db), userMemory, userProfiles, profiler, logger,
@@ -57,6 +59,119 @@ async function setup(apiToken: string | undefined = "test-token") {
   cleanup.push(async () => { await jobs.stop(); runtime.dispose(); await app.close(); db.close(); });
   return { app, deps, listeners, runtime, discipline, jobs, db };
 }
+
+describe("scheduled reminders API", () => {
+  const headers = { authorization: "Bearer test-token" };
+
+  it("requires authentication for listing and cancellation and leaves data unchanged", async () => {
+    const { app, deps } = await setup();
+    deps.reminders.add("group@g.us", "Alice", "private reminder", 1000);
+    expect((await app.inject({ url: "/api/reminders" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "DELETE", url: "/api/reminders/1" })).statusCode).toBe(401);
+    expect(deps.reminders.list(1).total).toBe(1);
+  });
+
+  it("lists overdue and future scheduled reminders by due time and ID, with current chat names", async () => {
+    const { app, deps, db } = await setup();
+    deps.reminders.add("unknown@g.us", null, "later", Date.now() + 60000);
+    deps.reminders.add("first@g.us", "Alice", "<script>plain text</script>", 1);
+    deps.reminders.add("second@g.us", "Bob", "same due time", 1);
+    db.prepare("INSERT INTO chat_directory VALUES (?,?,?)").run("first@g.us", "Shared name", 1);
+    db.prepare("INSERT INTO chat_directory VALUES (?,?,?)").run("second@g.us", "Shared name", 1);
+    const response = await app.inject({ url: "/api/reminders", headers });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    const data = response.json<RemindersResponse>();
+    expect(data).toMatchObject({ total: 3, page: 1, pageSize: 50, sampledAt: expect.any(Number) });
+    expect(data.reminders.map((r) => r.id)).toEqual([2, 3, 1]);
+    expect(data.reminders[0]).toEqual({
+      id: 2, chatId: "first@g.us", chatName: "Shared name", targetName: "Alice", text: "<script>plain text</script>", dueAt: 1,
+    });
+    expect(data.reminders[2]).toMatchObject({ chatName: null, targetName: null });
+    expect(deps.outbox.snapshot(Date.now()).counts.pending).toBe(0);
+    db.prepare("UPDATE chat_directory SET name='Renamed' WHERE id='first@g.us'").run();
+    expect((await app.inject({ url: "/api/reminders", headers })).json<RemindersResponse>().reminders[0].chatName).toBe("Renamed");
+  });
+
+  it("returns bounded pages, totals and an honest empty result without claiming reminders", async () => {
+    const { app, deps } = await setup();
+    const empty = (await app.inject({ url: "/api/reminders", headers })).json<RemindersResponse>();
+    expect(empty).toMatchObject({ reminders: [], total: 0, pageSize: 50 });
+    for (let i = 0; i < 51; i++) deps.reminders.add("chat", null, `reminder ${i}`, 0);
+    const first = (await app.inject({ url: "/api/reminders", headers })).json<RemindersResponse>();
+    const second = (await app.inject({ url: "/api/reminders?page=2", headers })).json<RemindersResponse>();
+    const pastEnd = (await app.inject({ url: "/api/reminders?page=3", headers })).json<RemindersResponse>();
+    expect(first.reminders).toHaveLength(50);
+    expect(first.total).toBe(51);
+    expect(second.reminders.map((r) => r.id)).toEqual([51]);
+    expect(second.page).toBe(2);
+    expect(pastEnd.reminders).toEqual([]);
+    expect(pastEnd.total).toBe(51);
+    expect(deps.reminders.due(0)).toHaveLength(51);
+  });
+
+  it.each(["0", "-1", "1.5", "abc", "1000001", "", "1e2"])("rejects invalid page %s", async (page) => {
+    const { app } = await setup();
+    expect((await app.inject({ url: `/api/reminders?page=${page}`, headers })).statusCode).toBe(400);
+  });
+
+  it.each(["0", "-1", "1.5", "abc", "9007199254740992", "1e2"])("rejects invalid reminder ID %s without deleting records", async (id) => {
+    const { app, deps } = await setup();
+    deps.reminders.add("chat", null, "keep", 0);
+    const response = await app.inject({ method: "DELETE", url: `/api/reminders/${id}`, headers });
+    expect(response.statusCode).toBe(400);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(deps.reminders.list(1).total).toBe(1);
+  });
+
+  it("cancels only the requested scheduled reminder and does not later enqueue it", async () => {
+    const { app, deps } = await setup();
+    deps.reminders.add("chat", "Alice", "cancel me", 0);
+    deps.reminders.add("chat", "Alice", "keep me", 0);
+    const response = await app.inject({ method: "DELETE", url: "/api/reminders/1", headers });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<ReminderCancelResponse>()).toEqual({ ok: true, cancelledId: 1 });
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(deps.reminders.list(1).reminders.map((r) => r.id)).toEqual([2]);
+    expect((await app.inject({ method: "DELETE", url: "/api/reminders/1", headers })).statusCode).toBe(409);
+    deps.outbox.enqueueReminders(Date.now());
+    expect(deps.outbox.snapshot(Date.now()).counts.pending).toBe(1);
+    expect(deps.outbox.claim(Date.now())?.body).toContain("keep me");
+  });
+
+  it("refuses a stale cancellation after scheduler handoff without changing an unrelated matching outbox ID", async () => {
+    const { app, deps, db } = await setup();
+    deps.reminders.add("chat", "Alice", "already queued", 0);
+    deps.outbox.enqueueReminders(Date.now());
+    const before = db.prepare("SELECT * FROM outbox").all();
+    const response = await app.inject({ method: "DELETE", url: "/api/reminders/1", headers });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toContain("no delivery was cancelled");
+    expect(db.prepare("SELECT * FROM outbox").all()).toEqual(before);
+    expect((await app.inject({ url: "/api/reminders", headers })).json<RemindersResponse>().total).toBe(0);
+  });
+
+  it("does not claim cancellation while a worker is already sending the reminder", async () => {
+    const { app, deps, db } = await setup();
+    deps.reminders.add("chat", "Alice", "in flight", 0);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const send = vi.fn(() => gate);
+    const worker = new DeliveryWorker(deps.outbox, send, pino({ level: "silent" }));
+    const flushing = worker.flush();
+    try {
+      expect(send).toHaveBeenCalledOnce();
+      const response = await app.inject({ method: "DELETE", url: "/api/reminders/1", headers });
+      expect(response.statusCode).toBe(409);
+      expect(db.prepare("SELECT status FROM outbox").get()).toEqual({ status: "sending" });
+    } finally {
+      release();
+      await flushing;
+      await worker.stop();
+    }
+    expect(db.prepare("SELECT status FROM outbox").get()).toEqual({ status: "sent" });
+  });
+});
 
 describe("profile lifecycle controls", () => {
   const headers = { authorization: "Bearer test-token" };

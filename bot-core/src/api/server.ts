@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
 import { redactSecrets, restoreSecrets } from "../config/secrets.js";
-import type { ConfigStore, ContactsStore, KnownChatsStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
+import type { ConfigStore, ContactsStore, KnownChatsStore, RemindersStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
 import { disciplineKey } from "../state/repos.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import { ProfileQueueError } from "../handlers/profiles/service.js";
@@ -26,6 +26,7 @@ import type {
   ProfileRefreshResponse,
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
   OperationsResponse,
+  ReminderCancelResponse,
 } from "../../../shared/api.js";
 
 export interface ApiDeps {
@@ -43,6 +44,7 @@ export interface ApiDeps {
   jobs: BackgroundJobs;
   outbox: OutboxStore;
   backups: BackupWorker;
+  reminders: RemindersStore;
   onConfigChange: () => void;
   logger: Logger;
   apiToken?: string;
@@ -89,6 +91,34 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   }
 
   app.get("/api/status", async () => deps.transport.getStatus());
+  const reminderPage = z.object({
+    page: z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.number().int().max(1_000_000)).default("1"),
+  });
+  const reminderId = z.object({
+    id: z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.number().int().safe()),
+  });
+  app.get("/api/reminders", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = reminderPage.safeParse(req.query);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, error: "Invalid reminders page. Use a whole number from 1 to 1000000." };
+    }
+    return deps.reminders.list(parsed.data.page);
+  });
+  app.delete("/api/reminders/:id", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = reminderId.safeParse(req.params);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, error: "Invalid reminder ID." };
+    }
+    if (!deps.reminders.remove(parsed.data.id)) {
+      reply.code(409);
+      return { ok: false, error: "Reminder is no longer scheduled. It may already be queued, sent or cancelled; no delivery was cancelled." };
+    }
+    return { ok: true, cancelledId: parsed.data.id } satisfies ReminderCancelResponse;
+  });
   app.get("/api/operations/services", async (_req, reply) => {
     reply.header("Cache-Control", "no-store");
     return diagnostics.check(deps.configStore.load());
