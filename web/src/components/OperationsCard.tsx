@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState, QueryError } from "@/components/QueryFeedback";
 import { RotateCw } from "lucide-react";
+import { ServiceDiagnostics } from "./ServiceDiagnostics";
 
 function timestamp(value: number | null): string {
   return value === null ? "Unknown (before monitoring was added)" : new Date(value).toLocaleString();
@@ -36,6 +37,7 @@ export function OperationsCard() {
       </CardDescription>
     </CardHeader>
     <CardContent className="space-y-6">
+      <ServiceDiagnostics />
       {query.isPending && <LoadingState>Loading operations...</LoadingState>}
       {query.error && <QueryError message={`Operations unavailable: ${query.error.message}`}
         onRetry={() => void query.refetch()} retrying={query.isFetching} retryLabel="Retry operations" />}

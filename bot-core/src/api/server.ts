@@ -10,6 +10,7 @@ import type { ProfileService } from "../handlers/profiles/service.js";
 import { ProfileQueueError } from "../handlers/profiles/service.js";
 import type { Transport } from "../transport/types.js";
 import { ollamaListModels } from "../util/ollama.js";
+import { ServiceDiagnostics } from "../util/service-status.js";
 import { z } from "zod";
 import type { PetService } from "../pets/service.js";
 import { SPECIES, isSpecies, statusText, type Pet } from "../pets/model.js";
@@ -68,6 +69,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   if (!deps.apiToken && !deps.allowInsecureApi) throw new Error("API_TOKEN is required");
   const app = Fastify({ logger: false });
   const startedAt = Date.now() - Math.floor(process.uptime() * 1000);
+  const diagnostics = new ServiceDiagnostics(deps.logger);
   app.addHook("onError", async (req, _reply, error) => {
     deps.logger.error({ err: error, method: req.method, url: req.routeOptions.url }, "API request failed");
   });
@@ -87,6 +89,10 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   }
 
   app.get("/api/status", async () => deps.transport.getStatus());
+  app.get("/api/operations/services", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return diagnostics.check(deps.configStore.load());
+  });
   app.get("/api/health", async () => ({ ok: true, connection: deps.transport.getStatus().state }));
   app.get("/api/operations", async (_req, reply): Promise<OperationsResponse> => {
     reply.header("Cache-Control", "no-store");

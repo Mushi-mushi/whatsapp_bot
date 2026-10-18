@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import { operations } from "@/test/fixtures";
 import { OperationsCard } from "./OperationsCard";
+vi.mock("./ServiceDiagnostics", () => ({ ServiceDiagnostics: () => null }));
 
 const clients: QueryClient[] = [];
 beforeEach(() => { vi.spyOn(api, "getOperations").mockResolvedValue(operations); });

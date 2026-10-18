@@ -271,6 +271,20 @@ export interface BackupSnapshot {
   lastSizeBytes: number | null;
 }
 
+export interface ServiceDiagnostic {
+  service: "ollama" | "comfyui" | "transcription";
+  status: "available" | "disabled" | "unsupported" | "timeout" | "unreachable" | "http-error" | "invalid-response" | "invalid-config";
+  checkedAt: number;
+  latencyMs: number | null;
+  httpStatus: number | null;
+}
+
+export interface ServiceDiagnosticsResponse {
+  sampledAt: number;
+  cacheSeconds: number;
+  services: ServiceDiagnostic[];
+}
+
 export interface OperationsResponse {
   sampledAt: number;
   startedAt: number;

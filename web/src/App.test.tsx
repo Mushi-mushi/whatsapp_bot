@@ -10,6 +10,7 @@ vi.mock("./lib/api", async (original) => ({
   api: { getConfig: vi.fn(), getChats: vi.fn(), saveConfig: vi.fn(), getOperations: vi.fn() },
 }));
 vi.mock("@/components/StatusCard", () => ({ StatusCard: () => null }));
+vi.mock("@/components/ServiceDiagnostics", () => ({ ServiceDiagnostics: () => null }));
 vi.mock("@/lib/useStatusStream", () => ({ useStatusStream: () => null }));
 vi.mock("@/components/PetsCard", async () => {
   const { useState } = await import("react");

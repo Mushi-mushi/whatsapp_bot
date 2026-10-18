@@ -4,13 +4,13 @@ import type {
   ProfileDetail, ProfileRefreshResponse, ProfilesResponse,
   ChatsResponse, ContactsResponse, DisciplineResponse, DisciplineMutationResponse,
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
-  OperationsResponse,
+  OperationsResponse, ServiceDiagnosticsResponse,
 } from "../../../shared/api.js";
 export type {
   BotConfig, ConfigSnapshot, Status, ConnectionState, ConnectionHealth,
   ChatIdentity, SiestaStatus, DisciplinePlayer, Contact, ProfileSummary,
   ProfileDetail, PetSettings, GroupPet, PetGroup, PetsResponse, PetUpdate, PetRequestChoice,
-  OperationsResponse,
+  OperationsResponse, ServiceDiagnosticsResponse,
 } from "../../../shared/api.js";
 
 const TOKEN_KEY = "apiToken";
@@ -62,6 +62,8 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  getServiceDiagnostics: () =>
+    fetch("/api/operations/services", { headers: authHeaders(), cache: "no-store" }).then(json<ServiceDiagnosticsResponse>),
   getOperations: () =>
     fetch("/api/operations", { headers: authHeaders(), cache: "no-store" }).then(json<OperationsResponse>),
   getSiesta: () =>

@@ -208,6 +208,33 @@ it never claims deliveries, recovers leases, retries failures or changes config.
 Manual Refresh and error/retry states are available; a failed refresh keeps the
 last successful snapshot explicitly marked as potentially stale.
 
+### Service Diagnostics
+
+The Operations service panel separately polls authenticated
+`GET /api/operations/services` every 30 seconds while mounted. Server results
+are cached for 30 seconds and concurrent requests share checks; saving changed
+service URLs or enable/provider settings invalidates that server cache.
+Manual refresh respects the same cache. API responses use `Cache-Control: no-store`.
+Service failures do not block the queue/delivery/backup overview.
+
+Checks run concurrently with three-second timeouts, using only GET requests:
+Ollama `/api/tags`, ComfyUI `/system_stats`, and Auralis `/health` (expects
+`{"status":"ok"}`). No chat, transcription upload, model loading or workflow
+execution is triggered. The checks use the same saved base URLs as inference;
+redirects and credential-bearing URLs are not followed. Disabled AI/paint
+features are skipped; transcription is skipped if transcription or audio
+download is disabled, and unsupported transcription providers are labelled.
+
+Each result includes its check time, elapsed request/response-check latency and
+HTTP status where available. Disabled, unsupported, invalid configuration,
+timeout, network failure, HTTP failure and malformed/unexpected responses are
+distinct states. Raw responses, URLs and error text are not sent to the dashboard.
+Unexpected failures are logged with the service category, not response contents.
+An available endpoint does not certify model installation, GPU capacity or
+successful generation. Failed panel refreshes retain explicitly stale results.
+
+### Queue And Delivery Monitoring
+
 - **Background jobs:** capacity, running/queued work, queue age, execution
   duration, completed/failed counts and rejection counts by reason. Counters
   and the latest 20 thrown execution failures reset on process restart.

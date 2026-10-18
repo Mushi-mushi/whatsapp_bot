@@ -78,6 +78,28 @@ describe("profile lifecycle controls", () => {
   });
 
   describe("operations API", () => {
+    it("authenticates service diagnostics before checking services and isolates failures from operations", async () => {
+      const { app } = await setup();
+      const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ models: [] }));
+      try {
+        expect((await app.inject({ url: "/api/operations/services" })).statusCode).toBe(401);
+        expect(fetcher).not.toHaveBeenCalled();
+        const response = await app.inject({ url: "/api/operations/services", headers });
+        expect(response.statusCode).toBe(200);
+        expect(response.headers["cache-control"]).toBe("no-store");
+        expect(response.json()).toMatchObject({
+          cacheSeconds: 30, services: [
+            { service: "ollama", status: "available" },
+            { service: "comfyui", status: "disabled" },
+            { service: "transcription", status: "invalid-response" },
+          ],
+        });
+        expect(response.body).not.toContain(DEFAULT_CONFIG.ollamaBaseUrl);
+        await app.inject({ url: "/api/operations/services", headers });
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        expect((await app.inject({ url: "/api/operations", headers })).statusCode).toBe(200);
+      } finally { fetcher.mockRestore(); }
+    });
     it("requires authentication, disables caching and exposes metadata without content or raw errors", async () => {
       const { app, deps, jobs, db } = await setup();
       expect((await app.inject({ url: "/api/operations" })).statusCode).toBe(401);

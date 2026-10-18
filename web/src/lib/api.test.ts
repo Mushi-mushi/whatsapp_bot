@@ -39,6 +39,16 @@ afterEach(() => {
 });
 
 describe("shared API wire contracts", () => {
+  it("fetches service diagnostics with authentication and no browser caching", async () => {
+    const result = { sampledAt: 100, cacheSeconds: 30, services: [] };
+    fetcher.mockResolvedValue(Response.json(result));
+    expect(await api.getServiceDiagnostics()).toEqual(result);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/operations/services");
+    expect(fetcher.mock.calls[0][1]?.cache).toBe("no-store");
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).has("Authorization")).toBe(true);
+    fetcher.mockResolvedValue(Response.json({ error: "unavailable" }, { status: 503 }));
+    await expect(api.getServiceDiagnostics()).rejects.toThrow("unavailable");
+  });
   it("fetches the operations contract without caching and includes authentication", async () => {
     fetcher.mockResolvedValue(Response.json(operations));
     expect(await api.getOperations()).toEqual(operations);
