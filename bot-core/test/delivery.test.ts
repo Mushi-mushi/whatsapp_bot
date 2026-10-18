@@ -30,7 +30,7 @@ describe("durable delivery", () => {
     let migrated: ReturnType<typeof openDatabase> | undefined;
     try {
       migrated = openDatabase(path);
-      expect(migrated.pragma("user_version", { simple: true })).toBe(10);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(11);
       expect(new RemindersStore(migrated).due(100)[0].text).toBe("keep me");
     } finally {
       migrated?.close();
@@ -72,7 +72,7 @@ describe("durable delivery", () => {
       expect(store.claim(300001)).toMatchObject({
         id: 1, chat_id: "chat", body: "keep me", attempts: 2, pet_event_id: null,
       });
-      expect(migrated.pragma("user_version", { simple: true })).toBe(10);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(11);
       expect(migrated.prepare("SELECT COUNT(*) AS count FROM pets").get()).toEqual({ count: 0 });
     } finally {
       migrated?.close();

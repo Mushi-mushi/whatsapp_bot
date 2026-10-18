@@ -30,6 +30,10 @@ export function AiCard({ config, onChange }: Props) {
         <Row label="AI ask" hint="Enable bot.ask via your local Ollama">
           <Switch checked={config.askEnabled} onCheckedChange={(v) => onChange({ askEnabled: v })} />
         </Row>
+        <NumberField label="Maximum bot.ask calls" min={1} max={Number.MAX_SAFE_INTEGER}
+          value={config.askMaxCalls}
+          hint="Per person per chat, shared with bot.ask.raw. One-hour cooldown after reaching the limit; resets at UTC midnight."
+          onChange={(v) => onChange({ askMaxCalls: v })} />
 
         <div className="space-y-1 pt-2">
           <label htmlFor="ollama-model" className="text-sm font-medium">Ollama model</label>

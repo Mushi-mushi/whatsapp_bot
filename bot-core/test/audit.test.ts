@@ -125,7 +125,7 @@ describe("administrative audit persistence", () => {
     const before = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(10);
+    expect(db.pragma("user_version", { simple: true })).toBe(11);
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before.map((rows, idx) =>
       tables[idx] === "reminders" ? rows.map((r) => ({ ...r as object, recurrence: "once" })) : rows));
     const audit = new AuditStore(db);

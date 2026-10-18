@@ -30,8 +30,9 @@ for the dashboard to be healthy.
 
 An active `bot.siesta` can be cancelled from the dashboard's **Connection** tab.
 
-Each player may use `bot.siesta` only once per UTC day within a given chat. A
-second attempt that day — or a player an admin has armed — makes the bot rebel
+Each player may use `bot.siesta` a configurable number of times per UTC day within
+a given chat (default **1**). Set **General > Maximum bot.siesta calls** and click
+**Save changes**. An attempt after the allowance is exhausted — or a player an admin has armed — makes the bot rebel
 and put that *player* to sleep instead: their messages are deleted for the
 requested duration (only in groups where the bot is an admin) and they are told
 to go to sleep. The dashboard's **Sleep** tab lets the authenticated owner put a
@@ -131,6 +132,20 @@ Chat handlers execute in order per chat with bounded intake. Expensive AI/media
 jobs use a separate bounded queue with up to three pending jobs per chat and one
 running job globally. Dashboard profile refreshes share that queue; a full queue
 or a duplicate pending profile refresh returns HTTP 503 so the owner can retry.
+In **Operations > Background jobs**, running and queued jobs have descriptions
+(profile name or command trigger/chat name), stable job IDs and elapsed times.
+Profile refreshes also show the dossier/briefing stage. **Cancel running job**
+aborts a profile's underlying Ollama request and prevents partial profile saves;
+**Cancel queued job** removes work before it starts. Already-running commands
+without cooperative cancellation cannot be safely interrupted and are labelled
+accordingly. Cancellation uses authenticated, audited
+`DELETE /api/operations/jobs/:id`; stale/completed IDs return HTTP 409 rather than
+cancelling a different job. Cancelled jobs are counted separately from failures.
+Cancellation does not disable future automatic profile refreshes.
+Profile generation has a total deadline of `ollamaTimeoutSeconds` (default 120
+seconds), covering both dossier and briefing, in addition to the usual streaming
+inactivity timeout. Ollama's `ollamaKeepAlive` still controls retention after a
+request finishes; `"0"` requests immediate unloading.
 These interactive jobs and trivia/duel games are not durable across
 restarts. Group pets, rescue progress and pet deliveries are durable.
 Shutdown stops intake, drains accepted work, disposes timers/streams and then
@@ -212,24 +227,40 @@ Back up before upgrading: older binaries cannot open schema 9.
 
 ### Ask request limit
 
-`bot.ask` and `bot.ask.raw` share a persistent limit of **10 requests per person
+`bot.ask` and `bot.ask.raw` share a persistent limit of **10 requests by default per person
 per chat**, including the linked account's own requests and inline model overrides.
-The tenth request is allowed and starts a **one-hour cooldown**. Cooldown expiry
-grants another ten requests; **UTC midnight also resets the quota**, even if the
+Set **AI > Maximum bot.ask calls** and click **Save changes** to adjust the count.
+Both command limits accept positive whole numbers and apply globally, while usage
+is counted per person per chat. Changes preserve existing usage; raising a limit
+allows additional requests, and lowering it does not erase calls already counted.
+The request reaching the configured limit is allowed and starts a **one-hour cooldown**. Cooldown expiry
+grants another allowance; **UTC midnight also resets the quota**, even if the
 hour has not elapsed. Rejected requests report the remaining wait and do not
-extend it. Requests below ten accumulate throughout the UTC day.
+extend it. Requests below the limit accumulate throughout the UTC day.
 
 Model-list requests (`bot.models`, `bot.ask models`, `bot.ask model=?`) do not
 count and remain available during cooldown. Empty/disabled requests and model
 overrides without a question do not count. Once an inference request is reserved,
 it counts even if Ollama or reply delivery fails; concurrent requests cannot
-exceed ten. Other AI commands are not included in this limit.
+exceed the configured limit. Other AI commands are not included in this limit.
 
 Verified identity aliases share quota, including after an alias is learned;
 duplicate display names do not. Quotas survive restarts. The additive **schema 8**
 migration creates `ask_quota` without modifying existing bot data. Back up before
 deploying: older binaries cannot open a newer schema. The current application
-and backup verifier require schema 10 (older backups need a matching-version verifier).
+and backup verifier require schema 11 (older backups need a matching-version verifier).
+Schema 11 removes the fixed ten-call database constraint and adds persistent siesta
+usage counts, preserving previous ask usage and counting each recorded legacy
+siesta as one use on its recorded day.
+
+To restore a user's allowance, open **Sleep & discipline**, select their **Player**
+contact/JID, and use **Reset bot.ask count** or **Reset bot.siesta count**. Confirm
+the reset across **all chats** for that person, including verified identity aliases.
+No chat selection is required. The buttons are independent: ask resets also clear
+the ask cooldown; siesta resets clear only usage, not forced-sleep or armed state.
+They apply immediately, do not cancel running jobs, and survive restarts.
+Authenticated `POST /api/usage/reset` accepts `{ senderId, command: "ask" | "siesta" }`;
+the administrative audit records the reset without storing the raw user identity.
 
 The profiles API exposes an opaque `sender_key` for each chat/person pair plus
 `chat_id` and `chat_name` (null if unknown). URL-encode the key in API paths. The dashboard
@@ -394,7 +425,9 @@ successful generation. Failed panel refreshes retain explicitly stale results.
 ### Queue And Delivery Monitoring
 
 - **Background jobs:** capacity, running/queued work, queue age, execution
-  duration, completed/failed counts and rejection counts by reason. Counters
+  duration, descriptions, profile-generation stages, completed/failed/cancelled
+  counts and rejection counts by reason. Running profile refreshes and any
+  queued job can be cancelled. Counters
   and the latest 20 thrown execution failures reset on process restart.
   A completed handler may have handled a service error internally; these are
   not comprehensive AI/service health metrics.
@@ -409,8 +442,10 @@ successful generation. Failed panel refreshes retain explicitly stale results.
   Version 4 failures have an unknown failure timestamp until another failure.
   Delivery state and new failure timestamps survive restarts.
 
-Only bounded metadata is exposed: no chat/person identifiers, message bodies,
-prompts, credentials or raw errors. Consult server logs for diagnostics (delivery
+Job descriptions include profile display names or command triggers/chat names,
+but not raw chat/person IDs, command arguments, message bodies, prompts,
+credentials or raw errors. Other monitoring remains limited to bounded metadata.
+Consult server logs for diagnostics (delivery
 IDs help locate delivery failures). Retry controls are separate from the
 read-only overview and require explicit confirmation; outbox cancellation is
 not provided.

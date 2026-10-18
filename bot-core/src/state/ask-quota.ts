@@ -1,7 +1,6 @@
 import type Database from "better-sqlite3";
 import { ContactsStore, disciplineKey, utcDay } from "./repos.js";
 
-const LIMIT = 10;
 const COOLDOWN_MS = 60 * 60_000;
 
 interface QuotaRow {
@@ -19,7 +18,19 @@ export type AskQuotaResult =
 export class AskQuotaStore {
   constructor(private readonly db: Database.Database) {}
 
-  consume(chatId: string, senderId: string, phone?: string | null, now = Date.now()): AskQuotaResult {
+  resetForUser(senderId: string): void {
+    this.db.transaction(() => {
+      const identities = new ContactsStore(this.db).identities();
+      const sender = identities.canonical(senderId);
+      const rows = this.db.prepare("SELECT chat_id, sender_id FROM ask_quota").all() as Pick<QuotaRow, "chat_id" | "sender_id">[];
+      const remove = this.db.prepare("DELETE FROM ask_quota WHERE chat_id = ? AND sender_id = ?");
+      for (const row of rows) {
+        if (identities.canonical(row.sender_id) === sender) remove.run(row.chat_id, row.sender_id);
+      }
+    }).immediate();
+  }
+
+  consume(chatId: string, senderId: string, phone?: string | null, now = Date.now(), limit = 10): AskQuotaResult {
     return this.db.transaction((): AskQuotaResult => {
       const identities = new ContactsStore(this.db).identities();
       const chat = identities.canonical(chatId);
@@ -31,11 +42,11 @@ export class AskQuotaStore {
       const active = matching.filter((r) => r.reset_at == null || r.reset_at > now);
       const used = active.reduce((total, r) => total + r.used, 0);
       const midnight = Date.parse(`${day}T00:00:00.000Z`) + 86_400_000;
-      const allowed = used < LIMIT;
-      const next = Math.min(LIMIT, used + (allowed ? 1 : 0));
+      const allowed = used < limit;
+      const next = used + (allowed ? 1 : 0);
       const resets = active.flatMap((r) => r.reset_at == null ? [] : [r.reset_at]);
       const cooldownEnd = resets.length ? Math.max(...resets) : now + COOLDOWN_MS;
-      const resetAt = next === LIMIT ? cooldownEnd : null;
+      const resetAt = next >= limit || resets.length > 0 ? cooldownEnd : null;
 
       // Reserve before any asynchronous inference so concurrent requests cannot
       // exceed the quota. Failed inference attempts still consume a request.

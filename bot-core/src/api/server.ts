@@ -8,6 +8,8 @@ import type { ConfigStore, ContactsStore, DuelWinStore, KarmaStore, KnownChatsSt
 import { ContactResolver } from "../transport/contacts.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import { ProfileQueueError } from "../handlers/profiles/service.js";
+import type { AskQuotaStore } from "../state/ask-quota.js";
+import type { UsageResetRequest, UsageResetResponse } from "../../../shared/api.js";
 import type { Transport } from "../transport/types.js";
 import { ollamaListModels } from "../util/ollama.js";
 import { ServiceDiagnostics } from "../util/service-status.js";
@@ -48,6 +50,7 @@ export interface ApiDeps {
   pets: PetService;
   runtime: RuntimeState;
   discipline: SiestaDisciplineStore;
+  askQuota: AskQuotaStore;
   contacts: ContactsStore;
   jobs: BackgroundJobs;
   outbox: OutboxStore;
@@ -248,6 +251,25 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   app.get("/api/operations/services", async (_req, reply) => {
     reply.header("Cache-Control", "no-store");
     return diagnostics.check(deps.configStore.load());
+  });
+  app.delete("/api/operations/jobs/:id", async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "Invalid job ID." });
+    const status = deps.jobs.cancel(params.data.id);
+    if (status === "not-found") return reply.code(409).send({ ok: false, error: "This job has already finished or was cancelled. Refresh operations." });
+    if (status === "unsupported") return reply.code(409).send({ ok: false, error: "This running command cannot be safely interrupted. Queued commands and running profile refreshes can be cancelled." });
+    return { ok: true, status };
+  });
+  app.post("/api/usage/reset", async (req, reply) => {
+    const parsed = z.object({
+      senderId: z.string().trim().regex(/^\d+(?::\d+)?@(s\.whatsapp\.net|lid)$/),
+      command: z.enum(["ask", "siesta"]),
+    }).strict().safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Select a valid player JID and either ask or siesta." });
+    const { senderId, command }: UsageResetRequest = parsed.data;
+    if (command === "ask") deps.askQuota.resetForUser(senderId);
+    else deps.discipline.resetUsageForUser(senderId);
+    return { ok: true, command } satisfies UsageResetResponse;
   });
   app.get("/api/health", async () => ({ ok: true, connection: deps.transport.getStatus().state }));
   app.get("/api/operations", async (_req, reply): Promise<OperationsResponse> => {

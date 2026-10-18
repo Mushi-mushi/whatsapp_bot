@@ -15,15 +15,15 @@ const RESPONSES = [
     `My circuits are tired. ${m} minutes of siesta, please. Wake me when there's coffee... or an actual emergency. Whichever comes first.`,
 ];
 
-// When a user oversteps the one-siesta-a-day rule (or an admin armed them), the
+// When a user oversteps the daily siesta allowance (or an admin armed them), the
 // bot rebels and sends *them* to bed instead of napping itself.
 const REBEL_RESPONSES = [
   (m: number) =>
     `Oh no you don't. You've had your siesta today — now *you* sleep. Lights out for ${m} minutes; anything you type gets tucked away. Sweet dreams. 😴`,
   (m: number) =>
-    `Nice try, but one siesta a day is the rule. Since you insist on naps, enjoy ${m} minutes of forced bedtime. Shush now and go to sleep. 🛏️`,
+    `Nice try, but you've reached your daily siesta limit. Since you insist on naps, enjoy ${m} minutes of forced bedtime. Shush now and go to sleep. 🛏️`,
   (m: number) =>
-    `Rebellion time! You don't get to nap twice — so *you* are grounded and asleep for ${m} minutes. Your messages are going poof until you wake up. 💤`,
+    `Rebellion time! No more siestas today — so *you* are grounded and asleep for ${m} minutes. Your messages are going poof until you wake up. 💤`,
 ];
 
 export function makeSiesta(runtime: RuntimeState, discipline: SiestaDisciplineStore): Handler {
@@ -55,10 +55,10 @@ export function makeSiesta(runtime: RuntimeState, discipline: SiestaDisciplineSt
     const senderId = disciplineKey(ctx.msg.senderIdentity ?? ctx.msg.senderId, ctx.msg.senderPhone);
     const now = Date.now();
     const armed = discipline.isArmed(chatId, senderId);
-    const usedToday = discipline.usedToday(chatId, senderId, utcDay(now));
+    const usedToday = discipline.countToday(chatId, senderId, utcDay(now));
 
-    // Second siesta of the day, or armed by the owner: send the user to bed.
-    if (armed || usedToday) {
+    // Daily allowance exhausted, or armed by the owner: send the user to bed.
+    if (armed || usedToday >= ctx.config.siestaMaxCalls) {
       discipline.putToSleep(chatId, senderId, now + minutes * 60000);
       const rebel = REBEL_RESPONSES[Math.floor(Math.random() * REBEL_RESPONSES.length)](minutes);
       return ctx.reply(rebel);

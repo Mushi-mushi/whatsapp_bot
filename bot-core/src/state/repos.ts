@@ -746,7 +746,7 @@ interface DisciplineRow {
   armed: number;
 }
 
-// Per-(chat, sender) siesta discipline: tracks the once-a-day siesta allowance,
+// Per-(chat, sender) siesta discipline: tracks the daily siesta allowance,
 // an active "forced sleep" window (messages deleted until it elapses), and an
 // "armed" flag so the sender's next bot.siesta puts them to sleep instead.
 export class SiestaDisciplineStore {
@@ -792,9 +792,34 @@ export class SiestaDisciplineStore {
     };
   }
 
-  // True once the sender has already spent their allowed siesta for `day`.
+  countToday(chatId: string, senderId: string, day: string): number {
+    const identities = new ContactsStore(this.db).identities();
+    const [chat, sender] = this.target(chatId, senderId);
+    const rows = this.db.prepare("SELECT chat_id, sender_id, used FROM siesta_usage WHERE day = ?")
+      .all(day) as { chat_id: string; sender_id: string; used: number }[];
+    return rows.filter((row) => identities.canonical(row.chat_id) === chat &&
+      identities.canonical(row.sender_id) === sender).reduce((sum, row) => sum + row.used, 0);
+  }
+
+  resetUsageForUser(senderId: string): void {
+    this.db.transaction(() => {
+      const identities = new ContactsStore(this.db).identities();
+      const sender = identities.canonical(senderId);
+      const usage = this.db.prepare("SELECT chat_id, sender_id FROM siesta_usage").all() as { chat_id: string; sender_id: string }[];
+      const remove = this.db.prepare("DELETE FROM siesta_usage WHERE chat_id = ? AND sender_id = ?");
+      for (const row of usage) {
+        if (identities.canonical(row.sender_id) === sender) remove.run(row.chat_id, row.sender_id);
+      }
+      const discipline = this.db.prepare("SELECT chat_id, sender_id FROM siesta_discipline").all() as { chat_id: string; sender_id: string }[];
+      const clearDay = this.db.prepare("UPDATE siesta_discipline SET last_siesta_day = NULL WHERE chat_id = ? AND sender_id = ?");
+      for (const row of discipline) {
+        if (identities.canonical(row.sender_id) === sender) clearDay.run(row.chat_id, row.sender_id);
+      }
+    }).immediate();
+  }
+
   usedToday(chatId: string, senderId: string, day: string): boolean {
-    return this.get(chatId, senderId)?.lastSiestaDay === day;
+    return this.countToday(chatId, senderId, day) > 0;
   }
 
   isArmed(chatId: string, senderId: string): boolean {
@@ -807,16 +832,29 @@ export class SiestaDisciplineStore {
     return until != null && until > now ? until : null;
   }
 
-  // Record the sender's one allowed siesta for the day (normal bot nap).
+  // Record an allowed siesta without losing usage under verified aliases.
   recordAllowedSiesta(chatId: string, senderId: string, day: string): void {
-    [chatId, senderId] = this.target(chatId, senderId);
-    this.db
-      .prepare(
-        `INSERT INTO siesta_discipline (chat_id, sender_id, last_siesta_day)
-         VALUES (?, ?, ?)
-         ON CONFLICT(chat_id, sender_id) DO UPDATE SET last_siesta_day = excluded.last_siesta_day`,
-      )
-      .run(chatId, senderId, day);
+    this.db.transaction(() => {
+      const used = this.countToday(chatId, senderId, day);
+      const identities = new ContactsStore(this.db).identities();
+      [chatId, senderId] = this.target(chatId, senderId);
+      const rows = this.db.prepare("SELECT chat_id, sender_id FROM siesta_usage").all() as { chat_id: string; sender_id: string }[];
+      const remove = this.db.prepare("DELETE FROM siesta_usage WHERE chat_id = ? AND sender_id = ?");
+      for (const row of rows) {
+        if (identities.canonical(row.chat_id) === chatId && identities.canonical(row.sender_id) === senderId) {
+          remove.run(row.chat_id, row.sender_id);
+        }
+      }
+      this.db.prepare("INSERT INTO siesta_usage(chat_id, sender_id, day, used) VALUES (?, ?, ?, ?)")
+        .run(chatId, senderId, day, used + 1);
+      this.db
+        .prepare(
+          `INSERT INTO siesta_discipline (chat_id, sender_id, last_siesta_day)
+           VALUES (?, ?, ?)
+           ON CONFLICT(chat_id, sender_id) DO UPDATE SET last_siesta_day = excluded.last_siesta_day`,
+        )
+        .run(chatId, senderId, day);
+    }).immediate();
   }
 
   // Put the sender to sleep until `until`; also clears any armed flag.

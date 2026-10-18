@@ -55,6 +55,10 @@ export function GeneralCard({ config, onChange }: Props) {
         <CardTitle>General</CardTitle>
       </CardHeader>
       <CardContent className="space-y-1">
+        <NumberField label="Maximum bot.siesta calls" min={1} max={Number.MAX_SAFE_INTEGER}
+          value={config.siestaMaxCalls}
+          hint="Per person per chat per UTC day. Further attempts put the player to sleep. Armed players still sleep on their next attempt."
+          onChange={(v) => onChange({ siestaMaxCalls: v })} />
         <Row label="Audio transcription" hint="Transcribe voice notes via Auralis">
           <Switch checked={config.transcriptionEnabled} onCheckedChange={(v) => onChange({ transcriptionEnabled: v })} />
         </Row>

@@ -18,6 +18,7 @@ import { OutboxStore } from "../src/state/outbox.js";
 import { BackupWorker } from "../src/state/backups.js";
 import { DeliveryWorker } from "../src/state/deliveries.js";
 import { AuditStore } from "../src/state/audit.js";
+import { AskQuotaStore } from "../src/state/ask-quota.js";
 
 const ALICE = memoryKey("group@g.us", "alice");
 const ALICE_PATH = `/api/profiles/${encodeURIComponent(ALICE)}`;
@@ -54,6 +55,7 @@ async function setup(apiToken: string | undefined = "test-token", allowInsecureA
     pets: new PetService(new PetStore(db), () => configStore.load(), () => true),
     runtime,
     discipline,
+    askQuota: new AskQuotaStore(db),
     contacts: new ContactsStore(db),
     onConfigChange: vi.fn(),
     transport: {
@@ -68,6 +70,94 @@ async function setup(apiToken: string | undefined = "test-token", allowInsecureA
   cleanup.push(async () => { await jobs.stop(); runtime.dispose(); await app.close(); db.close(); });
   return { app, deps, listeners, runtime, discipline, jobs, db };
 }
+
+describe("user usage reset API", () => {
+  it("authenticates, validates, resets only the chosen quota globally and audits safely", async () => {
+    const { app, deps } = await setup();
+    const senderId = "34600000001@s.whatsapp.net";
+    const headers = { authorization: "Bearer test-token" };
+    const now = Date.now();
+    for (const chat of ["a@g.us", "b@g.us"]) {
+      for (let i = 0; i < 10; i++) deps.askQuota.consume(chat, senderId, null, now);
+      deps.discipline.recordAllowedSiesta(chat, senderId, new Date(now).toISOString().slice(0, 10));
+      deps.discipline.arm(chat, senderId);
+    }
+    expect((await app.inject({ method: "POST", url: "/api/usage/reset", payload: { senderId, command: "ask" } })).statusCode).toBe(401);
+    for (const payload of [{ senderId: "", command: "ask" }, { senderId, command: "all" }, { senderId: "bad", command: "siesta" }, {senderId, command: "ask", chatId: "a@g.us"}]) {
+      expect((await app.inject({ method: "POST", url: "/api/usage/reset", headers, payload })).statusCode).toBe(400);
+    }
+    const reset = (command: "ask" | "siesta") => app.inject({
+      method: "POST", url: "/api/usage/reset", headers, payload: { senderId, command },
+    });
+    expect((await reset("ask")).json()).toEqual({ ok: true, command: "ask" });
+    const day = new Date(now).toISOString().slice(0, 10);
+    for (const chat of ["a@g.us", "b@g.us"]) {
+      expect(deps.askQuota.consume(chat, senderId, null, now).allowed).toBe(true);
+      expect(deps.discipline.countToday(chat, senderId, day)).toBe(1);
+    }
+    expect((await reset("siesta")).json()).toEqual({ ok: true, command: "siesta" });
+    for (const chat of ["a@g.us", "b@g.us"]) {
+      expect(deps.discipline.countToday(chat, senderId, day)).toBe(0);
+      expect(deps.discipline.isArmed(chat, senderId)).toBe(true);
+    }
+    expect((await reset("siesta")).statusCode).toBe(200);
+    const entries = deps.audit.list(1).entries;
+    expect(entries[0]).toMatchObject({ action: "usage.reset", outcome: "succeeded" });
+    expect(entries[0].targetId).toMatch(/^usage:/);
+    expect(JSON.stringify(entries)).not.toContain("34600000001");
+  });
+});
+
+describe("job cancellation API", () => {
+  it("authenticates, validates IDs, cancels exact queued work and audits the action", async () => {
+    const { app, jobs, deps } = await setup();
+    let release!: () => void;
+    jobs.submit("busy", () => new Promise<void>((resolve) => { release = resolve; }));
+    jobs.submit("queued", async () => {});
+    await Promise.resolve();
+    try {
+      const id = jobs.snapshot().queuedJobs[0].id;
+      const headers = { authorization: "Bearer test-token" };
+      const url = `/api/operations/jobs/${id}`;
+      expect((await app.inject({ method: "DELETE", url })).statusCode).toBe(401);
+      expect((await app.inject({ method: "DELETE", url: "/api/operations/jobs/invalid", headers })).statusCode).toBe(400);
+      const response = await app.inject({ method: "DELETE", url, headers });
+      expect(response.json()).toEqual({ ok: true, status: "cancelled" });
+      expect(response.headers["cache-control"]).toBe("no-store");
+      expect((await app.inject({ method: "DELETE", url, headers })).statusCode).toBe(409);
+      expect(deps.audit.list(1).entries[0].action).toBe("job.cancel");
+      expect(jobs.snapshot()).toMatchObject({ queued: 0, cancelled: 1 });
+    } finally {
+      release();
+    }
+  });
+
+  it("aborts supported running work but explicitly rejects unsupported running commands", async () => {
+    const { app, jobs } = await setup();
+    jobs.submit("profile", ({ signal }) => new Promise<void>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }), 1, "profile", { cancellable: true });
+    await Promise.resolve();
+    const headers = { authorization: "Bearer test-token" };
+    const response = await app.inject({
+      method: "DELETE", url: `/api/operations/jobs/${jobs.snapshot().running!.id}`, headers,
+    });
+    expect(response.json()).toEqual({ ok: true, status: "cancelling" });
+    await vi.waitFor(() => expect(jobs.snapshot().running).toBeNull());
+    let release!: () => void;
+    jobs.submit("command", () => new Promise<void>((resolve) => { release = resolve; }));
+    await Promise.resolve();
+    try {
+      const unsupported = await app.inject({
+        method: "DELETE", url: `/api/operations/jobs/${jobs.snapshot().running!.id}`, headers,
+      });
+      expect(unsupported.statusCode).toBe(409);
+      expect(unsupported.json().error).toContain("cannot be safely interrupted");
+    } finally {
+      release();
+    }
+  });
+});
 
 describe("administrative audit API", () => {
   const headers = { authorization: "Bearer test-token" };

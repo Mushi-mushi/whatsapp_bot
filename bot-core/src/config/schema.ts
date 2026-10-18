@@ -18,6 +18,8 @@ export const ConfigSchema = z.object({
 
   // Ollama (local LLM on the host) powering the bot.ask command.
   askEnabled: z.boolean().default(true),
+  askMaxCalls: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).default(10),
+  siestaMaxCalls: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).default(1),
   ollamaBaseUrl: z.string().default("http://host.docker.internal:11434"),
   ollamaModel: z.string().default("glm-4.7-flash:latest"),
   ollamaTimeoutSeconds: z.number().int().min(5).default(120),

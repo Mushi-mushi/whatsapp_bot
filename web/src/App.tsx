@@ -39,12 +39,12 @@ const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
   general: [
     "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia", "deleteInstagramPosts",
     "instagramDeleteSenders", "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl",
-    "transcriptionTimeoutSeconds",
+    "transcriptionTimeoutSeconds", "siestaMaxCalls",
     "retentionEnabled", "analyticsRetentionDays", "deliveryRetentionDays",
   ],
   access: ["approvedSenders"],
   ai: [
-    "askEnabled", "ollamaModel", "ollamaBaseUrl", "ollamaTimeoutSeconds", "ollamaKeepAlive",
+    "askEnabled", "askMaxCalls", "ollamaModel", "ollamaBaseUrl", "ollamaTimeoutSeconds", "ollamaKeepAlive",
     "askSystemPrompt", "redditClientId", "redditClientSecret", "redditUserAgent", "redditRefreshToken",
   ],
   paint: [

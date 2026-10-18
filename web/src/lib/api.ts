@@ -4,7 +4,7 @@ import type {
   ProfileDetail, ProfileRefreshResponse, ProfilesResponse,
   ChatsResponse, ContactsResponse, DisciplineResponse, DisciplineMutationResponse,
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
-  OperationsResponse, ServiceDiagnosticsResponse,
+  OperationsResponse, ServiceDiagnosticsResponse, JobCancelResponse, UsageResetRequest, UsageResetResponse,
   RemindersResponse, ReminderCancelResponse, ReminderCreateRequest, ReminderUpdateRequest, ReminderMutationResponse,
   TellsResponse, TellCancelResponse, SuggestionsResponse, SuggestionDeleteResponse,
   FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest, DeliveryRetryResponse,
@@ -71,6 +71,10 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  resetUsage: (request: UsageResetRequest) =>
+    fetch("/api/usage/reset", {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request),
+    }).then(json<UsageResetResponse>),
   getAudit: (page = 1) =>
     fetch(`/api/operations/audit?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<AuditResponse>),
   getTells: (page = 1) =>
@@ -107,6 +111,8 @@ export const api = {
     fetch("/api/operations/services", { headers: authHeaders(), cache: "no-store" }).then(json<ServiceDiagnosticsResponse>),
   getOperations: () =>
     fetch("/api/operations", { headers: authHeaders(), cache: "no-store" }).then(json<OperationsResponse>),
+  cancelJob: (id: string) =>
+    fetch(`/api/operations/jobs/${encodeURIComponent(id)}`, { method: "DELETE", headers: authHeaders() }).then(json<JobCancelResponse>),
   getSiesta: () =>
     fetch("/api/siesta", { headers: authHeaders(), cache: "no-store" }).then(json<SiestaStatus>),
   cancelSiesta: () =>

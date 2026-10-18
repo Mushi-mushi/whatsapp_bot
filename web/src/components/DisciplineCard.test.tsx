@@ -21,6 +21,34 @@ function mount() {
 }
 
 describe("discipline query and form states", () => {
+  it.each(["ask", "siesta"] as const)("confirms and resets %s for the selected user across all chats without requiring a chat", async (command) => {
+    const reset = vi.spyOn(api, "resetUsage").mockResolvedValue({ ok: true, command });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    mount();
+    await screen.findByText("No players are sleeping or armed.");
+    const button = screen.getByRole("button", { name: `Reset bot.${command} count` }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Player"), { target: { value: "34600000001@s.whatsapp.net" } });
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("ALL chats"));
+    await waitFor(() => expect(reset).toHaveBeenCalledWith({ senderId: "34600000001@s.whatsapp.net", command }));
+    expect(await screen.findByText(`Reset bot.${command} usage for 34600000001@s.whatsapp.net across all chats.`)).toBeTruthy();
+  });
+
+  it("does not reset when confirmation is declined and surfaces API errors", async () => {
+    const reset = vi.spyOn(api, "resetUsage").mockRejectedValue(new Error("Reset unavailable"));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    mount();
+    await screen.findByText("No players are sleeping or armed.");
+    fireEvent.change(screen.getByLabelText("Player"), { target: { value: "34600000001@s.whatsapp.net" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reset bot.ask count" }));
+    expect(reset).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Reset bot.ask count" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Reset unavailable");
+  });
+
   it("resolves device phone addresses but never treats opaque LID digits as a phone number", async () => {
     vi.mocked(api.getContacts).mockResolvedValue({
       contacts: [{ jid: "34600000001@s.whatsapp.net", phone: "34600000001", name: "Alice" }],

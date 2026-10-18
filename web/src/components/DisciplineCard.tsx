@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { api, type ChatIdentity, type DisciplinePlayer } from "@/lib/api";
 import { BedDouble, Loader2, Moon, Zap } from "lucide-react";
 import { EmptyState, LoadingState, QueryError } from "@/components/QueryFeedback";
+import type { UsageCommand, UsageResetRequest } from "../../../shared/api.js";
 
 function remaining(until: number | null): string {
   if (until == null) return "";
@@ -66,10 +67,20 @@ export function DisciplineCard({ chats }: { chats: ChatIdentity[] }) {
     onSuccess: invalidate,
     onError: (e) => setError(e instanceof Error ? e.message : "Failed to wake player."),
   });
+  const resetUsage = useMutation({
+    mutationFn: (request: UsageResetRequest) => api.resetUsage(request),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["discipline"] }),
+  });
+  const validPlayer = /^\d+(?::\d+)?@(s\.whatsapp\.net|lid)$/.test(senderId.trim());
+  function confirmReset(command: UsageCommand) {
+    const player = senderId.trim();
+    if (!window.confirm(`Reset bot.${command} usage for ${typedName || player} (${player}) across ALL chats?${command === "ask" ? " This also clears the ask cooldown." : ""} Forced-sleep and armed status will not change.`)) return;
+    resetUsage.mutate({ senderId: player, command });
+  }
 
   const canSubmit = chatId.trim() !== "" && senderId.trim() !== "";
   const validMinutes = minutes.trim() !== "" && Number.isInteger(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 60;
-  const busy = sleep.isPending || arm.isPending || wake.isPending;
+  const busy = sleep.isPending || arm.isPending || wake.isPending || resetUsage.isPending;
   const list = players.data?.players ?? [];
 
   return (
@@ -79,8 +90,8 @@ export function DisciplineCard({ chats }: { chats: ChatIdentity[] }) {
           <Moon className="h-4 w-4" /> Sleep &amp; discipline
         </CardTitle>
         <CardDescription>
-          Each player may use <code>bot.siesta</code> once per UTC day per chat. A second
-          attempt — or an armed player — is put to sleep: their messages are deleted (in groups
+          Each player has a daily <code>bot.siesta</code> allowance per chat, configurable in General.
+          After reaching it — or when armed — the player is put to sleep: their messages are deleted (in groups
           where the bot is an admin) and they're told to go to bed. Put a player to sleep now, or
           arm them so their next siesta triggers it.
         </CardDescription>
@@ -165,6 +176,26 @@ export function DisciplineCard({ chats }: { chats: ChatIdentity[] }) {
             Arm next siesta
           </Button>
         </div>
+
+        <section aria-label="Reset command usage" className="space-y-2 rounded-md border p-3">
+          <h3 className="text-sm font-medium">Reset command usage across all chats</h3>
+          <p className="text-xs text-muted-foreground">
+            Select a player above; no chat selection is needed. Resets include verified aliases.
+            Ask resets clear its cooldown. Forced-sleep and armed status are unchanged.
+            Resets apply immediately, independently of Save changes, and do not cancel running jobs.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" disabled={!validPlayer || busy}
+              onClick={() => confirmReset("ask")}>Reset bot.ask count</Button>
+            <Button variant="outline" disabled={!validPlayer || busy}
+              onClick={() => confirmReset("siesta")}>Reset bot.siesta count</Button>
+          </div>
+          {resetUsage.isPending && <p role="status" className="text-sm">Resetting command usage...</p>}
+          {resetUsage.error && <p role="alert" className="text-sm text-destructive">Could not reset usage: {resetUsage.error.message}</p>}
+          {resetUsage.isSuccess && <p role="status" className="text-sm">
+            Reset bot.{resetUsage.data.command} usage for {resetUsage.variables.senderId} across all chats.
+          </p>}
+        </section>
 
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {players.error && <QueryError message={`Could not load players: ${players.error.message}`}

@@ -7,6 +7,21 @@ import { FieldValidationProvider } from "./fields";
 afterEach(cleanup);
 
 describe("retention controls", () => {
+  it("edits the siesta allowance and rejects non-positive or fractional counts", () => {
+    const change = vi.fn();
+    render(<FieldValidationProvider><GeneralCard config={config} onChange={change} /></FieldValidationProvider>);
+    const field = screen.getByRole("spinbutton", { name: "Maximum bot.siesta calls" });
+    expect((field as HTMLInputElement).value).toBe("1");
+    fireEvent.change(field, { target: { value: "3" } });
+    expect(change).toHaveBeenLastCalledWith({ siestaMaxCalls: 3 });
+    change.mockClear();
+    for (const value of ["0", "1.5", ""]) {
+      fireEvent.change(field, { target: { value } });
+      expect(screen.getByRole("alert")).toBeTruthy();
+      expect(change).not.toHaveBeenCalled();
+    }
+  });
+
   it("shows saved policy and publishes edits through the global configuration workflow", () => {
     const change = vi.fn();
     render(<FieldValidationProvider><GeneralCard config={config} onChange={change} /></FieldValidationProvider>);

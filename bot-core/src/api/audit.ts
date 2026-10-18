@@ -10,6 +10,8 @@ const ACTIONS: Record<string, AuditAction> = {
   "DELETE /api/tells/:id": "tell.cancel",
   "DELETE /api/suggestions/:id": "suggestion.delete",
   "POST /api/operations/deliveries/:id/retry": "delivery.retry",
+  "DELETE /api/operations/jobs/:id": "job.cancel",
+  "POST /api/usage/reset": "usage.reset",
   "PUT /api/config": "config.save",
   "PUT /api/pets/:chatId": "pet.update",
   "POST /api/pets/:chatId/request": "pet.request",
@@ -39,6 +41,7 @@ export function registerAudit(app: FastifyInstance, store: AuditStore, apiToken?
   const target = (req: FastifyRequest, action: AuditAction): string | null => {
     const params = object(req.params);
     if (typeof params.id === "string") {
+      if (action === "job.cancel") return opaque("job", params.id);
       const id = Number(params.id);
       return /^[1-9]\d*$/.test(params.id) && Number.isSafeInteger(id) ? String(id) : null;
     }
@@ -48,6 +51,12 @@ export function registerAudit(app: FastifyInstance, store: AuditStore, apiToken?
     }
     if (typeof params.chatId === "string") return opaque("chat", params.chatId);
     if (typeof params.key === "string") return opaque("profile", params.key);
+    if (action === "usage.reset") {
+      const body = object(req.body);
+      if (typeof body.senderId === "string" && typeof body.command === "string") {
+        return opaque("usage", JSON.stringify([body.command, body.senderId]));
+      }
+    }
     if (action.startsWith("discipline.")) {
       const body = object(req.body);
       if (typeof body.chatId === "string" && typeof body.senderId === "string") {

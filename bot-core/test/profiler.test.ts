@@ -39,6 +39,67 @@ beforeEach(() => {
 });
 
 describe("ProfileService.refresh", () => {
+  it("settles a profile cancelled before its queued callback starts", async () => {
+    const { service, jobs } = setup();
+    const pending = service.requestRefresh(KEY, "Alice");
+    const rejected = expect(pending).rejects.toThrow("cancelled");
+    jobs.cancel(jobs.snapshot().running!.id);
+    await rejected;
+    await jobs.stop();
+    expect(ollama.chat).not.toHaveBeenCalled();
+    expect(jobs.snapshot().cancelled).toBe(1);
+  });
+
+  it("cancels queued refresh promises without starting generation", async () => {
+    const { service, jobs } = setup();
+    let release!: () => void;
+    jobs.submit("busy", () => new Promise<void>((resolve) => { release = resolve; }));
+    await Promise.resolve();
+    const pending = service.requestRefresh(KEY, "Alice");
+    const rejected = expect(pending).rejects.toThrow("cancelled");
+    expect(jobs.cancel(jobs.snapshot().queuedJobs[0].id)).toBe("cancelled");
+    await rejected;
+    release();
+    await jobs.stop();
+    expect(ollama.chat).not.toHaveBeenCalled();
+  });
+
+  it("aborts active generation without saving partial profiles or starting a briefing", async () => {
+    const { memory, profiles, service, jobs } = setup();
+    for (let i = 0; i < 4; i++) memory.record(KEY, "Alice", null, `sample ${i}`, 50);
+    ollama.chat.mockReset().mockImplementation((_cfg, _messages, opts: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => opts.signal.addEventListener("abort", () => reject(opts.signal.reason), { once: true })));
+    const pending = service.requestRefresh(KEY, "Alice");
+    const rejected = expect(pending).rejects.toThrow("cancelled");
+    await Promise.resolve();
+    jobs.cancel(jobs.snapshot().running!.id);
+    await rejected;
+    await jobs.stop();
+    expect(ollama.chat).toHaveBeenCalledOnce();
+    expect(profiles.get(KEY)).toBeUndefined();
+    expect(jobs.snapshot()).toMatchObject({ cancelled: 1, failed: 0 });
+  });
+
+  it("enforces a total refresh deadline rather than only an inactivity timeout", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    try {
+      const { memory, profiles, service } = setup();
+      for (let i = 0; i < 4; i++) memory.record(KEY, "Alice", null, `sample ${i}`, 50);
+      ollama.chat.mockReset().mockImplementation((_cfg, _messages, opts: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => opts.signal.addEventListener("abort", () => reject(opts.signal.reason), { once: true })));
+      const pending = service.refresh(KEY, "Alice");
+      const rejected = expect(pending).rejects.toThrow("Profile deadline exceeded");
+      expect(timeout).toHaveBeenCalledWith(DEFAULT_CONFIG.ollamaTimeoutSeconds * 1000);
+      deadline.abort(new Error("Profile deadline exceeded"));
+      await rejected;
+      expect(profiles.get(KEY)).toBeUndefined();
+      expect(ollama.chat).toHaveBeenCalledOnce();
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it("samples and merges only the selected chat's messages and dossier", async () => {
     const { memory, profiles, service } = setup();
     const other = memoryKey("other@g.us", "k1");

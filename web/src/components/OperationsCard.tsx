@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,11 @@ function duration(ms: number): string {
 }
 
 export function OperationsCard() {
+  const client = useQueryClient();
+  const cancel = useMutation({
+    mutationFn: api.cancelJob,
+    onSettled: () => client.invalidateQueries({ queryKey: ["operations"] }),
+  });
   const query = useQuery({
     queryKey: ["operations"], queryFn: api.getOperations, refetchInterval: 5000, retry: false,
   });
@@ -35,7 +40,7 @@ export function OperationsCard() {
       </div>
       <CardDescription>
         Queue and delivery monitoring, with explicit recovery of exhausted deliveries below. Overview refreshes every 5 seconds while this section is open.
-        Message contents, identities and raw errors are not included.
+        Job descriptions include profile names or command triggers and chat names, but not message contents or raw errors.
       </CardDescription>
     </CardHeader>
     <CardContent className="space-y-6">
@@ -79,11 +84,31 @@ export function OperationsCard() {
             <Metric label="Queued jobs" value={data.jobs.queued} />
             <Metric label="Completed jobs" value={data.jobs.completed} />
             <Metric label="Failed jobs" value={data.jobs.failed} />
+            <Metric label="Cancelled jobs" value={data.jobs.cancelled} />
           </dl>
-          {data.jobs.running && <p className="text-sm">
-            Running {data.jobs.running.kind === "profile" ? "profile refresh" : "command"} ·
-            {" "}{duration(data.sampledAt - data.jobs.running.startedAt)} elapsed
+          {cancel.error && <p role="alert" className="text-sm text-destructive">Cancellation failed: {cancel.error.message}</p>}
+          {cancel.isSuccess && <p role="status" className="text-sm">
+            {cancel.data.status === "cancelling" ? "Cancellation requested. Waiting for the running request to stop." : "Queued job cancelled."}
           </p>}
+          {data.jobs.running && <div className="rounded-md border p-3 text-sm space-y-2">
+            <p>Running {data.jobs.running.kind === "profile" ? "profile refresh" : "command"} ·
+              {" "}{duration(data.sampledAt - data.jobs.running.startedAt)} elapsed</p>
+            <p>{data.jobs.running.description}</p>
+            <p>Stage: {data.jobs.running.stage}</p>
+            <p className="text-xs text-muted-foreground break-all">Job ID: {data.jobs.running.id}</p>
+            {data.jobs.running.cancellable
+              ? <Button type="button" variant="outline" size="sm" disabled={cancel.isPending || data.jobs.running.cancelling}
+                onClick={() => cancel.mutate(data.jobs.running!.id)}>
+                {data.jobs.running.cancelling ? "Cancelling..." : "Cancel running job"}
+              </Button>
+              : <p className="text-muted-foreground">This running command cannot be safely interrupted. Queued commands and running profile refreshes can be cancelled.</p>}
+          </div>}
+          {data.jobs.queuedJobs.map((job) => <div key={job.id} className="rounded-md border p-3 text-sm space-y-2">
+            <p>Queued: {job.description} · {duration(data.sampledAt - job.queuedAt)} waiting</p>
+            <p className="text-xs text-muted-foreground break-all">Job ID: {job.id}</p>
+            <Button type="button" variant="outline" size="sm" disabled={cancel.isPending}
+              onClick={() => cancel.mutate(job.id)}>Cancel queued job</Button>
+          </div>)}
           {data.jobs.oldestQueuedAt !== null && <p className="text-sm">
             Oldest queued job waiting {duration(data.sampledAt - data.jobs.oldestQueuedAt)}
           </p>}

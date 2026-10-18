@@ -8,6 +8,8 @@ export interface BotConfig {
   analyticsRetentionDays: number;
   deliveryRetentionDays: number;
   askEnabled: boolean;
+  askMaxCalls: number;
+  siestaMaxCalls: number;
   ollamaBaseUrl: string;
   ollamaModel: string;
   ollamaTimeoutSeconds: number;
@@ -183,7 +185,7 @@ export interface DeliveryRetryResponse {
 
 export type AuditAction = "reminder.create" | "reminder.update" | "reminder.cancel" | "tell.cancel" | "suggestion.delete" | "delivery.retry" | "config.save"
   | "pet.update" | "pet.save" | "pet.enable" | "pet.disable" | "pet.pause" | "pet.resume"
-  | "pet.request" | "pet.evolve" | "profile.refresh" | "profile.forget"
+  | "pet.request" | "pet.evolve" | "profile.refresh" | "profile.forget" | "job.cancel" | "usage.reset"
   | "siesta.cancel" | "discipline.sleep" | "discipline.arm" | "discipline.wake"
   | "trivia.reset" | "trivia.close-month" | "connection.pair" | "connection.resync" | "connection.relink";
 
@@ -395,6 +397,18 @@ export interface DisciplineTarget {
   senderId: string;
 }
 
+export type UsageCommand = "ask" | "siesta";
+
+export interface UsageResetRequest {
+  senderId: string;
+  command: UsageCommand;
+}
+
+export interface UsageResetResponse {
+  ok: true;
+  command: UsageCommand;
+}
+
 export interface DisciplineSleepRequest extends DisciplineTarget {
   minutes: number;
 }
@@ -436,6 +450,21 @@ export interface DisciplineMutationResponse extends DisciplineResponse {
 
 export type BackgroundJobKind = "command" | "profile";
 
+export interface BackgroundJob {
+  id: string;
+  kind: BackgroundJobKind;
+  description: string;
+  stage: string;
+  queuedAt: number;
+  cancellable: boolean;
+  cancelling: boolean;
+}
+
+export interface JobCancelResponse {
+  ok: true;
+  status: "cancelled" | "cancelling";
+}
+
 export interface BackgroundJobFailure {
   id: number;
   kind: BackgroundJobKind;
@@ -446,10 +475,12 @@ export interface BackgroundJobFailure {
 export interface BackgroundJobsSnapshot {
   capacity: number;
   accepting: boolean;
-  running: { kind: BackgroundJobKind; startedAt: number } | null;
+  running: (BackgroundJob & { startedAt: number }) | null;
+  queuedJobs: BackgroundJob[];
   queued: number;
   oldestQueuedAt: number | null;
   completed: number;
+  cancelled: number;
   failed: number;
   rejected: { capacity: number; duplicate: number; stopping: number };
   recentFailures: BackgroundJobFailure[];

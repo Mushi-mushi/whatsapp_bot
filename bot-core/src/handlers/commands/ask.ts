@@ -36,10 +36,10 @@ export function makeAsk(userMemory: UserMemoryStore, profiler: ProfileService, q
       return;
     }
 
-    const allowance = quota.consume(chatKey(ctx.msg), ctx.msg.senderIdentity ?? ctx.msg.senderId, ctx.msg.senderPhone);
+    const allowance = quota.consume(chatKey(ctx.msg), ctx.msg.senderIdentity ?? ctx.msg.senderId, ctx.msg.senderPhone, Date.now(), cfg.askMaxCalls);
     if (!allowance.allowed) {
       const minutes = Math.max(1, Math.ceil((allowance.retryAt - Date.now()) / 60_000));
-      await ctx.reply(`You've used your 10 bot.ask requests in this chat. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+      await ctx.reply(`You've used your ${cfg.askMaxCalls} bot.ask requests in this chat. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`);
       return;
     }
 

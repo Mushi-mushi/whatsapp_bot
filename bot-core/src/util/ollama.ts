@@ -16,7 +16,7 @@ export type OllamaResult =
 export async function ollamaChat(
   cfg: BotConfig,
   messages: OllamaMessage[],
-  opts: { numPredict?: number; numCtx?: number; timeoutMs?: number; model?: string } = {},
+  opts: { numPredict?: number; numCtx?: number; timeoutMs?: number; model?: string; signal?: AbortSignal } = {},
 ): Promise<OllamaResult> {
   const model = opts.model?.trim() || cfg.ollamaModel;
   const numPredict = opts.numPredict ?? 512;
@@ -51,7 +51,7 @@ export async function ollamaChat(
         messages,
         options: { num_predict: numPredict, num_ctx: numCtx },
       }),
-      signal: controller.signal,
+      signal: opts.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal,
     });
     if (!res.ok) {
       return { ok: false, reason: res.status === 404 ? "notfound" : "error", status: res.status };
@@ -82,6 +82,7 @@ export async function ollamaChat(
     const trimmed = content.trim();
     return trimmed ? { ok: true, content: trimmed } : { ok: false, reason: "error" };
   } catch {
+    opts.signal?.throwIfAborted();
     // A timeout aborts via controller; anything else means the stream dropped.
     return { ok: false, reason: timedOut ? "timeout" : "unreachable" };
   } finally {

@@ -86,11 +86,15 @@ describe("operations overview", () => {
     expect(metric("Failed deliveries")).toBe("0");
   });
 
-  it("renders activity, capacity, retries and failure metadata with no mutation controls", async () => {
+  it("renders job details, cancellation, capacity, retries and failure metadata", async () => {
     vi.mocked(api.getOperations).mockResolvedValue({
       ...operations, deliveryReady: false,
       jobs: {
-        ...operations.jobs, accepting: false, running: { kind: "profile", startedAt: operations.sampledAt - 65000 },
+        ...operations.jobs, accepting: false, running: {
+          id: "profile-id", kind: "profile", startedAt: operations.sampledAt - 65000,
+          description: "Profile refresh · Alice", stage: "Generating dossier",
+          queuedAt: operations.sampledAt - 65000, cancellable: true, cancelling: false,
+        },
         queued: 2, completed: 3, failed: 1, oldestQueuedAt: operations.sampledAt - 10000,
         rejected: { capacity: 4, duplicate: 5, stopping: 6 },
         recentFailures: [{ id: 1, kind: "command", startedAt: 1000, failedAt: 3000 }],
@@ -121,7 +125,39 @@ describe("operations overview", () => {
     expect(screen.getByText(/No automatic retry remaining/)).toBeTruthy();
     expect(screen.getByText(/Lease expires at/)).toBeTruthy();
     expect(screen.getByText(/Retry eligible at/)).toBeTruthy();
-    expect(screen.getAllByRole("button").map((button) => button.textContent?.trim())).toEqual(["Refresh operations"]);
+    expect(screen.getByText("Profile refresh · Alice")).toBeTruthy();
+    expect(screen.getByText("Stage: Generating dossier")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel running job" })).toBeTruthy();
+  });
+
+  it("cancels the specific running job and refreshes operations", async () => {
+    vi.spyOn(api, "cancelJob").mockResolvedValue({ ok: true, status: "cancelling" });
+    vi.mocked(api.getOperations).mockResolvedValue({
+      ...operations, jobs: { ...operations.jobs, running: {
+        id: "job-1", kind: "profile", startedAt: operations.sampledAt,
+        description: "Profile refresh · Alice", stage: "Generating short briefing",
+        queuedAt: operations.sampledAt, cancellable: true, cancelling: false,
+      } },
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel running job" }));
+    expect(await screen.findByText(/Cancellation requested/)).toBeTruthy();
+    expect(api.cancelJob).toHaveBeenCalledWith("job-1", expect.anything());
+    expect(api.getOperations).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports cancellation errors and permits cancelling queued jobs", async () => {
+    vi.spyOn(api, "cancelJob").mockRejectedValue(new Error("Job already finished"));
+    vi.mocked(api.getOperations).mockResolvedValue({
+      ...operations, jobs: { ...operations.jobs, queued: 1, queuedJobs: [{
+        id: "queued-1", kind: "command", description: "bot.ask · Friends", stage: "Waiting",
+        queuedAt: operations.sampledAt, cancellable: true, cancelling: false,
+      }] },
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel queued job" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Job already finished");
+    expect(api.cancelJob).toHaveBeenCalledWith("queued-1", expect.anything());
   });
 
   it("keeps cached data explicitly marked stale after a refresh fails", async () => {

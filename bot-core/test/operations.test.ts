@@ -15,6 +15,52 @@ function setup() {
 }
 
 describe("background operations snapshot", () => {
+  it("aborts a running cancellable job, counts cancellation separately and continues the queue", async () => {
+    const errors = vi.fn();
+    const jobs = new BackgroundJobs(errors);
+    let signal!: AbortSignal;
+    jobs.submit("profile", async (control) => {
+      signal = control.signal;
+      control.setStage("Generating dossier");
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    }, 1, "profile", { description: "Profile refresh · Alice", cancellable: true });
+    const next = vi.fn(async () => {});
+    jobs.submit("next", next);
+    await Promise.resolve();
+    const running = jobs.snapshot().running!;
+    expect(running).toMatchObject({ description: "Profile refresh · Alice", stage: "Generating dossier" });
+    expect(jobs.cancel(running.id)).toBe("cancelling");
+    expect(signal.aborted).toBe(true);
+    expect(jobs.snapshot().running?.cancelling).toBe(true);
+    await jobs.stop();
+    expect(jobs.snapshot()).toMatchObject({ cancelled: 1, completed: 1, failed: 0, running: null });
+    expect(next).toHaveBeenCalledOnce();
+    expect(errors).not.toHaveBeenCalled();
+    expect(jobs.cancel(running.id)).toBe("not-found");
+  });
+
+  it("removes queued work and releases capacity without pretending to cancel unsupported running work", async () => {
+    const jobs = new BackgroundJobs(() => {}, 2);
+    let release!: () => void;
+    jobs.submit("active", () => new Promise<void>((resolve) => { release = resolve; }));
+    const run = vi.fn(async () => {});
+    const onCancel = vi.fn();
+    jobs.submit("queued", run, 1, "profile", { onCancel });
+    await Promise.resolve();
+    expect(jobs.cancel(jobs.snapshot().running!.id)).toBe("unsupported");
+    const id = jobs.snapshot().queuedJobs[0].id;
+    expect(jobs.cancel(id)).toBe("cancelled");
+    expect(jobs.cancel(id)).toBe("not-found");
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(jobs.submit("queued", async () => {})).toBe(true);
+    release();
+    await jobs.stop();
+    expect(run).not.toHaveBeenCalled();
+    expect(jobs.snapshot()).toMatchObject({ cancelled: 1, completed: 2, queuedJobs: [] });
+  });
+
   it("tracks running, queued, rejection reasons and drained completions without identifiers", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1000);

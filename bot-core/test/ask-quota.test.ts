@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../src/state/db.js";
 import { AskQuotaStore } from "../src/state/ask-quota.js";
-import { ContactsStore } from "../src/state/repos.js";
+import { ContactsStore, SiestaDisciplineStore } from "../src/state/repos.js";
 import { removeScopedSchema } from "./legacy-schema.js";
 
 const NOW = Date.parse("2026-10-18T12:00:00Z");
@@ -19,6 +19,76 @@ function setup() {
 }
 
 describe("persistent ask quota", () => {
+  it("resets one user's usage and cooldown across all chats and verified aliases only", () => {
+    const { db, quota } = setup();
+    for (const chat of ["a@g.us", "b@g.us"]) {
+      for (let i = 0; i < 10; i++) {
+        quota.consume(chat, "900@lid", null, NOW);
+        quota.consume(chat, PN, null, NOW);
+        quota.consume(chat, "34600000002@s.whatsapp.net", null, NOW);
+      }
+    }
+    new ContactsStore(db).upsertMany([{ jid: "900@lid", phone: "34600000001", name: "Alice" }]);
+    quota.resetForUser("34600000001:2@s.whatsapp.net");
+    quota.resetForUser(PN);
+    for (const chat of ["a@g.us", "b@g.us"]) {
+      for (let i = 0; i < 10; i++) expect(quota.consume(chat, "900@lid", null, NOW + 1).allowed).toBe(true);
+      expect(quota.consume(chat, PN, null, NOW + 1).allowed).toBe(false);
+      expect(quota.consume(chat, "34600000002@s.whatsapp.net", null, NOW + 1).allowed).toBe(false);
+    }
+  });
+
+  it("migrates schema ten preserving ask cooldowns, legacy siestas and discipline", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bot-call-limits-"));
+    const path = join(directory, "bot.db");
+    let db = openDatabase(path);
+    try {
+      const quota = new AskQuotaStore(db);
+      for (let i = 0; i < 10; i++) quota.consume("g@g.us", PN, null, NOW);
+      const discipline = new SiestaDisciplineStore(db);
+      discipline.recordAllowedSiesta("g@g.us", PN, "2026-10-18");
+      discipline.arm("g@g.us", PN);
+      db.exec("DROP TABLE siesta_usage; PRAGMA user_version = 10;");
+      db.close();
+      db = openDatabase(path);
+      expect(new AskQuotaStore(db).consume("g@g.us", PN, null, NOW + 1))
+        .toEqual({ allowed: false, retryAt: NOW + HOUR });
+      const restored = new SiestaDisciplineStore(db);
+      expect(restored.countToday("g@g.us", PN, "2026-10-18")).toBe(1);
+      expect(restored.isArmed("g@g.us", PN)).toBe(true);
+      restored.recordAllowedSiesta("g@g.us", PN, "2026-10-18");
+      db.close();
+      db = openDatabase(path);
+      expect(new SiestaDisciplineStore(db).countToday("g@g.us", PN, "2026-10-18")).toBe(2);
+      expect(new AskQuotaStore(db).consume("g@g.us", PN, null, NOW + 2, 11).allowed).toBe(true);
+      new AskQuotaStore(db).resetForUser(PN);
+      new SiestaDisciplineStore(db).resetUsageForUser(PN);
+      db.close();
+      db = openDatabase(path);
+      expect(new SiestaDisciplineStore(db).countToday("g@g.us", PN, "2026-10-18")).toBe(0);
+      expect(new SiestaDisciplineStore(db).get("g@g.us", PN)?.lastSiestaDay).toBeNull();
+      expect(new SiestaDisciplineStore(db).isArmed("g@g.us", PN)).toBe(true);
+      expect(new AskQuotaStore(db).consume("g@g.us", PN, null, NOW + 3, 1).allowed).toBe(true);
+      expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
+    } finally {
+      if (db.open) db.close();
+      for (const suffix of ["", "-wal", "-shm"]) rmSync(`${path}${suffix}`, { force: true });
+      rmdirSync(directory);
+    }
+  });
+
+  it("supports limits above ten and preserves usage when the limit changes", () => {
+    const { quota } = setup();
+    for (let i = 0; i < 12; i++) expect(quota.consume("g@g.us", PN, null, NOW, 12).allowed).toBe(true);
+    expect(quota.consume("g@g.us", PN, null, NOW, 12)).toEqual({ allowed: false, retryAt: NOW + HOUR });
+    expect(quota.consume("g@g.us", PN, null, NOW, 5).allowed).toBe(false);
+    expect(quota.consume("g@g.us", PN, null, NOW, 13).allowed).toBe(true);
+    expect(quota.consume("g@g.us", PN, null, NOW, 13).allowed).toBe(false);
+    expect(quota.consume("g@g.us", PN, null, NOW + HOUR, 2).allowed).toBe(true);
+    expect(quota.consume("g@g.us", PN, null, NOW + HOUR, 2).allowed).toBe(true);
+    expect(quota.consume("g@g.us", PN, null, NOW + HOUR, 2).allowed).toBe(false);
+  });
+
   it("allows exactly ten and resets at the exact cooldown boundary without extending it on rejection", () => {
     const { quota } = setup();
     for (let i = 0; i < 10; i++) expect(quota.consume("group@g.us", PN, null, NOW)).toEqual({ allowed: true });
@@ -73,7 +143,7 @@ describe("persistent ask quota", () => {
       const before = snapshot();
       db.close();
       db = openDatabase(path);
-      expect(db.pragma("user_version", { simple: true })).toBe(10);
+      expect(db.pragma("user_version", { simple: true })).toBe(11);
       expect(snapshot()).toEqual(before);
       const quota = new AskQuotaStore(db);
       for (let i = 0; i < 10; i++) quota.consume("group@g.us", PN, null, NOW);

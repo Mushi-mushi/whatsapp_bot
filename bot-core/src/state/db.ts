@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const DATABASE_SCHEMA_VERSION = 10;
+export const DATABASE_SCHEMA_VERSION = 11;
 
 // Single SQLite database (WAL) for config, dedup, and analytics.
 export function openDatabase(path: string): Database.Database {
@@ -387,6 +387,34 @@ function migrate(db: Database.Database): void {
         );
         CREATE INDEX idx_suggestions_ts ON suggestions(ts DESC, id DESC);
         PRAGMA user_version = 10;
+      `);
+    })();
+  }
+  if (version < 11) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE ask_quota RENAME TO ask_quota_old;
+        CREATE TABLE ask_quota (
+          chat_id TEXT NOT NULL,
+          sender_id TEXT NOT NULL,
+          day TEXT NOT NULL,
+          used INTEGER NOT NULL CHECK(used >= 1),
+          reset_at INTEGER,
+          PRIMARY KEY (chat_id, sender_id)
+        );
+        INSERT INTO ask_quota SELECT * FROM ask_quota_old;
+        DROP TABLE ask_quota_old;
+        CREATE TABLE IF NOT EXISTS siesta_usage (
+          chat_id TEXT NOT NULL,
+          sender_id TEXT NOT NULL,
+          day TEXT NOT NULL,
+          used INTEGER NOT NULL CHECK(used >= 1),
+          PRIMARY KEY (chat_id, sender_id)
+        );
+        INSERT OR IGNORE INTO siesta_usage(chat_id, sender_id, day, used)
+          SELECT chat_id, sender_id, last_siesta_day, 1
+          FROM siesta_discipline WHERE last_siesta_day IS NOT NULL;
+        PRAGMA user_version = 11;
       `);
     })();
   }

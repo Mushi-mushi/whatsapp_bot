@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 import type { BotConfig } from "../../config/schema.js";
 import type { UserMemoryStore, UserProfile, UserProfileStore } from "../../state/repos.js";
-import type { BackgroundJobs } from "../../router/jobs.js";
+import { JobCancelledError, type BackgroundJobs, type JobControl } from "../../router/jobs.js";
 import { ollamaChat } from "../../util/ollama.js";
 
 // Need at least a few messages before a profile is worth generating.
@@ -61,15 +61,19 @@ export class ProfileService {
     const canonical = this.memory.canonicalKey(senderKey);
     const generation = this.generationFor(canonical);
     return new Promise((resolve, reject) => {
-      const accepted = this.jobs.submit(`profile:${canonical}`, async () => {
+      const accepted = this.jobs.submit(`profile:${canonical}`, async (control) => {
         try {
           resolve(generation === this.generationFor(canonical)
-            ? await this.refresh(canonical, name) : null);
+            ? await this.refresh(canonical, name, this.getConfig(), control) : null);
         } catch (error) {
           reject(error);
           throw error;
         }
-      }, 1, "profile");
+      }, 1, "profile", {
+        description: `Profile refresh · ${name}`,
+        cancellable: true,
+        onCancel: () => reject(new JobCancelledError()),
+      });
       if (!accepted) reject(new ProfileQueueError());
     });
   }
@@ -99,8 +103,12 @@ export class ProfileService {
   // Rebuild a user's dossier (merging the existing one with new messages) and its
   // short briefing. Returns the updated profile, or null if there's too little to
   // go on or the LLM was unreachable. Safe to call directly (e.g. bot.profile).
-  async refresh(senderKey: string, name: string, cfg = this.getConfig()): Promise<UserProfile | null> {
+  async refresh(senderKey: string, name: string, cfg = this.getConfig(), control?: JobControl): Promise<UserProfile | null> {
     if (!cfg.userMemoryEnabled || !cfg.askEnabled) return null;
+    // Bound the entire refresh, even if streaming output keeps the inactivity timer alive.
+    const deadline = AbortSignal.timeout(cfg.ollamaTimeoutSeconds * 1000);
+    const signal = control ? AbortSignal.any([control.signal, deadline]) : deadline;
+    signal.throwIfAborted();
     const canonical = this.memory.canonicalKey(senderKey);
     const generation = this.generationFor(canonical);
     const lastProfiledId = this.memory.latestId(canonical);
@@ -117,6 +125,7 @@ export class ProfileService {
       .map((m) => `- "${m.length > MAX_MSG_LEN ? `${m.slice(0, MAX_MSG_LEN)}…` : m}"`)
       .join("\n");
 
+    control?.setStage("Generating dossier");
     const deepRes = await ollamaChat(
       cfg,
       [
@@ -134,8 +143,9 @@ export class ProfileService {
           content: `Person: ${name}\n\nPREVIOUS DOSSIER:\n${previousDossier || "(none yet)"}\n\nNEW MESSAGES:\n${lines}`,
         },
       ],
-      { numPredict: 600, numCtx: 8192 },
+      { numPredict: 600, numCtx: 8192, signal },
     );
+    signal.throwIfAborted();
     if (generation !== this.generationFor(canonical)) return null;
     if (!deepRes.ok) {
       this.logger.warn({ senderKey: canonical, result: deepRes }, "profile generation failed");
@@ -143,6 +153,7 @@ export class ProfileService {
     }
     const deep = deepRes.content.trim();
 
+    control?.setStage("Generating short briefing");
     const shortRes = await ollamaChat(
       cfg,
       [
@@ -155,8 +166,9 @@ export class ProfileService {
         },
         { role: "user", content: `Dossier for ${name}:\n${deep}` },
       ],
-      { numPredict: 300 },
+      { numPredict: 300, signal },
     );
+    signal.throwIfAborted();
     if (generation !== this.generationFor(canonical)) return null;
     if (!shortRes.ok) this.logger.warn({ senderKey: canonical, result: shortRes }, "profile briefing failed; using dossier excerpt");
     const short = shortRes.ok

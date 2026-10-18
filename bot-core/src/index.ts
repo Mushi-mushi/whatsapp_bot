@@ -198,6 +198,7 @@ async function main(): Promise<void> {
       pets,
       runtime,
       discipline,
+      askQuota: new AskQuotaStore(db),
       contacts,
       logger,
       apiToken: API_TOKEN,

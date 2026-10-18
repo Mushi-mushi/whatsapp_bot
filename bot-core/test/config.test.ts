@@ -1,10 +1,25 @@
 import { describe, it, expect } from "vitest";
 import { openDatabase } from "../src/state/db.js";
 import { ConfigStore } from "../src/state/repos.js";
-import { DEFAULT_CONFIG, type BotConfig } from "../src/config/schema.js";
+import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../src/config/schema.js";
 import { REDACTED, redactSecrets, restoreSecrets } from "../src/config/secrets.js";
 
 describe("ConfigStore.load", () => {
+  it("defaults, validates and persists configurable command limits", () => {
+    const db = openDatabase(":memory:");
+    try {
+      const store = new ConfigStore(db);
+      expect(store.load()).toMatchObject({ askMaxCalls: 10, siestaMaxCalls: 1 });
+      store.save({ ...store.load(), askMaxCalls: 25, siestaMaxCalls: 3 });
+      expect(new ConfigStore(db).load()).toMatchObject({ askMaxCalls: 25, siestaMaxCalls: 3 });
+      for (const field of ["askMaxCalls", "siestaMaxCalls"]) {
+        for (const value of [0, -1, 1.5, "10", Number.MAX_SAFE_INTEGER + 1]) {
+          expect(ConfigSchema.safeParse({ [field]: value }).success).toBe(false);
+        }
+      }
+    } finally { db.close(); }
+  });
+
   it.each(["{broken", JSON.stringify({ askEnabled: "invalid" })])("rejects invalid saved configuration without replacing it", (value) => {
     const db = openDatabase(":memory:");
     try {
