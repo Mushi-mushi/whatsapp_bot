@@ -8,6 +8,7 @@ const ACTIONS: Record<string, AuditAction> = {
   "PUT /api/reminders/:id": "reminder.update",
   "DELETE /api/reminders/:id": "reminder.cancel",
   "DELETE /api/tells/:id": "tell.cancel",
+  "DELETE /api/suggestions/:id": "suggestion.delete",
   "POST /api/operations/deliveries/:id/retry": "delivery.retry",
   "PUT /api/config": "config.save",
   "PUT /api/pets/:chatId": "pet.update",

@@ -181,11 +181,38 @@ export interface DeliveryRetryResponse {
   retriedId: number;
 }
 
-export type AuditAction = "reminder.create" | "reminder.update" | "reminder.cancel" | "tell.cancel" | "delivery.retry" | "config.save"
+export type AuditAction = "reminder.create" | "reminder.update" | "reminder.cancel" | "tell.cancel" | "suggestion.delete" | "delivery.retry" | "config.save"
   | "pet.update" | "pet.save" | "pet.enable" | "pet.disable" | "pet.pause" | "pet.resume"
   | "pet.request" | "pet.evolve" | "profile.refresh" | "profile.forget"
   | "siesta.cancel" | "discipline.sleep" | "discipline.arm" | "discipline.wake"
   | "trivia.reset" | "trivia.close-month" | "connection.pair" | "connection.resync" | "connection.relink";
+
+export type SuggestionKind = "explicit" | "unknown_command";
+
+export interface SuggestionEntry {
+  id: number;
+  createdAt: number;
+  chatId: string;
+  chatName: string | null;
+  senderId: string;
+  senderName: string;
+  kind: SuggestionKind;
+  command: string | null;
+  text: string;
+}
+
+export interface SuggestionsResponse {
+  suggestions: SuggestionEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sampledAt: number;
+}
+
+export interface SuggestionDeleteResponse {
+  ok: true;
+  deletedId: number;
+}
 
 export interface LeaderboardEntry {
   senderId: string;

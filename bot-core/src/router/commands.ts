@@ -30,6 +30,7 @@ export const COMMAND_CATALOGUE = {
   quote: { description: "a random quote", usage: "", aliases: [{ trigger: "bot.quote" }], execution: "inline" },
   siesta: { description: "put me on siesta", usage: "<minutes>", aliases: [{ trigger: "bot.siesta" }], execution: "inline" },
   complain: { description: "register a complaint", usage: "<text>", aliases: [{ trigger: "bot.complain" }], execution: "inline" },
+  suggest: { description: "suggest a new bot feature", usage: "<idea>", aliases: [{ trigger: "bot.suggest" }], execution: "inline" },
   score: { description: "sentiment score", usage: "[name]", aliases: [{ trigger: "bot.score" }], execution: "inline" },
   top_positive: { description: "most positive people", usage: "", aliases: [{ trigger: "bot.top.positive" }], execution: "inline" },
   top_negative: { description: "most negative people", usage: "", aliases: [{ trigger: "bot.top.negative" }], execution: "inline" },

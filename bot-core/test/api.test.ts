@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import { createApi, type ApiDeps } from "../src/api/server.js";
 import { openDatabase } from "../src/state/db.js";
-import { ConfigStore, ContactsStore, DuelWinStore, KarmaStore, KnownChatsStore, RemindersStore, SeenActivityStore, SiestaDisciplineStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
+import { ConfigStore, ContactsStore, DuelWinStore, KarmaStore, KnownChatsStore, RemindersStore, SeenActivityStore, SiestaDisciplineStore, SuggestionStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
 import { ProfileQueueError, ProfileService } from "../src/handlers/profiles/service.js";
 import { PetService } from "../src/pets/service.js";
@@ -49,6 +49,7 @@ async function setup(apiToken: string | undefined = "test-token", allowInsecureA
     duelScores: new DuelWinStore(db),
     karma: new KarmaStore(db),
     seenActivity: new SeenActivityStore(db),
+    suggestions: new SuggestionStore(db),
     userMemory, userProfiles, profiler, logger,
     pets: new PetService(new PetStore(db), () => configStore.load(), () => true),
     runtime,
@@ -507,6 +508,26 @@ describe("scheduled reminders API", () => {
       karma: [{ senderId: "34600000001@s.whatsapp.net", name: "Alice", score: 3 }],
       participants: [{ senderId: "34600000001@s.whatsapp.net", name: "Alice", lastSeenAt: 12345 }],
     });
+  });
+
+  it("lists and deletes logged suggestions with audit tracking", async () => {
+    const { app, deps } = await setup();
+    deps.knownChats.upsert([{ id: "group@g.us", name: "Friends" }]);
+    deps.suggestions!.log("group@g.us", "34600000001@s.whatsapp.net", "Alice", "explicit", "Add horoscopes", null, 100);
+    deps.suggestions!.log("group@g.us", "34600000001@s.whatsapp.net", "Alice", "unknown_command", "bot.dance now", "bot.dance", 200);
+
+    const list = (await app.inject({ url: "/api/suggestions", headers })).json();
+    expect(list.total).toBe(2);
+    expect(list.suggestions.map((s: { kind: string; command: string | null }) => [s.kind, s.command])).toEqual([
+      ["unknown_command", "bot.dance"],
+      ["explicit", null],
+    ]);
+
+    const del = await app.inject({ method: "DELETE", url: "/api/suggestions/1", headers });
+    expect(del.statusCode).toBe(200);
+    expect(del.json()).toEqual({ ok: true, deletedId: 1 });
+    expect((await app.inject({ method: "DELETE", url: "/api/suggestions/1", headers })).statusCode).toBe(409);
+    expect(deps.audit.list(1).entries[0].action).toBe("suggestion.delete");
   });
 
   it("does not claim cancellation while a worker is already sending the reminder", async () => {

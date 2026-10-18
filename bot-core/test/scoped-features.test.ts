@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { openDatabase } from "../src/state/db.js";
-import { ContactsStore, KarmaStore, SeenActivityStore, SentimentStore, TellStore,
+import { ContactsStore, KarmaStore, SeenActivityStore, SentimentStore, SuggestionStore, TellStore,
   TriviaScoreStore, DuelWinStore, UserMemoryStore, UserProfileStore, SiestaDisciplineStore } from "../src/state/repos.js";
 import { RuntimeState } from "../src/state/runtime.js";
 import { DEFAULT_CONFIG } from "../src/config/schema.js";
@@ -18,6 +18,7 @@ import { makeScore } from "../src/handlers/commands/score.js";
 import { makeTopPositive } from "../src/handlers/commands/top.js";
 import { makeTrivia, handleTriviaAnswer } from "../src/handlers/commands/trivia.js";
 import { makeInsults } from "../src/handlers/commands/insults.js";
+import { makeSuggest } from "../src/handlers/commands/suggest.js";
 import { makeFallback } from "../src/handlers/fallback.js";
 import { ProfileService } from "../src/handlers/profiles/service.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
@@ -46,11 +47,12 @@ function setup() {
   const tells = new TellStore(db);
   const karma = new KarmaStore(db);
   const sentiment = new SentimentStore(db);
+  const suggestions = new SuggestionStore(db);
   const scores = new TriviaScoreStore(db);
   const duelScores = new DuelWinStore(db);
   const userMemory = new UserMemoryStore(db);
   const profiler = new ProfileService(userMemory, new UserProfileStore(db), jobs, () => cfg, pino({ level: "silent" }));
-  const fallback = makeFallback({ runtime, sentiment, triviaScores: scores, duelScores, userMemory, profiler });
+  const fallback = makeFallback({ runtime, sentiment, suggestions, triviaScores: scores, duelScores, userMemory, profiler });
   const sendText = vi.fn<Transport["sendText"]>().mockResolvedValue(undefined);
   const transport = { sendText } as Transport;
   function context(args = "", over: Partial<IncomingMessage> = {}) {
@@ -69,7 +71,7 @@ function setup() {
       await activityTracker(tells)(ctx, async () => {});
     });
   }
-  return { db, runtime, cfg, people, tells, karma, sentiment, scores, duelScores, context, observe, fallback, sendText };
+  return { db, runtime, cfg, people, tells, karma, sentiment, suggestions, scores, duelScores, context, observe, fallback, sendText };
 }
 
 describe("chat-scoped named features", () => {
@@ -334,6 +336,37 @@ describe("identity-based games", () => {
     expect(sendText).not.toHaveBeenCalled();
     await fallback(context("random answer", { senderName: "Renamed" }));
     expect(game.botWins).toBe(1);
+  });
+
+  it("logs explicit bot.suggest ideas and silently logs unrecognized bot.xxxx commands without replying", async () => {
+    const { suggestions, sentiment, context, fallback, sendText } = setup();
+    const suggest = makeSuggest(suggestions);
+    await suggest(context(""));
+    expect(sendText).toHaveBeenCalledWith(CHAT, expect.stringContaining("Usage: `bot.suggest"));
+    expect(suggestions.list(1).total).toBe(0);
+
+    sendText.mockClear();
+    await suggest(context("Add a horoscope command"));
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(suggestions.list(1).suggestions[0]).toMatchObject({
+      kind: "explicit",
+      command: null,
+      text: "Add a horoscope command",
+      senderId: PN,
+      chatId: CHAT,
+    });
+
+    sendText.mockClear();
+    await fallback(context("hey bot.dance salsa"));
+    expect(sendText).not.toHaveBeenCalled();
+    expect(sentiment.scoreFor(CHAT, PN).count).toBe(0);
+    expect(suggestions.list(1).suggestions[0]).toMatchObject({
+      kind: "unknown_command",
+      command: "bot.dance",
+      text: "bot.dance salsa",
+      senderId: PN,
+      chatId: CHAT,
+    });
   });
 });
 

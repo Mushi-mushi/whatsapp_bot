@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
 import { redactSecrets, restoreSecrets } from "../config/secrets.js";
-import type { ConfigStore, ContactsStore, DuelWinStore, KarmaStore, KnownChatsStore, RemindersStore, SeenActivityStore, SiestaDisciplineStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
+import type { ConfigStore, ContactsStore, DuelWinStore, KarmaStore, KnownChatsStore, RemindersStore, SeenActivityStore, SiestaDisciplineStore, SuggestionStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
 import { ContactResolver } from "../transport/contacts.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import { ProfileQueueError } from "../handlers/profiles/service.js";
@@ -29,7 +29,7 @@ import type {
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
   OperationsResponse,
   ReminderCreateRequest, ReminderUpdateRequest, ReminderMutationResponse, ReminderCancelResponse,
-  TellCancelResponse, DeliveryRetryResponse,
+  TellCancelResponse, SuggestionDeleteResponse, DeliveryRetryResponse,
   LeaderboardsResponse,
 } from "../../../shared/api.js";
 
@@ -41,6 +41,7 @@ export interface ApiDeps {
   duelScores?: DuelWinStore;
   karma?: KarmaStore;
   seenActivity?: SeenActivityStore;
+  suggestions?: SuggestionStore;
   userMemory: UserMemoryStore;
   userProfiles: UserProfileStore;
   profiler: ProfileService;
@@ -200,6 +201,21 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       return reply.code(409).send({ ok: false, error: "Tell is no longer pending. It may already be queued, sent or cancelled; no delivery was cancelled." });
     }
     return { ok: true, cancelledId: parsed.data.id } satisfies TellCancelResponse;
+  });
+  app.get("/api/suggestions", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = listPage.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Invalid suggestions page. Use a whole number from 1 to 1000000." });
+    return deps.suggestions ? deps.suggestions.list(parsed.data.page) : { suggestions: [], total: 0, page: parsed.data.page, pageSize: 50, sampledAt: Date.now() };
+  });
+  app.delete("/api/suggestions/:id", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = recordId.safeParse(req.params);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Invalid suggestion ID." });
+    if (!deps.suggestions?.remove(parsed.data.id)) {
+      return reply.code(409).send({ ok: false, error: "Suggestion is no longer present." });
+    }
+    return { ok: true, deletedId: parsed.data.id } satisfies SuggestionDeleteResponse;
   });
   app.get("/api/operations/failed-deliveries", async (req, reply) => {
     reply.header("Cache-Control", "no-store");

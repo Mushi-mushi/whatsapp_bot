@@ -375,6 +375,17 @@ function migrate(db: Database.Database): void {
     db.transaction(() => {
       db.exec(`
         ALTER TABLE reminders ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'once' CHECK(recurrence IN ('once','daily','weekly'));
+        CREATE TABLE suggestions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts INTEGER NOT NULL,
+          chat_id TEXT NOT NULL,
+          sender_id TEXT NOT NULL,
+          sender_name TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('explicit','unknown_command')),
+          command TEXT,
+          text TEXT NOT NULL
+        );
+        CREATE INDEX idx_suggestions_ts ON suggestions(ts DESC, id DESC);
         PRAGMA user_version = 10;
       `);
     })();

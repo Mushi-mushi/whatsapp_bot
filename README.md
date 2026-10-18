@@ -320,6 +320,15 @@ each known/approved chat showing:
 - **Karma** standings
 - **Participants & last seen** directory for the selected chat
 
+## Feature Suggestions & Unknown Commands
+
+Users can submit feature ideas with `bot.suggest <idea>`. In addition, whenever a
+message contains an unrecognized `bot.xxxx` command token that does not match any
+configured command, the bot **silently logs it** in `suggestions` (`kind = 'unknown_command'`)
+without replying in chat. The **Suggestions** dashboard tab (`GET /api/suggestions`,
+`DELETE /api/suggestions/:id`) lists both explicit suggestions and unknown
+command attempts so they can be reviewed and dismissed.
+
 ## Pending Tells
 
 The **Pending tells** tab lists and cancels tells not yet handed to delivery.

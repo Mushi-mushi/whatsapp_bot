@@ -113,7 +113,7 @@ describe("configuration editor", () => {
     mount();
     await screen.findByRole("button", { name: "Connection" });
     expect(within(screen.getByRole("navigation")).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
-      "Connection", "General", "Access", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep", "Operations", "Reminders", "Pending tells", "Leaderboards",
+      "Connection", "General", "Access", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep", "Operations", "Reminders", "Pending tells", "Leaderboards", "Suggestions",
     ]);
     expect(screen.queryByLabelText("Prefix")).toBeNull();
   });

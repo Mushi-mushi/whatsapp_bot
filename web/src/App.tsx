@@ -17,13 +17,14 @@ import { OperationsCard } from "@/components/OperationsCard";
 import { RemindersCard } from "@/components/RemindersCard";
 import { PendingTellsCard } from "@/components/PendingTellsCard";
 import { LeaderboardsCard } from "@/components/LeaderboardsCard";
+import { SuggestionsCard } from "@/components/SuggestionsCard";
 import { FieldValidationProvider, useFieldErrors } from "@/components/fields";
 import { LoadingState, QueryError } from "@/components/QueryFeedback";
-import { AlarmClock, Bot, Brain, Check, Image, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles, Trophy } from "lucide-react";
+import { AlarmClock, Bot, Brain, Check, Image, Lightbulb, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles, Trophy } from "lucide-react";
 
 const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;
 
-type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations" | "reminders" | "tells" | "leaderboards";
+type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations" | "reminders" | "tells" | "leaderboards" | "suggestions";
 
 // Which config fields live on which tab — drives the per-tab "unsaved" dot.
 const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
@@ -34,6 +35,7 @@ const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
   reminders: [],
   tells: [],
   leaderboards: [],
+  suggestions: [],
   general: [
     "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia", "deleteInstagramPosts",
     "instagramDeleteSenders", "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl",
@@ -241,6 +243,9 @@ function Dashboard() {
         <TabButton active={tab === "leaderboards"} onClick={() => selectTab("leaderboards")}>
           <Trophy className="h-4 w-4" /> Leaderboards
         </TabButton>
+        <TabButton active={tab === "suggestions"} onClick={() => selectTab("suggestions")}>
+          <Lightbulb className="h-4 w-4" /> Suggestions
+        </TabButton>
       </nav>
 
       {tab === "pets" && <PetsCard />}
@@ -248,6 +253,7 @@ function Dashboard() {
       {tab === "reminders" && <RemindersCard chats={chatsQuery.data?.chats ?? []} />}
       {tab === "tells" && <PendingTellsCard />}
       {tab === "leaderboards" && <LeaderboardsCard />}
+      {tab === "suggestions" && <SuggestionsCard />}
 
       {tab === "discipline" && (
         <div className="grid min-w-0 gap-4">

@@ -11,6 +11,7 @@ import {
   SeenStore,
   SentimentStore,
   SiestaDisciplineStore,
+  SuggestionStore,
   TellStore,
   TriviaScoreStore,
   DuelWinStore,
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
   const knownChats = new KnownChatsStore(db);
   const sentiment = new SentimentStore(db);
   const complaints = new ComplaintStore(db);
+  const suggestions = new SuggestionStore(db);
   const contacts = new ContactsStore(db);
   const seenActivity = new SeenActivityStore(db);
   const tells = new TellStore(db);
@@ -135,7 +137,7 @@ async function main(): Promise<void> {
   bot.on("audio", jobs.wrap(makeAudioHandler(logger)));
   bot.on("image", jobs.wrap(paintImage));
   bot.hears(KARMA_PATTERN, makeKarmaHears(karma, seenActivity));
-  bot.fallback(makeFallback({ runtime, sentiment, triviaScores, duelScores, userMemory, profiler }));
+  bot.fallback(makeFallback({ runtime, sentiment, suggestions, triviaScores, duelScores, userMemory, profiler }));
 
   const commandRegistry = buildCommandRegistry({
     runtime,
@@ -143,6 +145,7 @@ async function main(): Promise<void> {
     askQuota: new AskQuotaStore(db),
     sentiment,
     complaints,
+    suggestions,
     seenActivity,
     tells,
     karma,
@@ -188,6 +191,7 @@ async function main(): Promise<void> {
       duelScores,
       karma,
       seenActivity,
+      suggestions,
       userMemory,
       userProfiles,
       profiler,

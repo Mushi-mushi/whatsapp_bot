@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.js";
 import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
-import type { Contact, PendingTell, ReminderRecurrence, RemindersResponse, ScheduledReminder, TellsResponse } from "../../../shared/api.js";
+import type { Contact, PendingTell, ReminderRecurrence, RemindersResponse, ScheduledReminder, SuggestionEntry, SuggestionKind, SuggestionsResponse, TellsResponse } from "../../../shared/api.js";
 import { type IdentityResolver, memoryChat, normalizeJid, phoneDigits, phoneFromJid } from "./identity.js";
 import { canonicalMemoryKey, canonicalScope, forPerson, identitiesFor, inChat, memoryKeyAliases, type PersonScope } from "./scoped.js";
 import { PlayerScores } from "./player-scores.js";
@@ -17,7 +17,8 @@ const CONFIG_VERSION_KEY = "config_version";
 // v12 adds ask.raw (no-profile ask) and as (impersonate a profiled user).
 // v13 adds models (list installed Ollama models).
 // v14 adds the opt-in, per-group pet. v15 adds owner-controlled AI service toggles.
-const CONFIG_VERSION = 15;
+// v16 adds bot.suggest for logging feature suggestions.
+const CONFIG_VERSION = 16;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {
@@ -182,6 +183,44 @@ export class ComplaintStore {
     this.db
       .prepare("INSERT INTO complaints (ts, sender, message) VALUES (?, ?, ?)")
       .run(Date.now(), sender, message);
+  }
+}
+
+export class SuggestionStore {
+  constructor(private readonly db: Database.Database) {}
+
+  log(
+    chatId: string,
+    senderId: string,
+    senderName: string,
+    kind: SuggestionKind,
+    text: string,
+    command: string | null = null,
+    now = Date.now(),
+  ): number {
+    const scope = canonicalScope(identitiesFor(this.db), chatId, senderId);
+    const info = this.db
+      .prepare(
+        "INSERT INTO suggestions (ts, chat_id, sender_id, sender_name, kind, command, text) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(now, scope.chat_id, scope.sender_id, senderName, kind, command, text);
+    return Number(info.lastInsertRowid);
+  }
+
+  list(page: number, now = Date.now()): SuggestionsResponse {
+    const pageSize = 50;
+    return this.db.transaction(() => {
+      const { total } = this.db.prepare("SELECT COUNT(*) AS total FROM suggestions").get() as { total: number };
+      const suggestions = this.db.prepare(`SELECT s.id, s.ts AS createdAt, s.chat_id AS chatId, c.name AS chatName,
+        s.sender_id AS senderId, s.sender_name AS senderName, s.kind, s.command, s.text
+        FROM suggestions s LEFT JOIN chat_directory c ON c.id = s.chat_id
+        ORDER BY s.ts DESC, s.id DESC LIMIT ? OFFSET ?`).all(pageSize, (page - 1) * pageSize) as SuggestionEntry[];
+      return { suggestions, total, page, pageSize, sampledAt: now };
+    })();
+  }
+
+  remove(id: number): boolean {
+    return this.db.prepare("DELETE FROM suggestions WHERE id = ?").run(id).changes === 1;
   }
 }
 

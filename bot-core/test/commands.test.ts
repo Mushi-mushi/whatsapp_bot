@@ -11,7 +11,7 @@ import { buildCommandRegistry } from "../src/handlers/commands/index.js";
 import { openDatabase } from "../src/state/db.js";
 import {
   ComplaintStore, ConfigStore, DuelWinStore, KarmaStore, RemindersStore,
-  SeenActivityStore, SentimentStore, SiestaDisciplineStore, TellStore,
+  SeenActivityStore, SentimentStore, SiestaDisciplineStore, SuggestionStore, TellStore,
   TriviaScoreStore, UserMemoryStore, UserProfileStore,
 } from "../src/state/repos.js";
 import { RuntimeState } from "../src/state/runtime.js";
@@ -27,6 +27,7 @@ const legacyCommands = {
   "bot.status": "status", "bot.help": "help", "bot.weather": "weather",
   "bot.meteo": "meteo", "bot.fact": "fact", "bot.8ball": "eightball",
   "bot.quote": "quote", "bot.siesta": "siesta", "bot.complain": "complain",
+  "bot.suggest": "suggest",
   "bot.score": "score", "bot.top.positive": "top_positive", "bot.top.negative": "top_negative",
   "bot.torture": "torture", "bot.insults": "insults", "bot.ask": "ask",
   "bot.ask.raw": "ask", "bot.models": "models", "bot.as": "as_user",
@@ -57,6 +58,7 @@ function setup() {
     runtime, discipline: new SiestaDisciplineStore(db),
     askQuota: new AskQuotaStore(db),
     sentiment: new SentimentStore(db), complaints: new ComplaintStore(db),
+    suggestions: new SuggestionStore(db),
     seenActivity: new SeenActivityStore(db), tells: new TellStore(db),
     karma: new KarmaStore(db), reminders: new RemindersStore(db),
     triviaScores: new TriviaScoreStore(db), duelScores: new DuelWinStore(db),

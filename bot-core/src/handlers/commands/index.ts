@@ -8,6 +8,7 @@ import type {
   SeenActivityStore,
   SentimentStore,
   SiestaDisciplineStore,
+  SuggestionStore,
   TellStore,
   TriviaScoreStore,
   UserMemoryStore,
@@ -23,6 +24,7 @@ import { eightball } from "./eightball.js";
 import { quote } from "./quote.js";
 import { makeSiesta } from "./siesta.js";
 import { makeComplain } from "./complain.js";
+import { makeSuggest } from "./suggest.js";
 import { makeScore } from "./score.js";
 import { makeTopNegative, makeTopPositive } from "./top.js";
 import { makeTorture } from "./torture.js";
@@ -55,6 +57,7 @@ export interface CommandDeps {
   askQuota: AskQuotaStore;
   sentiment: SentimentStore;
   complaints: ComplaintStore;
+  suggestions: SuggestionStore;
   seenActivity: SeenActivityStore;
   tells: TellStore;
   karma: KarmaStore;
@@ -81,6 +84,7 @@ export function buildCommandRegistry(deps: CommandDeps): CommandRegistry {
     quote,
     siesta: makeSiesta(deps.runtime, deps.discipline),
     complain: makeComplain(deps.complaints),
+    suggest: makeSuggest(deps.suggestions),
     score: makeScore(deps.sentiment, deps.seenActivity),
     top_positive: makeTopPositive(deps.sentiment),
     top_negative: makeTopNegative(deps.sentiment),

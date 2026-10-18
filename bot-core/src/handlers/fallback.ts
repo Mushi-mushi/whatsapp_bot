@@ -2,24 +2,26 @@ import type { Handler } from "../router/router.js";
 import { chatKey } from "./commands/user-context.js";
 import { messagePerson } from "./commands/local-target.js";
 import type { RuntimeState } from "../state/runtime.js";
-import type { SentimentStore, TriviaScoreStore, DuelWinStore, UserMemoryStore } from "../state/repos.js";
+import type { SentimentStore, SuggestionStore, TriviaScoreStore, DuelWinStore, UserMemoryStore } from "../state/repos.js";
 import type { ProfileService } from "./profiles/service.js";
 import { analyzeSentiment } from "../analyzers/sentiment.js";
 import { senderKey } from "./commands/user-context.js";
 import { checkComeback } from "./insults/game.js";
 import { handleTriviaAnswer } from "./commands/trivia.js";
+import { extractCommandToken } from "../router/normalize.js";
 
 export interface FallbackDeps {
   runtime: RuntimeState;
   sentiment: SentimentStore;
+  suggestions?: SuggestionStore;
   triviaScores: TriviaScoreStore;
   duelScores: DuelWinStore;
   userMemory: UserMemoryStore;
   profiler: ProfileService;
 }
 
-// Handles free-form (non-command) text: active games, static keyword replies,
-// then passive sentiment logging.
+// Handles free-form (non-command) text: active games, unknown bot.xxxx command logging,
+// static keyword replies, then passive sentiment logging.
 export function makeFallback(deps: FallbackDeps): Handler {
   return async (ctx) => {
     const text = ctx.text.trim();
@@ -54,7 +56,23 @@ export function makeFallback(deps: FallbackDeps): Handler {
       return;
     }
 
-    // 3) Static keyword responses (exact, case-insensitive match).
+    // 3) Unrecognized `bot.xxxx` command attempts: silently log as a potential
+    // future command suggestion instead of treating it as normal chatter.
+    const cmdToken = extractCommandToken(text);
+    if (cmdToken) {
+      const cmdWord = cmdToken.split(/\s+/, 1)[0].toLowerCase();
+      deps.suggestions?.log(
+        chatKey(ctx.msg),
+        messagePerson(ctx.msg),
+        ctx.msg.senderName || "unknown",
+        "unknown_command",
+        cmdToken,
+        cmdWord,
+      );
+      return;
+    }
+
+    // 4) Static keyword responses (exact, case-insensitive match).
     const reply = ctx.config.keywordResponses[text.toLowerCase()];
     if (reply) {
       await ctx.reply(reply);

@@ -6,7 +6,8 @@ import type {
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
   OperationsResponse, ServiceDiagnosticsResponse,
   RemindersResponse, ReminderCancelResponse, ReminderCreateRequest, ReminderUpdateRequest, ReminderMutationResponse,
-  TellsResponse, TellCancelResponse, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest, DeliveryRetryResponse,
+  TellsResponse, TellCancelResponse, SuggestionsResponse, SuggestionDeleteResponse,
+  FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest, DeliveryRetryResponse,
   AuditResponse, LeaderboardsResponse,
 } from "../../../shared/api.js";
 export type {
@@ -15,7 +16,8 @@ export type {
   ProfileDetail, PetSettings, GroupPet, PetGroup, PetsResponse, PetUpdate, PetRequestChoice,
   OperationsResponse, ServiceDiagnosticsResponse,
   ScheduledReminder, RemindersResponse, ReminderCreateRequest, ReminderUpdateRequest, ReminderMutationResponse, ReminderRecurrence,
-  PendingTell, TellsResponse, FailedDelivery, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest,
+  PendingTell, TellsResponse, SuggestionKind, SuggestionEntry, SuggestionsResponse, SuggestionDeleteResponse,
+  FailedDelivery, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest,
   AuditEntry, AuditResponse,
   LeaderboardEntry, TrophyEntry, TrophyHistoryEntry, ChatParticipantEntry, ChatLeaderboards, LeaderboardsResponse,
 } from "../../../shared/api.js";
@@ -75,6 +77,10 @@ export const api = {
     fetch(`/api/tells?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<TellsResponse>),
   cancelTell: (id: number) =>
     fetch(`/api/tells/${id}`, { method: "DELETE", headers: authHeaders() }).then(json<TellCancelResponse>),
+  getSuggestions: (page = 1) =>
+    fetch(`/api/suggestions?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<SuggestionsResponse>),
+  deleteSuggestion: (id: number) =>
+    fetch(`/api/suggestions/${id}`, { method: "DELETE", headers: authHeaders() }).then(json<SuggestionDeleteResponse>),
   getFailedDeliveries: (page = 1) =>
     fetch(`/api/operations/failed-deliveries?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<FailedDeliveriesResponse>),
   getDeliveryHistory: (id: number) =>
