@@ -12,6 +12,9 @@ export const ConfigSchema = z.object({
   transcriptionTimeoutSeconds: z.number().int().min(5).default(90),
 
   audioDownloadEnabled: z.boolean().default(true),
+  retentionEnabled: z.boolean().default(true),
+  analyticsRetentionDays: z.number().int().min(1).max(3650).default(90),
+  deliveryRetentionDays: z.number().int().min(1).max(3650).default(30),
 
   // Ollama (local LLM on the host) powering the bot.ask command.
   askEnabled: z.boolean().default(true),

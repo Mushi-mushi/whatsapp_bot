@@ -140,6 +140,27 @@ Message bodies are no longer logged by incoming-message middleware. Analytics
 and delivered outbox rows still contain message text: apply a retention policy
 appropriate to your chats and protect backups as sensitive data.
 
+### Data Retention
+
+The **General** tab controls automatic cleanup (enabled by default), with
+90 days for sentiment/complaint analytics and 30 days for sent/cancelled outbox
+records. Limits are whole days from 1 to 3650. Cleanup runs at startup and every
+24 hours using the latest saved settings, including eligible pre-existing data.
+Changes take effect on the next pass; disabling cleanup does not restore deleted
+records. Failures roll back the transaction and are logged; the next daily pass
+retries. Successful passes log deletion counts without message contents.
+
+Analytics age uses the recorded event timestamp. Delivery record age uses its
+**queued/created timestamp**, not its completion time (which is not recorded).
+Only records strictly older than the cutoff are removed. Pending, sending and
+failed deliveries are always protected. Pet state/events, trivia/duel scores,
+karma, reminders, tells, configuration and AI memory/profiles are untouched.
+Removing sentiment history changes summaries derived from that history.
+
+This does not purge existing backups or WhatsApp authentication. SQLite may
+reuse freed pages without shrinking the file; cleanup is not secure erasure.
+Protect backups separately and retain them according to your own policy.
+
 ## Operations Overview
 
 The dashboard's **Operations** tab polls `GET /api/operations` every five seconds
@@ -329,6 +350,58 @@ tracked by Git; check `git ls-files` before committing runtime-related changes.
 Test restoration into a separate directory, without simultaneously connecting
 two bot instances with the same WhatsApp credentials. Restore a matching
 application/database version; newer database versions fail closed.
+
+### Automated Database Backups
+
+Compose enables a SQLite online backup at startup and every 24 hours while the
+process runs. Backups do not need a WhatsApp disconnect or database downtime.
+Configure the host storage and retention in the ignored local `.env`:
+
+```dotenv
+BACKUP_HOST_DIR=../whatsapp_bot_backups
+BACKUP_RETENTION_DAYS=14
+```
+
+Choose a dedicated directory **outside the repository**. Compose mounts it at
+`/backups`; on Linux it must be writable by the backend's UID 1000. Use forward
+slashes in Windows Compose paths. Retention accepts whole days from 1 to 3650;
+invalid values fail startup instead of silently changing policy. Restart the
+backend after changing these environment settings. Standalone (non-Compose)
+runs use `BACKUP_DIR` as the destination; unset/blank disables automatic backups.
+Compose supplies `BACKUP_DIR=/backups`.
+
+Each pass uses SQLite's backup API, opens the isolated copy without application
+migrations, checks `integrity_check` and `foreign_key_check`, switches the copy to
+standalone DELETE journal mode, then atomically publishes a
+`bot-auto-<timestamp>-<uuid>.db` file. Files are created with owner-only permissions
+where the filesystem supports them; protect the host directory and backups too.
+The automated test suite copies a published backup into a separate restore
+directory and verifies schema, integrity and representative records without
+starting another bot or touching live data.
+
+Only regular files with the generated name format and timestamps strictly older
+than the configured retention limit are pruned, **after** a new verified backup.
+Manual backups, subdirectories, unrelated files and incomplete `.partial` files
+from a crash are never pruned automatically. Failed attempts clean their own
+incomplete files; leftover crash files require manual inspection. Failures are
+logged and retried on the next daily pass. Overlapping runs are coalesced, and
+shutdown waits for an active backup before closing SQLite.
+
+**Operations → Database backups** shows enabled/running state, last verification
+time and age, size, next scheduled run and explicit backup/retention failures.
+Verification metadata is persisted in SQLite across restarts; it records the
+last verification, not a guarantee that someone has not since moved/deleted a
+backup. No paths, credentials or raw errors are exposed by the API.
+
+These are database-only, unencrypted backups: WhatsApp auth still needs the
+controlled full-data backup described above. Keep an off-device copy if host
+disk failure must be recoverable. Old pre-cleanup data remains sensitive in
+backups until those backups expire. To test recovery manually, copy a backup to
+an isolated directory and open it with a raw SQLite client for integrity/schema
+checks, never the application's migrating opener. For an actual restore, stop
+the bot, preserve the current data first, restore a matching-version database
+with its auth files and remove only obsolete live WAL/SHM sidecars while stopped.
+Never connect two bot instances with the same WhatsApp credentials.
 
 ## Paint Models
 

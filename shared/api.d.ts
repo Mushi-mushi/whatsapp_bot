@@ -4,6 +4,9 @@ export interface BotConfig {
   auralisBaseUrl: string;
   transcriptionTimeoutSeconds: number;
   audioDownloadEnabled: boolean;
+  retentionEnabled: boolean;
+  analyticsRetentionDays: number;
+  deliveryRetentionDays: number;
   askEnabled: boolean;
   ollamaBaseUrl: string;
   ollamaModel: string;
@@ -255,10 +258,24 @@ export interface OutboxSnapshot {
   recentFailures: DeliveryFailure[];
 }
 
+export interface BackupSnapshot {
+  enabled: boolean;
+  running: boolean;
+  intervalHours: number;
+  retentionDays: number;
+  nextRunAt: number | null;
+  lastAttemptAt: number | null;
+  lastSuccessAt: number | null;
+  lastFailureAt: number | null;
+  lastError: "backup" | "prune" | null;
+  lastSizeBytes: number | null;
+}
+
 export interface OperationsResponse {
   sampledAt: number;
   startedAt: number;
   deliveryReady: boolean;
   jobs: BackgroundJobsSnapshot;
   outbox: OutboxSnapshot;
+  backups: BackupSnapshot;
 }

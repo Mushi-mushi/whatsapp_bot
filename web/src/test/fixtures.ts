@@ -3,6 +3,7 @@ import type { BotConfig, OperationsResponse } from "@/lib/api";
 export const config: BotConfig = {
   transcriptionEnabled: true, transcriptionProvider: "auralis", auralisBaseUrl: "http://auralis:8000",
   transcriptionTimeoutSeconds: 90, audioDownloadEnabled: true,
+  retentionEnabled: true, analyticsRetentionDays: 90, deliveryRetentionDays: 30,
   askEnabled: true, ollamaBaseUrl: "http://ollama:11434", ollamaModel: "test-model",
   ollamaTimeoutSeconds: 120, ollamaKeepAlive: "5m", askSystemPrompt: "Be concise.",
   userMemoryEnabled: true, userMemoryLimit: 50, userMemoryContext: 20,
@@ -26,5 +27,9 @@ export const operations: OperationsResponse = {
   outbox: {
     counts: { pending: 0, sending: 0, failed: 0, sent: 0, cancelled: 0 },
     ready: 0, retrying: 0, expiredLeases: 0, nextAttemptAt: null, recentFailures: [],
+  },
+  backups: {
+    enabled: false, running: false, intervalHours: 24, retentionDays: 14, nextRunAt: null,
+    lastAttemptAt: null, lastSuccessAt: null, lastFailureAt: null, lastError: null, lastSizeBytes: null,
   },
 };

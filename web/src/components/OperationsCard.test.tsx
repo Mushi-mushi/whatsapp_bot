@@ -24,6 +24,44 @@ function metric(label: string): string | null {
 }
 
 describe("operations overview", () => {
+  it("distinguishes disabled backup configuration from a verified backup", async () => {
+    mount();
+    expect(await screen.findByText(/Automatic backups disabled/)).toBeTruthy();
+    expect(screen.getByText("No verified database backup recorded.")).toBeTruthy();
+    expect(screen.queryByText(/Last verified backup:/)).toBeNull();
+  });
+
+  it("shows enabled backup policy, verification age, size, next run and progress", async () => {
+    vi.mocked(api.getOperations).mockResolvedValue({
+      ...operations, backups: {
+        ...operations.backups, enabled: true, running: true, nextRunAt: operations.sampledAt + 86400000,
+        lastAttemptAt: operations.sampledAt, lastSuccessAt: operations.sampledAt - 65000, lastSizeBytes: 1024000,
+      },
+    });
+    mount();
+    expect(await screen.findByText(/Enabled: startup and every 24 hours; 14-day/)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Database backup in progress");
+    expect(screen.getByText(/Last verified backup:/).textContent).toContain("0h 1m 5s ago");
+    expect(screen.getByText(/Last verified backup size:/).textContent).toContain((1024000).toLocaleString());
+    expect(screen.getByText(/Next scheduled backup:/)).toBeTruthy();
+    expect(screen.getByText(/WhatsApp authentication is not included/)).toBeTruthy();
+  });
+
+  it.each([
+    ["backup", "Database backup failed"],
+    ["prune", "Backup retention cleanup failed"],
+  ] as const)("shows %s errors explicitly while retaining the last successful verification", async (stage, label) => {
+    vi.mocked(api.getOperations).mockResolvedValue({
+      ...operations, backups: {
+        ...operations.backups, enabled: true, lastError: stage, lastFailureAt: operations.sampledAt,
+        lastSuccessAt: operations.sampledAt - 1000, lastSizeBytes: 100,
+      },
+    });
+    mount();
+    expect((await screen.findByRole("alert")).textContent).toContain(label);
+    expect(screen.getByText(/Last verified backup:/)).toBeTruthy();
+  });
+
   it("shows loading without claiming the queues have no failures", () => {
     vi.mocked(api.getOperations).mockReturnValue(new Promise(() => {}));
     mount();

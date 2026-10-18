@@ -5,6 +5,8 @@ backup/
 backups/
 *.db
 *.db-*
+*.db.partial
+*.db.partial-*
 *.sqlite
 *.sqlite-*
 *.sqlite3

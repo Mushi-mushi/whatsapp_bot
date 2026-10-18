@@ -20,6 +20,8 @@ import {
 import { RuntimeState } from "./state/runtime.js";
 import { OutboxStore } from "./state/outbox.js";
 import { DeliveryWorker } from "./state/deliveries.js";
+import { RetentionWorker } from "./state/retention.js";
+import { BackupWorker, backupOptions } from "./state/backups.js";
 import type { BotConfig } from "./config/schema.js";
 import type { ConfigController } from "./config/controller.js";
 import { BaileysTransport } from "./transport/baileys.js";
@@ -165,12 +167,14 @@ async function main(): Promise<void> {
 
   const { startApi } = await import("./api/server.js");
   const outbox = new OutboxStore(db);
+  const backups = new BackupWorker(db, backupOptions(process.env), logger);
   const app = await startApi(
     {
       transport,
       configStore,
       jobs,
       outbox,
+      backups,
       knownChats,
       triviaScores,
       userMemory,
@@ -210,6 +214,9 @@ async function main(): Promise<void> {
   });
   deliveries.start();
   pets.start(logger);
+  const retention = new RetentionWorker(db, getConfig, logger);
+  backups.start();
+  retention.start();
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
@@ -223,6 +230,8 @@ async function main(): Promise<void> {
     unsubscribeMessages();
     unsubscribeChats();
     pets.stop();
+    retention.stop();
+    await backups.stop();
     await bot.stop();
     await jobs.stop();
     await deliveries.stop();

@@ -32,6 +32,7 @@ const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
     "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia", "deleteInstagramPosts",
     "instagramDeleteSenders", "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl",
     "transcriptionTimeoutSeconds",
+    "retentionEnabled", "analyticsRetentionDays", "deliveryRetentionDays",
   ],
   access: ["approvedSenders"],
   ai: [

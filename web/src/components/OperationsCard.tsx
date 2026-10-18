@@ -45,6 +45,28 @@ export function OperationsCard() {
           <p>Process uptime: {duration(data.sampledAt - data.startedAt)}</p>
           <p>{data.deliveryReady ? "Delivery transport connected" : "Delivery transport disconnected — queued deliveries wait for reconnection."}</p>
         </div>
+        <section aria-labelledby="operations-backups" className="space-y-3">
+          <h3 id="operations-backups" className="font-medium">Database backups</h3>
+          <p className="text-sm">{data.backups.enabled
+            ? `Enabled: startup and every ${data.backups.intervalHours} hours; ${data.backups.retentionDays}-day automated backup retention.`
+            : "Automatic backups disabled. Configure BACKUP_DIR on the server to enable them."}</p>
+          {data.backups.running && <p role="status" className="text-sm">Database backup in progress...</p>}
+          {data.backups.lastError && <p role="alert" className="text-sm text-destructive">
+            {data.backups.lastError === "prune" ? "Backup retention cleanup failed" : "Database backup failed"}
+            {data.backups.lastFailureAt !== null && ` at ${timestamp(data.backups.lastFailureAt)}`}. See server logs; the next scheduled pass will retry.
+          </p>}
+          <p className="text-sm">{data.backups.lastSuccessAt === null
+            ? "No verified database backup recorded."
+            : `Last verified backup: ${timestamp(data.backups.lastSuccessAt)} (${duration(data.sampledAt - data.backups.lastSuccessAt)} ago).`}</p>
+          {data.backups.lastSizeBytes !== null && <p className="text-sm">Last verified backup size: {data.backups.lastSizeBytes.toLocaleString()} bytes</p>}
+          {data.backups.nextRunAt !== null && <p className="text-sm">Next scheduled backup: {timestamp(data.backups.nextRunAt)}</p>}
+          <p className="text-xs text-muted-foreground">
+            SQLite integrity and foreign keys are checked before publishing each standalone backup.
+            Status survives restarts and records verification time, not continued file availability.
+            Only automated backup files are pruned, after a new verified backup.
+            WhatsApp authentication is not included. Protect backups as sensitive data.
+          </p>
+        </section>
         <section aria-labelledby="operations-jobs" className="space-y-3">
           <h3 id="operations-jobs" className="font-medium">Background jobs</h3>
           <p className="text-sm">{data.jobs.accepting ? "Accepting work" : "Draining for shutdown"} · Capacity {data.jobs.capacity} (running + queued)</p>

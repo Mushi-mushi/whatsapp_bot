@@ -15,6 +15,7 @@ import type { BotConfig, ConfigSaveResponse, ProfileDetail, ProfilesResponse } f
 import type { OperationsResponse } from "../../shared/api.js";
 import { memoryKey } from "../src/state/identity.js";
 import { OutboxStore } from "../src/state/outbox.js";
+import { BackupWorker } from "../src/state/backups.js";
 
 const ALICE = memoryKey("group@g.us", "alice");
 const ALICE_PATH = `/api/profiles/${encodeURIComponent(ALICE)}`;
@@ -36,6 +37,7 @@ async function setup(apiToken: string | undefined = "test-token") {
   const deps: ApiDeps = {
     apiToken,
     jobs, outbox: new OutboxStore(db),
+    backups: new BackupWorker(db, { retentionDays: 14 }, logger),
     configStore, knownChats: new KnownChatsStore(db),
     triviaScores: new TriviaScoreStore(db), userMemory, userProfiles, profiler, logger,
     pets: new PetService(new PetStore(db), () => configStore.load(), () => true),
@@ -92,11 +94,32 @@ describe("profile lifecycle controls", () => {
         jobs: { failed: 1, accepting: false }, outbox: { counts: { failed: 1 }, recentFailures: [{ attempts: 5 }] },
       });
       expect(data.startedAt).toBeLessThanOrEqual(data.sampledAt);
+      expect(data.backups).toEqual({
+        enabled: false, running: false, intervalHours: 24, retentionDays: 14, nextRunAt: null,
+        lastAttemptAt: null, lastSuccessAt: null, lastFailureAt: null, lastError: null, lastSizeBytes: null,
+      });
       expect(response.body).not.toContain("SECRET");
       vi.spyOn(deps.transport, "getStatus").mockReturnValue({
         state: "close", health: "unknown", qrDataUrl: null, pairingCode: null, me: null, lastActivityAt: null,
       });
+
       expect((await app.inject({ url: "/api/operations", headers: { authorization: "Bearer test-token" } })).json<OperationsResponse>().deliveryReady).toBe(false);
+    });
+
+    it("exposes verified backup and failure metadata without filesystem paths or raw diagnostics", async () => {
+      const { app, deps } = await setup();
+      const snapshot = {
+        ...deps.backups.snapshot(), enabled: true, lastSuccessAt: 1000, lastAttemptAt: 2000,
+        lastFailureAt: 2001, lastError: "prune" as const, lastSizeBytes: 4096, nextRunAt: 86402000,
+      };
+      vi.spyOn(deps.backups, "snapshot").mockReturnValue(snapshot);
+      const response = await app.inject({ url: "/api/operations", headers });
+      expect(response.statusCode).toBe(200);
+      expect(response.json<OperationsResponse>().backups).toEqual(snapshot);
+      expect(Object.keys(response.json<OperationsResponse>().backups).sort()).toEqual([
+        "enabled", "intervalHours", "lastAttemptAt", "lastError", "lastFailureAt",
+        "lastSizeBytes", "lastSuccessAt", "nextRunAt", "retentionDays", "running",
+      ]);
     });
   });
 
@@ -249,6 +272,24 @@ describe("sleep discipline controls", () => {
 });
 
 describe("configuration revisions", () => {
+  it("validates and persists retention settings through the revision-protected config API", async () => {
+    const { app, deps } = await setup();
+    const headers = { authorization: "Bearer test-token" };
+    const loaded = await app.inject({ url: "/api/config", headers });
+    const original = loaded.json<BotConfig>();
+    const updateHeaders = { ...headers, "if-match": loaded.headers.etag! };
+    for (const patch of [{ analyticsRetentionDays: 0 }, { deliveryRetentionDays: 1.5 }, { retentionEnabled: "yes" }]) {
+      const rejected = await app.inject({ method: "PUT", url: "/api/config", headers: updateHeaders, payload: { ...original, ...patch } });
+      expect(rejected.statusCode).toBe(400);
+      expect(deps.configStore.load()).toEqual(original);
+    }
+    const policy = { retentionEnabled: false, analyticsRetentionDays: 180, deliveryRetentionDays: 60 };
+    const saved = await app.inject({ method: "PUT", url: "/api/config", headers: updateHeaders, payload: { ...original, ...policy } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json<ConfigSaveResponse>().config).toMatchObject(policy);
+    expect(deps.configStore.load()).toMatchObject(policy);
+    expect((await app.inject({ url: "/api/config", headers })).json<BotConfig>()).toMatchObject(policy);
+  });
   it("preserves the raw config GET, save envelope, secrets and revision headers", async () => {
     const { app, deps } = await setup();
     const headers = { authorization: "Bearer test-token" };

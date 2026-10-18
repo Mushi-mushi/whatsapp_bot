@@ -26,6 +26,8 @@ vi.mock("@/components/GeneralCard", async () => {
         <input aria-label="Prefix" value={config.botReplyPrefix} onChange={(event) => onChange({ botReplyPrefix: event.target.value })} />
         <NumberField label="Timeout" value={config.transcriptionTimeoutSeconds} min={5}
           onChange={(value) => onChange({ transcriptionTimeoutSeconds: value })} />
+        <NumberField label="Analytics retention (days)" value={config.analyticsRetentionDays} min={1} max={3650}
+          onChange={(value) => onChange({ analyticsRetentionDays: value })} />
       </>,
   };
 });
@@ -56,6 +58,24 @@ async function openPrefix() {
 }
 
 describe("configuration editor", () => {
+  it("tracks retention edits on General, blocks invalid drafts and saves with the existing revision", async () => {
+    mount();
+    await openPrefix();
+    const field = screen.getByRole("spinbutton", { name: "Analytics retention (days)" });
+    fireEvent.change(field, { target: { value: "180" } });
+    expect(within(screen.getByRole("button", { name: /General/ })).getByTitle("Unsaved changes")).toBeTruthy();
+    fireEvent.change(field, { target: { value: "0" } });
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Operations" }));
+    expect(document.activeElement).toBe(field);
+    fireEvent.change(field, { target: { value: "180" } });
+    vi.mocked(api.saveConfig).mockResolvedValue({ config: { ...config, analyticsRetentionDays: 180 }, revision: "second" });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.saveConfig).toHaveBeenCalledWith({
+      config: { ...config, analyticsRetentionDays: 180 }, revision: "first",
+    }));
+    await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull());
+  });
   it("clears dirty state when edits are reverted", async () => {
     mount();
     const input = await openPrefix();

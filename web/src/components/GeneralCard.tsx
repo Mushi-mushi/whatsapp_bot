@@ -136,6 +136,23 @@ export function GeneralCard({ config, onChange }: Props) {
           />
         </div>
 
+        <section aria-label="Data retention" className="space-y-2 border-t border-input pt-3">
+          <h3 className="text-sm font-medium">Data retention</h3>
+          <Row label="Automatic cleanup" hint="Runs at startup and daily using saved settings. Permanently deletes eligible existing records; backups are unchanged.">
+            <Switch checked={config.retentionEnabled} onCheckedChange={(v) => onChange({ retentionEnabled: v })} />
+          </Row>
+          <NumberField label="Analytics retention (days)" hint="Age of sentiment and complaint records; removing history changes sentiment summaries."
+            value={config.analyticsRetentionDays} min={1} max={3650}
+            onChange={(v) => onChange({ analyticsRetentionDays: v })} />
+          <NumberField label="Delivery retention (days)" hint="Age since queued, only for sent/cancelled records. Pending, sending and failed deliveries are protected."
+            value={config.deliveryRetentionDays} min={1} max={3650}
+            onChange={(v) => onChange({ deliveryRetentionDays: v })} />
+          <p className="text-xs text-muted-foreground">
+            Pet state, game scores, reminders, tells, configuration and AI memory/profiles are not cleaned up.
+            Database files may not shrink immediately; deleting records is not secure erasure.
+          </p>
+        </section>
+
         <div className="mt-3 flex items-center justify-between gap-4 border-t border-input pt-3">
           <div>
             <p className="text-sm font-medium">Trivia leaderboard</p>

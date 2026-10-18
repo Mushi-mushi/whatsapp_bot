@@ -17,6 +17,7 @@ import { DEFAULT_PET_SETTINGS, PetSettingsSchema, petSettings } from "../pets/se
 import type { RuntimeState } from "../state/runtime.js";
 import type { BackgroundJobs } from "../router/jobs.js";
 import type { OutboxStore } from "../state/outbox.js";
+import type { BackupWorker } from "../state/backups.js";
 import type {
   BotConfig, ChatsResponse, ContactsResponse, DisciplinePlayer, DisciplineResponse,
   DisciplineMutationResponse, SiestaStatus, GroupPet, PetsResponse, PetActionResponse,
@@ -40,6 +41,7 @@ export interface ApiDeps {
   contacts: ContactsStore;
   jobs: BackgroundJobs;
   outbox: OutboxStore;
+  backups: BackupWorker;
   onConfigChange: () => void;
   logger: Logger;
   apiToken?: string;
@@ -91,7 +93,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     const sampledAt = Date.now();
     return {
       sampledAt, startedAt, deliveryReady: deps.transport.getStatus().state === "open",
-      jobs: deps.jobs.snapshot(), outbox: deps.outbox.snapshot(sampledAt),
+      jobs: deps.jobs.snapshot(), outbox: deps.outbox.snapshot(sampledAt), backups: deps.backups.snapshot(),
     };
   });
   app.get("/api/siesta", async (): Promise<SiestaStatus> => ({

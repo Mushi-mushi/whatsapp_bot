@@ -15,12 +15,15 @@ services:
       SYNC_FULL_HISTORY: ${SYNC_FULL_HISTORY:-false}
       API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env before starting the stack}
       LOG_LEVEL: info
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
     extra_hosts:
       # Lets the container reach Auralis running on the host.
       - "host.docker.internal:host-gateway"
     volumes:
       # Baileys session (auth) + SQLite live under /data.
       - ./data:/data
+      - ${BACKUP_HOST_DIR:-../whatsapp_bot_backups}:/backups
     expose:
       - "5000"
     init: true
