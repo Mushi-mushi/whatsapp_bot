@@ -25,6 +25,7 @@ import type { ConfigController } from "./config/controller.js";
 import { BaileysTransport } from "./transport/baileys.js";
 import { Bot } from "./router/router.js";
 import { BackgroundJobs } from "./router/jobs.js";
+import { registerConfiguredCommands } from "./router/commands.js";
 import { Context, type Services } from "./router/context.js";
 import {
   activityTracker,
@@ -147,12 +148,8 @@ async function main(): Promise<void> {
     pets,
   });
   const registerCommands = (cfg: BotConfig) => {
-    bot.clearCommands();
-    for (const [trigger, name] of Object.entries(cfg.commands)) {
-      const handler = commandRegistry[name];
-      if (handler) bot.command(trigger, ["ask", "as_user", "profile", "translate", "tldr", "paint", "film"].includes(name) ? jobs.wrap(handler) : handler);
-      else logger.warn({ trigger, name }, "No handler registered for command");
-    }
+    registerConfiguredCommands(bot, cfg.commands, commandRegistry, jobs,
+      (trigger, name) => logger.warn({ trigger, name }, "No handler registered for command"));
   };
   registerCommands(config);
 

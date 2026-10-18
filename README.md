@@ -386,6 +386,30 @@ exactly is not guaranteed.
 
 ## Development And Checks
 
+### Adding Or Updating Commands
+
+The typed command catalogue in `bot-core/src/router/commands.ts` owns stable
+command IDs, default aliases, descriptions, usage arguments and execution policy.
+Implement each ID in `bot-core/src/handlers/commands/index.ts`; TypeScript checks
+that the handler registry covers the catalogue exactly. Mark slow AI/media
+commands as `background` so every configured alias uses the bounded job queue.
+Media-kind handlers and passive matchers are registered separately.
+
+Default configuration and `bot.help` are derived from the catalogue. Help uses
+the saved alias-to-ID mapping, so renamed aliases retain their descriptions and
+show the configured alias in usage examples. Existing suffix-based variants
+remain unchanged: `.raw` for unpersonalised ask and `.neg` for harsher roast.
+Keep those suffixes when renaming those variants. Unknown saved command IDs
+remain visible as bare help entries and produce registration warnings; they
+do not execute.
+
+Saved mappings are not replaced by catalogue defaults. When adding default
+aliases for existing installations, bump `CONFIG_VERSION` in
+`bot-core/src/state/repos.ts` to trigger the existing additive backfill.
+Update catalogue compatibility tests when intentionally changing defaults.
+
+### Running Checks
+
 Use Node 22. In both `bot-core` and `web`, run `npm ci`.
 
 ```text

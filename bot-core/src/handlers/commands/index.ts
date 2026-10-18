@@ -1,4 +1,4 @@
-import type { Handler } from "../../router/router.js";
+import type { CommandRegistry } from "../../router/commands.js";
 import type { RuntimeState } from "../../state/runtime.js";
 import type {
   ComplaintStore,
@@ -65,8 +65,8 @@ export interface CommandDeps {
   pets: PetService;
 }
 
-// Command name (config value) -> handler. Add new commands here.
-export function buildCommandRegistry(deps: CommandDeps): Record<string, Handler> {
+// The registry must implement every catalogue command.
+export function buildCommandRegistry(deps: CommandDeps): CommandRegistry {
   return {
     roast,
     jokes,

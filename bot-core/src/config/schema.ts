@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defaultCommands } from "../router/commands.js";
 
 // Single source of truth for the bot configuration schema.
 // Shared by the API (validation) and the runtime — no more dual-schema drift.
@@ -98,42 +99,5 @@ export const ConfigSchema = z.object({
 export type BotConfig = z.infer<typeof ConfigSchema>;
 
 export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
-  commands: {
-    "bot.jokes": "jokes",
-    "bot.roast.neg": "roast",
-    "bot.roast": "roast",
-    "bot.status": "status",
-    "bot.help": "help",
-    "bot.weather": "weather",
-    "bot.meteo": "meteo",
-    "bot.fact": "fact",
-    "bot.8ball": "eightball",
-    "bot.quote": "quote",
-    "bot.siesta": "siesta",
-    "bot.complain": "complain",
-    "bot.score": "score",
-    "bot.top.positive": "top_positive",
-    "bot.top.negative": "top_negative",
-    "bot.torture": "torture",
-    "bot.insults": "insults",
-    "bot.ask": "ask",
-    "bot.ask.raw": "ask",
-    "bot.models": "models",
-    "bot.as": "as_user",
-    "bot.profile": "profile",
-    "bot.seen": "seen",
-    "bot.whoami": "whoami",
-    "bot.tell": "tell",
-    "bot.remind": "remind",
-    "bot.karma": "karma",
-    "bot.translate": "translate",
-    "bot.tldr": "tldr",
-    "bot.roll": "roll",
-    "bot.trivia": "trivia",
-    "bot.paint": "paint",
-    "bot.film": "film",
-    "bot.instadelete": "instadelete",
-    "bot.pet": "pet",
-    "bot.services": "services",
-  },
+  commands: defaultCommands(),
 });
