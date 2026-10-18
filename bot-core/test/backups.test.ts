@@ -8,6 +8,7 @@ import { renameSync } from "node:fs";
 import { openDatabase } from "../src/state/db.js";
 import { BackupWorker, backupOptions } from "../src/state/backups.js";
 import { AuditStore } from "../src/state/audit.js";
+import { AskQuotaStore } from "../src/state/ask-quota.js";
 
 const DAY = 86_400_000;
 const NOW = 1800000000000;
@@ -61,6 +62,7 @@ describe("verified database backups", () => {
     const audit = new AuditStore(db);
     const action = audit.begin("config.save", null, "authenticated-api");
     audit.complete(action, "config.save", null, 200);
+    new AskQuotaStore(db).consume("private", "person", null, NOW);
     await worker.run();
     const filenames = await readdir(directory);
     expect(filenames).toHaveLength(1);
@@ -73,9 +75,9 @@ describe("verified database backups", () => {
     try {
       expect(restored.pragma("integrity_check", { simple: true })).toBe("ok");
       expect(restored.pragma("foreign_key_check")).toEqual([]);
-      expect(restored.pragma("user_version", { simple: true })).toBe(7);
+      expect(restored.pragma("user_version", { simple: true })).toBe(9);
       expect(restored.pragma("journal_mode", { simple: true })).toBe("delete");
-      for (const table of ["reminders", "pets", "outbox", "admin_audit"]) {
+      for (const table of ["reminders", "pets", "outbox", "admin_audit", "ask_quota"]) {
         expect(restored.prepare(`SELECT * FROM ${table}`).all()).toEqual(db.prepare(`SELECT * FROM ${table}`).all());
       }
       expect(restored.prepare("SELECT value FROM kv WHERE key='private-config'").get()).toEqual({ value: "SECRET" });

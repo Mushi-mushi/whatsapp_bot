@@ -6,18 +6,18 @@ import type { Context } from "../router/context.js";
 import type { Middleware } from "../router/router.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import type { PetService } from "../pets/service.js";
-import { rememberMessage } from "../handlers/commands/user-context.js";
-import { extractCommandToken, normalizeLooseName, normalizeName } from "../router/normalize.js";
+import { chatKey, rememberMessage } from "../handlers/commands/user-context.js";
+import { messagePerson } from "../handlers/commands/local-target.js";
+import { extractCommandToken, normalizeName } from "../router/normalize.js";
 import { normalizeJid } from "../state/identity.js";
 
 // Passively learn from the owner's own messages so they build a profile like
-// everyone else, and track their activity so others can `bot.seen` them. Runs
+// everyone else. Activity is tracked independently of AI memory. Runs
 // before ignoreOwn (which would otherwise drop this chatter). Skips the bot's own
 // prefixed replies and command inputs; the profile also skips very short noise.
 export function learnFromOwner(
   userMemory: UserMemoryStore,
   profiler: ProfileService,
-  seen: SeenActivityStore,
 ): Middleware {
   return async (ctx, next) => {
     if (ctx.msg.fromMe && !ctx.msg.isBot) {
@@ -25,10 +25,6 @@ export function learnFromOwner(
       const prefix = ctx.config.botReplyPrefix?.trim();
       const isBotReply = !!prefix && text.startsWith(prefix);
       if (!isBotReply && !extractCommandToken(text)) {
-        const strictName = normalizeName(ctx.msg.senderName);
-        if (strictName) {
-          seen.record(strictName, ctx.msg.senderName, Date.now(), ctx.msg.isGroup ? ctx.msg.chatName : null);
-        }
         if (text.length >= 6) {
           rememberMessage(userMemory, profiler, ctx.msg, ctx.config, text);
         }
@@ -41,7 +37,7 @@ export function learnFromOwner(
 // Skip our own outgoing messages, except commands the owner types from the linked
 // phone (when enabled) and answers to an active game in the chat. The bot's own
 // prefixed replies are always ignored to avoid loops.
-export function ignoreOwn(runtime: RuntimeState): Middleware {
+export function ignoreOwn(runtime: RuntimeState, people?: SeenActivityStore): Middleware {
   return async (ctx, next) => {
     if (ctx.msg.isBot) return;
     if (!ctx.msg.fromMe) {
@@ -52,8 +48,9 @@ export function ignoreOwn(runtime: RuntimeState): Middleware {
     if (!ctx.config.respondToOwnCommands) return;
     const prefix = ctx.config.botReplyPrefix?.trim();
     if (prefix && ctx.text.trimStart().startsWith(prefix)) return;
-    const gameActive =
-      runtime.triviaGames.has(ctx.msg.chatId) || runtime.insultGames.has(ctx.msg.chatId);
+    const chat = people?.canonical(chatKey(ctx.msg)) ?? chatKey(ctx.msg);
+    const gameActive = [...runtime.triviaGames.keys(), ...runtime.insultGames.keys()].some((id) =>
+      (people?.canonical(id) ?? id) === chat);
     if (!extractCommandToken(ctx.text) && !gameActive) return;
     await next();
   };
@@ -224,19 +221,25 @@ export function sleepGuard(discipline: SiestaDisciplineStore, logger: Logger): M
   };
 }
 
-// Record last-seen for the sender and deliver any pending "tell" messages to them.
-export function activityTracker(seen: SeenActivityStore, tells: TellStore): Middleware {
+function isHumanActivity(ctx: Context): boolean {
+  const prefix = ctx.config.botReplyPrefix?.trim();
+  return !ctx.msg.isBot && !(ctx.msg.fromMe && prefix && ctx.text.trimStart().startsWith(prefix));
+}
+
+export function participantTracker(seen: SeenActivityStore): Middleware {
   return async (ctx, next) => {
-    const strictName = normalizeName(ctx.msg.senderName);
-    const looseName = normalizeLooseName(ctx.msg.senderName);
-    const phone = ctx.msg.senderPhone.replace(/\D/g, "");
-    if (strictName) {
-      seen.record(strictName, ctx.msg.senderName, Date.now(), ctx.msg.isGroup ? ctx.msg.chatName : null);
+    if (isHumanActivity(ctx)) {
+      seen.record(chatKey(ctx.msg), messagePerson(ctx.msg), ctx.msg.senderName, Date.now(), ctx.msg.isGroup ? ctx.msg.chatName : null);
     }
-    const keys = [...new Set([strictName, looseName, phone])].filter(Boolean);
-    for (const key of keys) {
-      tells.enqueueFor(key, ctx.msg.chatId, ctx.msg.senderName);
-    }
+    await next();
+  };
+}
+
+// Delivery remains behind the sleep/siesta/media guards; observing a person
+// earlier must not turn a blocked message into a delivery trigger.
+export function activityTracker(tells: TellStore): Middleware {
+  return async (ctx, next) => {
+    if (isHumanActivity(ctx)) tells.enqueueFor(messagePerson(ctx.msg), ctx.msg.chatId, ctx.msg.senderName);
     await next();
   };
 }

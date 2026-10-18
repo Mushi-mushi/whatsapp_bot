@@ -20,6 +20,7 @@ import {
 import { RuntimeState } from "./state/runtime.js";
 import { OutboxStore } from "./state/outbox.js";
 import { AuditStore } from "./state/audit.js";
+import { AskQuotaStore } from "./state/ask-quota.js";
 import { DeliveryWorker } from "./state/deliveries.js";
 import { RetentionWorker } from "./state/retention.js";
 import { BackupWorker, backupOptions } from "./state/backups.js";
@@ -40,6 +41,7 @@ import {
   logging,
   mediaPolicy,
   petObserver,
+  participantTracker,
   siestaGuard,
   sleepGuard,
 } from "./middleware/index.js";
@@ -120,23 +122,25 @@ async function main(): Promise<void> {
     .use(logging(logger))
     .use(approvedSenderGuard)
     .use(dedupe(seen))
-    .use(learnFromOwner(userMemory, profiler, seenActivity))
+    .use(participantTracker(seenActivity))
+    .use(learnFromOwner(userMemory, profiler))
     .use(petObserver(pets))
-    .use(ignoreOwn(runtime))
+    .use(ignoreOwn(runtime, seenActivity))
     .use(sleepGuard(discipline, logger))
     .use(siestaGuard(runtime))
     .use(instagramGuard(logger))
-    .use(activityTracker(seenActivity, tells))
+    .use(activityTracker(tells))
     .use(mediaPolicy);
 
   bot.on("audio", jobs.wrap(makeAudioHandler(logger)));
   bot.on("image", jobs.wrap(paintImage));
-  bot.hears(KARMA_PATTERN, makeKarmaHears(karma));
+  bot.hears(KARMA_PATTERN, makeKarmaHears(karma, seenActivity));
   bot.fallback(makeFallback({ runtime, sentiment, triviaScores, duelScores, userMemory, profiler }));
 
   const commandRegistry = buildCommandRegistry({
     runtime,
     discipline,
+    askQuota: new AskQuotaStore(db),
     sentiment,
     complaints,
     seenActivity,

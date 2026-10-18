@@ -52,9 +52,9 @@ function makeCtx(
   const msg: IncomingMessage = {
     chatId: CHAT,
     chatName: "Group",
-    senderId: `${senderName}@s.whatsapp.net`,
+    senderId: senderName.toLowerCase(),
     senderName,
-    senderPhone: "34600000000",
+    senderPhone: "",
     messageId: `m-${senderName}-${timestamp}`,
     fromMe: false,
     isGroup: true,
@@ -91,7 +91,7 @@ describe("trivia stale-answer guard", () => {
     const { ctx, sendText } = makeCtx("B", askedAt + 1_000);
     await makeFallback(deps)(ctx);
     expect(sendText).toHaveBeenCalledOnce();
-    expect(scores.top(CHAT, 5)).toEqual([{ name: "Alice", correct: -1 }]);
+    expect(scores.top(CHAT, 5)).toEqual([{ senderId: "alice", name: "Alice", correct: -1 }]);
   });
 
   it("accepts a same-second answer whose timestamp is floored below askedAt", async () => {
@@ -100,7 +100,7 @@ describe("trivia stale-answer guard", () => {
     const { ctx, sendText } = makeCtx("B", askedAt - 900);
     await makeFallback(deps)(ctx);
     expect(sendText).toHaveBeenCalledOnce();
-    expect(scores.top(CHAT, 5)).toEqual([{ name: "Alice", correct: -1 }]);
+    expect(scores.top(CHAT, 5)).toEqual([{ senderId: "alice", name: "Alice", correct: -1 }]);
   });
 });
 
@@ -165,6 +165,7 @@ describe("trivia duel", () => {
         scores,
         duelScores,
         chatId: CHAT,
+        senderId: sender.toLowerCase(),
         senderName: sender,
         text,
         sentAt: askedAt + 500,
@@ -185,7 +186,7 @@ describe("trivia duel", () => {
 
     expect(consumed).toBe(true);
     expect(reply).toHaveBeenCalledOnce();
-    expect(duelScores.top(CHAT, 5)).toEqual([{ name: "Alice", wins: 1 }]);
+    expect(duelScores.top(CHAT, 5)).toEqual([{ senderId: "alice", name: "Alice", wins: 1 }]);
     expect(runtime.triviaDuels.has(CHAT)).toBe(false); // duel ended
     expect(runtime.triviaGames.has(CHAT)).toBe(false);
   });

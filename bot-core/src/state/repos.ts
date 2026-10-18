@@ -3,7 +3,9 @@ import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.j
 import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
 import type { Contact, PendingTell, RemindersResponse, ScheduledReminder, TellsResponse } from "../../../shared/api.js";
-import { IdentityResolver, memoryChat, normalizeJid, phoneDigits, phoneFromJid } from "./identity.js";
+import { type IdentityResolver, memoryChat, normalizeJid, phoneDigits, phoneFromJid } from "./identity.js";
+import { canonicalScope, forPerson, identitiesFor, inChat, type PersonScope } from "./scoped.js";
+import { PlayerScores } from "./player-scores.js";
 
 const CONFIG_KEY = "config";
 const CONFIG_VERSION_KEY = "config_version";
@@ -147,29 +149,29 @@ export interface SentimentEntry {
 export class SentimentStore {
   constructor(private readonly db: Database.Database) {}
 
-  log(sender: string, sentiment: string, polarity: number, message: string): void {
+  log(chatId: string, senderId: string, sender: string, sentiment: string, polarity: number, message: string): void {
+    const scope = canonicalScope(identitiesFor(this.db), chatId, senderId);
     this.db
       .prepare(
-        "INSERT INTO sentiment_log (ts, sender, sentiment, polarity, message) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO sentiment_log (ts, sender, sentiment, polarity, message, chat_id, sender_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(Date.now(), sender, sentiment, polarity, message);
+      .run(Date.now(), sender, sentiment, polarity, message, scope.chat_id, scope.sender_id);
   }
 
-  scoreFor(sender: string): { total: number; count: number } {
-    const row = this.db
-      .prepare(
-        "SELECT COALESCE(SUM(polarity), 0) AS total, COUNT(*) AS count FROM sentiment_log WHERE sender = ? COLLATE NOCASE",
-      )
-      .get(sender) as { total: number; count: number };
-    return { total: row.total, count: row.count };
+  scoreFor(chatId: string, senderId: string): { total: number; count: number } {
+    const identities = identitiesFor(this.db);
+    const chats = identities.aliasesFor(chatId);
+    const senders = identities.aliasesFor(senderId);
+    return this.db.prepare(`SELECT COALESCE(SUM(polarity),0) AS total, COUNT(*) AS count FROM sentiment_log
+      WHERE chat_id IN (${chats.map(() => "?").join(",")}) AND sender_id IN (${senders.map(() => "?").join(",")})`)
+      .get(...chats, ...senders) as { total: number; count: number };
   }
 
-  top(order: "ASC" | "DESC", limit = 5): SentimentEntry[] {
-    return this.db
-      .prepare(
-        `SELECT sender, polarity, message FROM sentiment_log ORDER BY polarity ${order} LIMIT ?`,
-      )
-      .all(limit) as SentimentEntry[];
+  top(chatId: string, order: "ASC" | "DESC", limit = 5): SentimentEntry[] {
+    const chats = identitiesFor(this.db).aliasesFor(chatId);
+    return this.db.prepare(`SELECT sender,polarity,message FROM sentiment_log
+      WHERE chat_id IN (${chats.map(() => "?").join(",")}) AND sender_id IS NOT NULL
+      ORDER BY polarity ${order} LIMIT ?`).all(...chats, limit) as SentimentEntry[];
   }
 }
 
@@ -217,13 +219,12 @@ export class ContactsStore {
   }
 
   identities(): IdentityResolver {
-    const identities = new IdentityResolver();
-    for (const r of this.all()) if (r.phone) identities.associate(r.jid, r.phone);
-    return identities;
+    return identitiesFor(this.db);
   }
 }
 
 export interface SeenRecord {
+  sender_id: string;
   name: string;
   last_ts: number;
   chat_name: string | null;
@@ -232,19 +233,45 @@ export interface SeenRecord {
 export class SeenActivityStore {
   constructor(private readonly db: Database.Database) {}
 
-  record(nameNorm: string, name: string, ts: number, chatName: string | null): void {
-    this.db
-      .prepare(
-        `INSERT INTO seen_activity (name_norm, name, last_ts, chat_name) VALUES (?, ?, ?, ?)
-         ON CONFLICT(name_norm) DO UPDATE SET name = excluded.name, last_ts = excluded.last_ts, chat_name = excluded.chat_name`,
-      )
-      .run(nameNorm, name, ts, chatName);
+  record(chatId: string, senderId: string, name: string, ts: number, chatName: string | null): void {
+    this.db.transaction(() => {
+      const identities = identitiesFor(this.db);
+      const scope = canonicalScope(identities, chatId, senderId);
+      const chats = identities.aliasesFor(chatId);
+      const senders = identities.aliasesFor(senderId);
+      // This directory holds only the latest label/activity, not historical data.
+      this.db.prepare(`DELETE FROM chat_people WHERE chat_id IN (${chats.map(() => "?").join(",")})
+        AND sender_id IN (${senders.map(() => "?").join(",")})`).run(...chats, ...senders);
+      this.db.prepare("INSERT INTO chat_people (chat_id,sender_id,name_norm,name,last_ts,chat_name) VALUES (?,?,?,?,?,?)")
+        .run(scope.chat_id, scope.sender_id, normalizeName(name), name, ts, chatName);
+    })();
   }
 
-  get(nameNorm: string): SeenRecord | undefined {
-    return this.db
-      .prepare("SELECT name, last_ts, chat_name FROM seen_activity WHERE name_norm = ?")
-      .get(nameNorm) as SeenRecord | undefined;
+  people(chatId: string): SeenRecord[] {
+    const identities = identitiesFor(this.db);
+    const chats = identities.aliasesFor(chatId);
+    const rows = this.db.prepare(`SELECT * FROM chat_people WHERE chat_id IN (${chats.map(() => "?").join(",")})
+      ORDER BY last_ts,rowid`).all(...chats) as (SeenRecord & PersonScope)[];
+    const people = new Map<string, SeenRecord>();
+    for (const r of inChat(rows, chatId, identities)) {
+      const sender_id = identities.canonical(r.sender_id);
+      people.set(sender_id, { sender_id, name: r.name, last_ts: r.last_ts, chat_name: r.chat_name });
+    }
+    return [...people.values()];
+  }
+
+  get(chatId: string, senderId: string): SeenRecord | undefined {
+    const id = identitiesFor(this.db).canonical(senderId);
+    return this.people(chatId).find((r) => r.sender_id === id);
+  }
+
+  resolve(chatId: string, name: string): SeenRecord[] {
+    const norm = normalizeName(name);
+    return this.people(chatId).filter((r) => normalizeName(r.name) === norm);
+  }
+
+  canonical(senderId: string): string {
+    return identitiesFor(this.db).canonical(senderId);
   }
 }
 
@@ -404,10 +431,12 @@ export class TellStore {
     return this.db.transaction(() => {
       const pageSize = 50;
       const { total } = this.db.prepare("SELECT COUNT(*) AS total FROM tells").get() as { total: number };
-      const tells = this.db.prepare(`SELECT id, target_name AS targetName, from_name AS fromName,
-        message AS text, created_ts AS createdAt FROM tells ORDER BY created_ts, id LIMIT ? OFFSET ?`)
-        .all(pageSize, (page - 1) * pageSize) as PendingTell[];
-      return { tells, total, page, pageSize, sampledAt: now };
+      const tells = this.db.prepare(`SELECT t.id, target_name AS targetName, from_name AS fromName,
+        message AS text, created_ts AS createdAt, t.chat_id AS chatId, c.name AS chatName,
+        target_id AS targetId, CASE WHEN target_id IS NULL OR t.chat_id IS NULL THEN 1 ELSE 0 END AS legacy
+        FROM tells t LEFT JOIN chat_directory c ON c.id=t.chat_id ORDER BY created_ts, t.id LIMIT ? OFFSET ?`)
+        .all(pageSize, (page - 1) * pageSize) as (Omit<PendingTell, "legacy"> & { legacy: number })[];
+      return { tells: tells.map((t) => ({ ...t, legacy: Boolean(t.legacy) })), total, page, pageSize, sampledAt: now };
     })();
   }
 
@@ -415,18 +444,21 @@ export class TellStore {
     return this.db.prepare("DELETE FROM tells WHERE id = ?").run(id).changes === 1;
   }
 
-  add(targetNorm: string, targetName: string, fromName: string, message: string): void {
+  add(chatId: string, targetId: string, targetName: string, fromName: string, message: string): void {
+    const scope = canonicalScope(identitiesFor(this.db), chatId, targetId);
     this.db
       .prepare(
-        "INSERT INTO tells (target_norm, target_name, from_name, message, created_ts) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO tells (target_norm,target_name,from_name,message,created_ts,chat_id,target_id) VALUES (?,?,?,?,?,?,?)",
       )
-      .run(targetNorm, targetName, fromName, message, Date.now());
+      .run("", targetName, fromName, message, Date.now(), scope.chat_id, scope.sender_id);
   }
 
-  enqueueFor(targetNorm: string, chatId: string, senderName: string): void {
+  enqueueFor(targetId: string, chatId: string, senderName: string): void {
     this.db.transaction(() => {
-      const rows = this.db.prepare("SELECT id, from_name, message FROM tells WHERE target_norm = ? ORDER BY id")
-        .all(targetNorm) as (Tell & { id: number })[];
+      const candidates = this.db.prepare(`SELECT id,from_name,message,chat_id,target_id AS sender_id
+        FROM tells WHERE target_id IS NOT NULL AND chat_id IS NOT NULL ORDER BY id`)
+        .all() as (Tell & PersonScope & { id: number })[];
+      const rows = forPerson(candidates, chatId, targetId, identitiesFor(this.db));
       const now = Date.now();
       for (const row of rows) {
         this.db.prepare("INSERT INTO outbox (chat_id, body, available_at, created_at) VALUES (?, ?, ?, ?)")
@@ -445,29 +477,35 @@ export interface KarmaRecord {
 export class KarmaStore {
   constructor(private readonly db: Database.Database) {}
 
-  adjust(nameNorm: string, name: string, delta: number): number {
+  adjust(chatId: string, senderId: string, name: string, delta: number): number {
+    const scope = canonicalScope(identitiesFor(this.db), chatId, senderId);
     this.db
       .prepare(
-        `INSERT INTO karma (name_norm, name, points) VALUES (?, ?, ?)
-         ON CONFLICT(name_norm) DO UPDATE SET points = points + excluded.points, name = excluded.name`,
+        `INSERT INTO player_karma (chat_id,sender_id,name,points) VALUES (?,?,?,?)
+         ON CONFLICT(chat_id,sender_id) DO UPDATE SET points=points+excluded.points,name=excluded.name`,
       )
-      .run(nameNorm, name, delta);
-    const row = this.db
-      .prepare("SELECT points FROM karma WHERE name_norm = ?")
-      .get(nameNorm) as { points: number };
-    return row.points;
+      .run(scope.chat_id, scope.sender_id, name, delta);
+    return this.get(chatId, senderId)!.points;
   }
 
-  get(nameNorm: string): KarmaRecord | undefined {
-    return this.db
-      .prepare("SELECT name, points FROM karma WHERE name_norm = ?")
-      .get(nameNorm) as KarmaRecord | undefined;
+  get(chatId: string, senderId: string): KarmaRecord | undefined {
+    const id = identitiesFor(this.db).canonical(senderId);
+    return this.top(chatId, Number.MAX_SAFE_INTEGER).find((r) => r.senderId === id);
   }
 
-  top(limit = 5): KarmaRecord[] {
-    return this.db
-      .prepare("SELECT name, points FROM karma ORDER BY points DESC LIMIT ?")
-      .all(limit) as KarmaRecord[];
+  top(chatId: string, limit = 5): (KarmaRecord & { senderId: string })[] {
+    const identities = identitiesFor(this.db);
+    const rows = this.db.prepare("SELECT * FROM player_karma").all() as (KarmaRecord & PersonScope)[];
+    const players = new Map<string, KarmaRecord & { senderId: string }>();
+    for (const r of inChat(rows, chatId, identities)) {
+      const senderId = identities.canonical(r.sender_id);
+      players.set(senderId, { senderId, name: r.name, points: (players.get(senderId)?.points ?? 0) + r.points });
+    }
+    for (const p of new SeenActivityStore(this.db).people(chatId)) {
+      const player = players.get(p.sender_id);
+      if (player) player.name = p.name;
+    }
+    return [...players.values()].sort((a, b) => b.points - a.points || a.name.localeCompare(b.name)).slice(0, limit);
   }
 }
 
@@ -514,200 +552,40 @@ export class RemindersStore {
 }
 
 export interface TriviaScore {
+  senderId: string;
   name: string;
   correct: number;
 }
 
 export interface TriviaTrophy {
+  senderId: string;
   name: string;
   trophies: number;
 }
 
-const TRIVIA_PERIOD_KEY = "trivia_period";
-
-function monthKey(now: number): string {
-  const d = new Date(now);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-export class TriviaScoreStore {
-  constructor(private readonly db: Database.Database) {}
-
-  // Lazily closes out the previous month: awards a trophy to each chat's top
-  // scorer (ties share it; needs a positive score), then resets the scores.
-  private rollover(now: number): void {
-    const current = monthKey(now);
-    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(TRIVIA_PERIOD_KEY) as
-      | { value: string }
-      | undefined;
-    if (row?.value === current) return;
-    this.closeMonth(row?.value, now);
+export class TriviaScoreStore extends PlayerScores {
+  constructor(db: Database.Database) { super(db, "trivia"); }
+  add(chatId: string, senderId: string, name: string, delta: number, now = Date.now()): number {
+    return this.addPoints(chatId, senderId, name, delta, now);
   }
-
-  // Awards trophies for `period` (if given) from the current scores, resets them,
-  // and marks the month containing `now` as the active one.
-  closeMonth(period: string | undefined, now = Date.now()): void {
-    this.db.transaction(() => {
-      if (period) {
-        this.db
-          .prepare(
-            `INSERT OR IGNORE INTO trivia_trophies (chat_id, period, name_norm, name, score)
-             SELECT s.chat_id, ?, s.name_norm, s.name, s.correct FROM trivia_scores s
-             WHERE s.correct > 0 AND s.correct = (
-               SELECT MAX(correct) FROM trivia_scores WHERE chat_id = s.chat_id
-             )`,
-          )
-          .run(period);
-        this.db.prepare("DELETE FROM trivia_scores").run();
-      }
-      this.db
-        .prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-        .run(TRIVIA_PERIOD_KEY, monthKey(now));
-    })();
-  }
-
-  // Adjust a player's score by delta (negative for a wrong answer). Returns the new total.
-  add(chatId: string, nameNorm: string, name: string, delta: number, now = Date.now()): number {
-    this.rollover(now);
-    this.db
-      .prepare(
-        `INSERT INTO trivia_scores (chat_id, name_norm, name, correct) VALUES (?, ?, ?, ?)
-         ON CONFLICT(chat_id, name_norm) DO UPDATE SET correct = correct + excluded.correct, name = excluded.name`,
-      )
-      .run(chatId, nameNorm, name, delta);
-    this.db
-      .prepare(
-        `INSERT INTO trivia_totals (chat_id, name_norm, name, total) VALUES (?, ?, ?, ?)
-         ON CONFLICT(chat_id, name_norm) DO UPDATE SET total = total + excluded.total, name = excluded.name`,
-      )
-      .run(chatId, nameNorm, name, delta);
-    const row = this.db
-      .prepare("SELECT correct FROM trivia_scores WHERE chat_id = ? AND name_norm = ?")
-      .get(chatId, nameNorm) as { correct: number };
-    return row.correct;
-  }
-
-  // Lifetime scores (never reset), best first.
-  allTime(chatId: string, limit = 5): { name: string; total: number }[] {
-    return this.db
-      .prepare("SELECT name, total FROM trivia_totals WHERE chat_id = ? ORDER BY total DESC LIMIT ?")
-      .all(chatId, limit) as { name: string; total: number }[];
-  }
-
   top(chatId: string, limit = 5, now = Date.now()): TriviaScore[] {
-    this.rollover(now);
-    return this.db
-      .prepare("SELECT name, correct FROM trivia_scores WHERE chat_id = ? ORDER BY correct DESC LIMIT ?")
-      .all(chatId, limit) as TriviaScore[];
-  }
-
-  // Trophy count per player in a chat, most trophies first.
-  trophies(chatId: string, limit = 5): TriviaTrophy[] {
-    return this.db
-      .prepare(
-        `SELECT MAX(name) AS name, COUNT(*) AS trophies FROM trivia_trophies
-         WHERE chat_id = ? GROUP BY name_norm ORDER BY trophies DESC, name LIMIT ?`,
-      )
-      .all(chatId, limit) as TriviaTrophy[];
-  }
-
-  // Past monthly winners in a chat, newest first.
-  history(chatId: string, months = 6): { period: string; name: string; score: number }[] {
-    return this.db
-      .prepare(
-        `SELECT period, name, score FROM trivia_trophies WHERE chat_id = ?
-         ORDER BY period DESC, score DESC LIMIT ?`,
-      )
-      .all(chatId, months) as { period: string; name: string; score: number }[];
-  }
-
-  clearAll(): void {
-    this.db.prepare("DELETE FROM trivia_scores").run();
+    return this.current(chatId, limit, now).map(({ senderId, name, score }) => ({ senderId, name, correct: score }));
   }
 }
-
-const DUEL_PERIOD_KEY = "duel_period";
 
 export interface DuelWin {
+  senderId: string;
   name: string;
   wins: number;
 }
 
-// Monthly duel-win tally, mirroring TriviaScoreStore: wins reset each month and a
-// trophy goes to the month's top duellist; duel_totals keeps lifetime wins.
-export class DuelWinStore {
-  constructor(private readonly db: Database.Database) {}
-
-  private rollover(now: number): void {
-    const current = monthKey(now);
-    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(DUEL_PERIOD_KEY) as
-      | { value: string }
-      | undefined;
-    if (row?.value === current) return;
-    this.closeMonth(row?.value, now);
+export class DuelWinStore extends PlayerScores {
+  constructor(db: Database.Database) { super(db, "duel"); }
+  add(chatId: string, senderId: string, name: string, now = Date.now()): number {
+    return this.addPoints(chatId, senderId, name, 1, now);
   }
-
-  closeMonth(period: string | undefined, now = Date.now()): void {
-    this.db.transaction(() => {
-      if (period) {
-        this.db
-          .prepare(
-            `INSERT OR IGNORE INTO duel_trophies (chat_id, period, name_norm, name, score)
-             SELECT w.chat_id, ?, w.name_norm, w.name, w.wins FROM duel_wins w
-             WHERE w.wins > 0 AND w.wins = (
-               SELECT MAX(wins) FROM duel_wins WHERE chat_id = w.chat_id
-             )`,
-          )
-          .run(period);
-        this.db.prepare("DELETE FROM duel_wins").run();
-      }
-      this.db
-        .prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-        .run(DUEL_PERIOD_KEY, monthKey(now));
-    })();
-  }
-
-  // Record a duel win for a player. Returns their new monthly win count.
-  add(chatId: string, nameNorm: string, name: string, now = Date.now()): number {
-    this.rollover(now);
-    this.db
-      .prepare(
-        `INSERT INTO duel_wins (chat_id, name_norm, name, wins) VALUES (?, ?, ?, 1)
-         ON CONFLICT(chat_id, name_norm) DO UPDATE SET wins = wins + 1, name = excluded.name`,
-      )
-      .run(chatId, nameNorm, name);
-    this.db
-      .prepare(
-        `INSERT INTO duel_totals (chat_id, name_norm, name, total) VALUES (?, ?, ?, 1)
-         ON CONFLICT(chat_id, name_norm) DO UPDATE SET total = total + 1, name = excluded.name`,
-      )
-      .run(chatId, nameNorm, name);
-    const win = this.db
-      .prepare("SELECT wins FROM duel_wins WHERE chat_id = ? AND name_norm = ?")
-      .get(chatId, nameNorm) as { wins: number };
-    return win.wins;
-  }
-
   top(chatId: string, limit = 5, now = Date.now()): DuelWin[] {
-    this.rollover(now);
-    return this.db
-      .prepare("SELECT name, wins FROM duel_wins WHERE chat_id = ? ORDER BY wins DESC LIMIT ?")
-      .all(chatId, limit) as DuelWin[];
-  }
-
-  allTime(chatId: string, limit = 5): { name: string; total: number }[] {
-    return this.db
-      .prepare("SELECT name, total FROM duel_totals WHERE chat_id = ? ORDER BY total DESC LIMIT ?")
-      .all(chatId, limit) as { name: string; total: number }[];
-  }
-
-  trophies(chatId: string, limit = 5): TriviaTrophy[] {
-    return this.db
-      .prepare(
-        `SELECT MAX(name) AS name, COUNT(*) AS trophies FROM duel_trophies
-         WHERE chat_id = ? GROUP BY name_norm ORDER BY trophies DESC, name LIMIT ?`,
-      )
-      .all(chatId, limit) as TriviaTrophy[];
+    return this.current(chatId, limit, now).map(({ senderId, name, score }) => ({ senderId, name, wins: score }));
   }
 }
 // UTC calendar day (YYYY-MM-DD) used to enforce the once-a-day siesta limit.

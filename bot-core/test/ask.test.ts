@@ -14,6 +14,7 @@ import type { IncomingMessage } from "../src/transport/types.js";
 import type { WAMessage } from "@whiskeysockets/baileys";
 
 import { memoryKey } from "../src/state/identity.js";
+import { AskQuotaStore } from "../src/state/ask-quota.js";
 
 const ollama = vi.hoisted(() => ({ chat: vi.fn(), listModels: vi.fn() }));
 vi.mock("../src/util/ollama.js", () => ({
@@ -40,7 +41,8 @@ function setup(cfg: BotConfig = DEFAULT_CONFIG) {
     () => cfg,
     pino({ level: "silent" }),
   );
-  return { userMemory, profiles, profiler, ask: makeAsk(userMemory, profiler) };
+  const quota = new AskQuotaStore(db);
+  return { userMemory, profiles, profiler, quota, ask: makeAsk(userMemory, profiler, quota) };
 }
 
 function makeCtx(args: string, cfg: BotConfig = DEFAULT_CONFIG) {
@@ -92,6 +94,57 @@ function makeCtxWithReply(args: string, cfg: BotConfig = DEFAULT_CONFIG) {
   ctx.args = args;
   return { ctx, sendText };
 }
+
+describe("bot.ask quota", () => {
+  const cfg = { ...DEFAULT_CONFIG, userMemoryEnabled: false };
+
+  it("shares ten requests across ask/raw/model overrides and blocks concurrent excess before inference", async () => {
+    const { ask, quota } = setup(cfg);
+    const reserve = vi.spyOn(quota, "consume");
+    const requests = Array.from({ length: 12 }, (_, i) => {
+      const { ctx, sendText } = makeCtxWithReply(i % 2 ? "model=llama3 question" : "question", cfg);
+      ctx.commandTrigger = i % 2 ? "bot.ask.raw" : "bot.ask";
+      ctx.msg.fromMe = true;
+      return { ctx, sendText };
+    });
+    await Promise.all(requests.map(({ ctx }) => ask(ctx)));
+    expect(ollama.chat).toHaveBeenCalledTimes(10);
+    expect(reserve).toHaveBeenCalledTimes(12);
+    for (const { sendText } of requests.slice(10)) {
+      expect(sendText.mock.calls[0][1]).toContain("used your 10 bot.ask requests in this chat");
+      expect(sendText.mock.calls[0][1]).toContain("60 minutes");
+    }
+  });
+
+  it("does not count empty prompts, disabled ask, model-only overrides or model-list requests", async () => {
+    const { ask, quota } = setup(cfg);
+    const reserve = vi.spyOn(quota, "consume");
+    for (const args of ["", "models", "model=?", "model=llama3"]) await ask(makeCtx(args, cfg));
+    await ask(makeCtx("question", { ...cfg, askEnabled: false }));
+    expect(reserve).not.toHaveBeenCalled();
+    expect(ollama.chat).not.toHaveBeenCalled();
+    expect(ollama.listModels).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts failed inference attempts but still allows model-list requests during cooldown", async () => {
+    const { ask } = setup(cfg);
+    ollama.chat.mockResolvedValue({ ok: false, reason: "unreachable" });
+    for (let i = 0; i < 10; i++) await ask(makeCtx("question", cfg));
+    const { ctx, sendText } = makeCtxWithReply("question", cfg);
+    await ask(ctx);
+    expect(sendText.mock.calls[0][1]).toContain("used your 10");
+    await ask(makeCtx("models", cfg));
+    expect(ollama.chat).toHaveBeenCalledTimes(10);
+    expect(ollama.listModels).toHaveBeenCalledOnce();
+  });
+
+  it("fails explicitly without inference if quota persistence fails", async () => {
+    const { ask, quota } = setup(cfg);
+    vi.spyOn(quota, "consume").mockImplementation(() => { throw new Error("Disk unavailable"); });
+    await expect(ask(makeCtx("question", cfg))).rejects.toThrow("Disk unavailable");
+    expect(ollama.chat).not.toHaveBeenCalled();
+  });
+});
 
 describe("bot.ask records the question for profiling", () => {
   it("uses the resolved DM scope for recording and mention context without reading legacy or other chat memory", async () => {

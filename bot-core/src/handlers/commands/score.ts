@@ -1,5 +1,7 @@
 import type { Handler } from "../../router/router.js";
-import type { SentimentStore } from "../../state/repos.js";
+import type { SeenActivityStore, SentimentStore } from "../../state/repos.js";
+import { localTarget, messagePerson } from "./local-target.js";
+import { chatKey } from "./user-context.js";
 
 const LEVELS = [
   { name: "Le Tourist 🗼", threshold: 0 },
@@ -9,14 +11,20 @@ const LEVELS = [
   { name: 'Le "Bon Vivant" 🥖', threshold: 40 },
 ];
 
-export function makeScore(sentiment: SentimentStore): Handler {
+export function makeScore(sentiment: SentimentStore, people: SeenActivityStore): Handler {
   return (ctx) => {
     const target = ctx.args.trim() || ctx.msg.senderName;
     if (!target) {
       return ctx.reply("Usage: `bot.score <Name>` (or just `bot.score` to check your own).");
     }
 
-    const { total, count } = sentiment.scoreFor(target);
+    let senderId = messagePerson(ctx.msg);
+    if (ctx.args.trim()) {
+      const resolved = localTarget(people, ctx.msg, target);
+      if ("error" in resolved) return ctx.reply(resolved.error);
+      senderId = resolved.person.sender_id;
+    }
+    const { total, count } = sentiment.scoreFor(chatKey(ctx.msg), senderId);
     if (count === 0) {
       return ctx.reply(`No logged messages found for sender: "${target}".`);
     }

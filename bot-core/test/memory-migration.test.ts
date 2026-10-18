@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../src/state/db.js";
+import { removeScopedSchema } from "./legacy-schema.js";
 import { UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { memoryKey } from "../src/state/identity.js";
 import { OutboxStore } from "../src/state/outbox.js";
@@ -50,9 +51,10 @@ describe("chat memory migration", () => {
     const tables = ["kv", "contacts", "chat_directory", "reminders", "tells", "pets", "outbox", "siesta_discipline"];
     const before = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
     db.exec("DROP TABLE admin_audit; DROP TABLE delivery_attempts; ALTER TABLE outbox DROP COLUMN manual_retry_count; DROP INDEX idx_outbox_failures; ALTER TABLE outbox DROP COLUMN last_failure_at;");
+    removeScopedSchema(db);
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(db.pragma("user_version", { simple: true })).toBe(9);
     expect(db.prepare("SELECT * FROM user_messages").all()).toEqual([]);
     expect(db.prepare("SELECT * FROM user_profiles").all()).toEqual([]);
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
@@ -63,9 +65,10 @@ describe("chat memory migration", () => {
     // Simulate a version-four installation: adding monitoring must not clear
     // the already isolated memory or alter existing outbox claims.
     db.exec("DROP TABLE admin_audit; DROP TABLE delivery_attempts; ALTER TABLE outbox DROP COLUMN manual_retry_count; DROP INDEX idx_outbox_failures; ALTER TABLE outbox DROP COLUMN last_failure_at; PRAGMA user_version = 4;");
+    removeScopedSchema(db);
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(db.pragma("user_version", { simple: true })).toBe(9);
     expect(new UserMemoryStore(db).recentFor(key)[0].message).toBe("fresh scoped message");
     expect(new UserProfileStore(db).get(key)?.deep).toBe("fresh dossier");
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);

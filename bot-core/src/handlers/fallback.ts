@@ -1,4 +1,6 @@
 import type { Handler } from "../router/router.js";
+import { chatKey } from "./commands/user-context.js";
+import { messagePerson } from "./commands/local-target.js";
 import type { RuntimeState } from "../state/runtime.js";
 import type { SentimentStore, TriviaScoreStore, DuelWinStore, UserMemoryStore } from "../state/repos.js";
 import type { ProfileService } from "./profiles/service.js";
@@ -30,7 +32,8 @@ export function makeFallback(deps: FallbackDeps): Handler {
       runtime: deps.runtime,
       scores: deps.triviaScores,
       duelScores: deps.duelScores,
-      chatId: ctx.msg.chatId,
+      chatId: chatKey(ctx.msg),
+      senderId: messagePerson(ctx.msg),
       senderName: ctx.msg.senderName,
       text,
       sentAt: ctx.msg.timestamp,
@@ -40,10 +43,13 @@ export function makeFallback(deps: FallbackDeps): Handler {
     if (consumed) return;
 
     // 2) Active insult duel in this chat — treat the message as a comeback.
-    const game = deps.runtime.insultGames.get(ctx.msg.chatId);
-    if (game && game.currentInsultIndex !== null) {
+    const insultChat = [...deps.runtime.insultGames.keys()].find((key) =>
+      deps.triviaScores.canonicalPerson(key) === deps.triviaScores.canonicalPerson(chatKey(ctx.msg)));
+    const game = insultChat ? deps.runtime.insultGames.get(insultChat) : undefined;
+    if (insultChat && game && game.currentInsultIndex !== null &&
+        deps.triviaScores.canonicalPerson(game.targetId) === deps.triviaScores.canonicalPerson(messagePerson(ctx.msg))) {
       const result = checkComeback(game, text);
-      if (result.finished) deps.runtime.insultGames.delete(ctx.msg.chatId);
+      if (result.finished) deps.runtime.insultGames.delete(insultChat);
       await ctx.reply(result.text);
       return;
     }
@@ -57,7 +63,7 @@ export function makeFallback(deps: FallbackDeps): Handler {
 
     // 4) Passive sentiment logging (no reply).
     const { label, polarity } = analyzeSentiment(text);
-    deps.sentiment.log(ctx.msg.senderName || ctx.msg.chatName || "unknown", label, polarity, text);
+    deps.sentiment.log(chatKey(ctx.msg), messagePerson(ctx.msg), ctx.msg.senderName || "unknown", label, polarity, text);
 
     // 5) Passive per-user memory: remember substantial free-form chatter so
     // bot.ask / bot.profile can personalise. Keyed by a stable identity (phone/

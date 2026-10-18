@@ -30,7 +30,7 @@ describe("durable delivery", () => {
     let migrated: ReturnType<typeof openDatabase> | undefined;
     try {
       migrated = openDatabase(path);
-      expect(migrated.pragma("user_version", { simple: true })).toBe(7);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(9);
       expect(new RemindersStore(migrated).due(100)[0].text).toBe("keep me");
     } finally {
       migrated?.close();
@@ -72,7 +72,7 @@ describe("durable delivery", () => {
       expect(store.claim(300001)).toMatchObject({
         id: 1, chat_id: "chat", body: "keep me", attempts: 2, pet_event_id: null,
       });
-      expect(migrated.pragma("user_version", { simple: true })).toBe(7);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(9);
       expect(migrated.prepare("SELECT COUNT(*) AS count FROM pets").get()).toEqual({ count: 0 });
     } finally {
       migrated?.close();
@@ -86,7 +86,7 @@ describe("durable delivery", () => {
     expect(() => store.enqueueReminders(100)).toThrow("write failed");
     expect(reminders.due(100)).toHaveLength(1);
     const tells = new TellStore(db);
-    tells.add("alice", "Alice", "Bob", "keep me");
+    tells.add("chat", "alice", "Alice", "Bob", "keep me");
     expect(() => tells.enqueueFor("alice", "chat", "Alice")).toThrow("write failed");
     expect(db.prepare("SELECT COUNT(*) AS count FROM tells").get()).toEqual({ count: 1 });
   });
@@ -141,7 +141,7 @@ describe("durable delivery", () => {
   it("persists tells in the outbox before removing the original", () => {
     const { db, store } = setup();
     const tells = new TellStore(db);
-    tells.add("alice", "Alice", "Bob", "call me");
+    tells.add("chat", "alice", "Alice", "Bob", "call me");
     tells.enqueueFor("alice", "chat", "Alice");
     tells.enqueueFor("alice", "chat", "Alice");
     const delivery = store.claim(Date.now())!;

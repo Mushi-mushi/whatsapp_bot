@@ -178,9 +178,55 @@ Existing discipline rows remain effective through verified alias-aware reads;
 explicit sleep/wake actions update equivalent restrictions without rewriting
 historical daily allowances. No database schema change is required.
 
-This does not change the legacy name-based tells, last-seen, karma or game scores.
-Migrating those features and reconciling historical memory requires a separate
-data policy; matching display names is not sufficient evidence.
+### Chat-scoped people and statistics
+
+Tells, last-seen, karma, sentiment scores and trivia/duel scores now belong to a
+verified person **within one chat**. An independent participant directory records
+approved, deduplicated activity (including short messages, media, commands and
+owner activity), even when AI memory is disabled. Bot-generated replies do not
+create activity. Names are display labels, not database/player keys.
+
+Named commands resolve only a unique latest name observed in the current chat.
+Missing or ambiguous names are rejected; saved contacts alone do not prove chat
+membership. After a rename, use the new name. Self-karma is checked by identity,
+and `bot.score` without a name uses the sender's own identity. Sentiment top-message
+commands cannot quote another chat's messages.
+
+Trivia allows distinct same-named players, preserves scores across renames and
+uses identity for answer eligibility, duel membership, totals and trophies.
+Duplicate names on leaderboards include an identity label. Verified aliases
+are recognized even when learned during a game. Insult-duel answers are accepted
+only from the challenger, not a same-named bystander.
+
+The additive **schema 9** migration creates the participant directory and new
+identity-keyed karma/game tables, and adds nullable scope columns to tells and
+sentiment. Historical name-only seen/karma/game rows remain in their original
+tables, unattributed and excluded from new lookups, resets and monthly rollover.
+Old sentiment rows remain unattributed and subject to the existing retention
+policy. No historical AI memory/profile reconciliation is performed.
+New scoped statistics start fresh; names are never used to guess ownership.
+Back up before upgrading: older binaries cannot open schema 9.
+
+### Ask request limit
+
+`bot.ask` and `bot.ask.raw` share a persistent limit of **10 requests per person
+per chat**, including the linked account's own requests and inline model overrides.
+The tenth request is allowed and starts a **one-hour cooldown**. Cooldown expiry
+grants another ten requests; **UTC midnight also resets the quota**, even if the
+hour has not elapsed. Rejected requests report the remaining wait and do not
+extend it. Requests below ten accumulate throughout the UTC day.
+
+Model-list requests (`bot.models`, `bot.ask models`, `bot.ask model=?`) do not
+count and remain available during cooldown. Empty/disabled requests and model
+overrides without a question do not count. Once an inference request is reserved,
+it counts even if Ollama or reply delivery fails; concurrent requests cannot
+exceed ten. Other AI commands are not included in this limit.
+
+Verified identity aliases share quota, including after an alias is learned;
+duplicate display names do not. Quotas survive restarts. The additive **schema 8**
+migration creates `ask_quota` without modifying existing bot data. Back up before
+deploying: older binaries cannot open a newer schema. The current application
+and backup verifier require schema 9 (older backups need a matching-version verifier).
 
 The profiles API exposes an opaque `sender_key` for each chat/person pair plus
 `chat_id` and `chat_name` (null if unknown). URL-encode the key in API paths. The dashboard
@@ -269,16 +315,23 @@ The **Pending tells** tab lists and cancels tells not yet handed to delivery.
 It shares the Reminders pagination, 10-second refresh, confirmation, stale-data
 handling and immediate (not configuration Save) cancellation behavior.
 Create tells in WhatsApp with `bot.tell`; dashboard creation/editing is not provided.
-Tells are matched by normalized recipient name when that recipient speaks;
-they are not chat-scoped or linked to a verified person ID. The list shows the
-original recipient name, sender name, message and browser-local creation time,
-without inventing a chat or identity. These are private contents: restrict
+New tells are bound to a unique observed recipient identity and the originating
+chat. They are delivered only when that person becomes active in that chat,
+including after renames or verified address changes. Delivery uses the observed
+transport address and preserves the existing transactional outbox handoff.
+Legacy name-only tells are **held, never automatically delivered**. They remain
+visible and cancellable; cancel and recreate them in WhatsApp to select a verified
+recipient. Tells already queued in the outbox are not changed by this migration.
+The list shows original recipient/sender labels, message, creation time and, for
+new tells, the chat and target identity. These are private contents: restrict
 dashboard access to trusted users.
 
 Authenticated, `Cache-Control: no-store` endpoints:
 
 - `GET /api/tells?page=1`: `{ tells, total, page, pageSize, sampledAt }`, 50 per
   page ordered by creation time then ID. Same page limits as Reminders.
+  Each entry includes `chatId`, `chatName`, `targetId` (nullable for legacy rows)
+  and `legacy`; legacy rows have no inferred scope.
 - `DELETE /api/tells/:id`: `{ ok: true, cancelledId }`; invalid IDs return 400.
   The pending-row deletion and transactional handoff are mutually exclusive.
   A missing/already handed-off/already cancelled row returns 409 and never

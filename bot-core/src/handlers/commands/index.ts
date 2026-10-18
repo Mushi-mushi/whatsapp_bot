@@ -47,10 +47,12 @@ import type { ConfigController } from "../../config/controller.js";
 import type { PetService } from "../../pets/service.js";
 import { makePet } from "./pet.js";
 import { makeServices } from "./services.js";
+import type { AskQuotaStore } from "../../state/ask-quota.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
   discipline: SiestaDisciplineStore;
+  askQuota: AskQuotaStore;
   sentiment: SentimentStore;
   complaints: ComplaintStore;
   seenActivity: SeenActivityStore;
@@ -79,20 +81,20 @@ export function buildCommandRegistry(deps: CommandDeps): CommandRegistry {
     quote,
     siesta: makeSiesta(deps.runtime, deps.discipline),
     complain: makeComplain(deps.complaints),
-    score: makeScore(deps.sentiment),
+    score: makeScore(deps.sentiment, deps.seenActivity),
     top_positive: makeTopPositive(deps.sentiment),
     top_negative: makeTopNegative(deps.sentiment),
     torture: makeTorture(deps.runtime),
-    insults: makeInsults(deps.runtime),
-    ask: makeAsk(deps.userMemory, deps.profiler),
+    insults: makeInsults(deps.runtime, deps.seenActivity),
+    ask: makeAsk(deps.userMemory, deps.profiler, deps.askQuota),
     models,
     as_user: makeAsUser(deps.userMemory, deps.profiler),
     profile: makeProfile(deps.userMemory, deps.profiler),
     seen: makeSeen(deps.seenActivity),
     whoami,
-    tell: makeTell(deps.tells),
+    tell: makeTell(deps.tells, deps.seenActivity),
     remind: makeRemind(deps.reminders),
-    karma: makeKarma(deps.karma),
+    karma: makeKarma(deps.karma, deps.seenActivity),
     translate: makeTranslate(deps.userMemory, deps.profiler),
     tldr: makeTldr(deps.userMemory, deps.profiler),
     roll,

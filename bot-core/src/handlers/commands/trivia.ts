@@ -2,7 +2,8 @@ import type { Handler } from "../../router/router.js";
 import type { BotConfig } from "../../config/schema.js";
 import type { RuntimeState, TriviaGame, TriviaSession, TriviaDuel } from "../../state/runtime.js";
 import type { TriviaScoreStore, DuelWinStore } from "../../state/repos.js";
-import { normalizeName } from "../../router/normalize.js";
+import { chatKey } from "./user-context.js";
+import { messagePerson, playerLabel } from "./local-target.js";
 import { decodeEntities } from "../../util/net.js";
 import { ollamaChat } from "../../util/ollama.js";
 
@@ -318,10 +319,20 @@ export function scheduleNextQuestion(
 // ---------------------------------------------------------------------------
 
 function duelStandings(duel: TriviaDuel): string {
-  return [...duel.players.values()]
+  const players = [...duel.players].map(([senderId, p]) => ({ ...p, senderId }));
+  return players
     .sort((a, b) => b.score - a.score)
-    .map((p) => `${p.name} ${p.score}/${duel.target}`)
+    .map((p) => `${playerLabel(p, players)} ${p.score}/${duel.target}`)
     .join(" · ");
+}
+
+function reconcileDuel(duel: TriviaDuel, canonical: (id: string) => string): void {
+  const players = new Map<string, { name: string; score: number }>();
+  for (const [id, player] of duel.players) {
+    const key = canonical(id);
+    players.set(key, { name: player.name, score: (players.get(key)?.score ?? 0) + player.score });
+  }
+  duel.players = players;
 }
 
 // Tear down a duel (any phase) and its active question + timers.
@@ -394,9 +405,11 @@ export async function beginDuel(
   chatId: string,
   reply: (text: string) => Promise<void>,
   cfg: BotConfig,
+  canonical: (id: string) => string = (id) => id,
 ): Promise<void> {
   const duel = runtime.triviaDuels.get(chatId);
   if (!duel || duel.phase !== "lobby") return;
+  reconcileDuel(duel, canonical);
   if (duel.players.size < 2) {
     runtime.triviaDuels.delete(chatId);
     await reply("⌛ Not enough players joined — duel cancelled. Start again with `bot.trivia duel`.");
@@ -432,6 +445,7 @@ export interface TriviaAnswerCtx {
   scores: TriviaScoreStore;
   duelScores: DuelWinStore;
   chatId: string;
+  senderId: string;
   senderName: string;
   text: string;
   sentAt: number; // phone send-time (ms) of the answer, for the stale guard
@@ -443,22 +457,23 @@ export interface TriviaAnswerCtx {
 // was consumed as a trivia answer (so the fallback stops), false to let other
 // handlers run (not an answer, stale, or a non-participant in a duel).
 export async function handleTriviaAnswer(c: TriviaAnswerCtx): Promise<boolean> {
+  c = { ...c, chatId: triviaChat(c.runtime, c.chatId, c.scores) };
   const { runtime, chatId } = c;
   const game = runtime.triviaGames.get(chatId);
   if (!game) return false;
   // Ignore answers sent before this question appeared (lag / already-answered / skipped).
   if (c.sentAt > 0 && c.sentAt < game.askedAt - STALE_ANSWER_GRACE_MS) return false;
 
-  const nameNorm = normalizeName(c.senderName);
-  if (game.mode === "duel") return handleDuelAttempt(c, game, nameNorm);
+  const playerId = c.scores.canonicalPerson(c.senderId);
+  if (game.mode === "duel") return handleDuelAttempt(c, game, playerId);
 
   // Classic: wrong guesses may retry; every correct answerer scores once.
-  if (game.answered.has(nameNorm)) return true;
+  if ([...game.answered].some((id) => c.scores.canonicalPerson(id) === playerId)) return true;
   const result = checkTriviaAnswer(game, c.text);
   if (!result) return false;
   if (result.correct) {
-    game.answered.add(nameNorm);
-    const points = c.scores.add(chatId, nameNorm, c.senderName, 1);
+    game.answered.add(playerId);
+    const points = c.scores.add(chatId, playerId, c.senderName, 1);
     await c.reply(`✅ Correct, ${c.senderName}! (+1 → ${points})`);
     if (runtime.triviaGames.get(chatId) !== game) return true;
     // First correct answer opens a short window so stragglers can still score.
@@ -476,7 +491,7 @@ export async function handleTriviaAnswer(c: TriviaAnswerCtx): Promise<boolean> {
       }, CLASSIC_COLLECT_MS);
     }
   } else {
-    const points = c.scores.add(chatId, nameNorm, c.senderName, -1);
+    const points = c.scores.add(chatId, playerId, c.senderName, -1);
     await c.reply(`❌ Not that one, ${c.senderName} — that's -1 (now ${points}).`);
   }
   return true;
@@ -485,16 +500,18 @@ export async function handleTriviaAnswer(c: TriviaAnswerCtx): Promise<boolean> {
 async function handleDuelAttempt(
   c: TriviaAnswerCtx,
   game: TriviaGame,
-  nameNorm: string,
+  playerId: string,
 ): Promise<boolean> {
   const duel = c.runtime.triviaDuels.get(c.chatId);
   if (!duel || duel.phase !== "running") return false;
-  const player = duel.players.get(nameNorm);
+  reconcileDuel(duel, (id) => c.scores.canonicalPerson(id));
+  const player = duel.players.get(playerId);
   if (!player) return false; // not a participant — let other handlers run
-  if (game.answered.has(nameNorm)) return true; // one shot per question (no brute force)
+  player.name = c.senderName;
+  if ([...game.answered].some((id) => c.scores.canonicalPerson(id) === playerId)) return true;
   const result = checkTriviaAnswer(game, c.text);
   if (!result) return false;
-  game.answered.add(nameNorm);
+  game.answered.add(playerId);
   if (!result.correct) return true; // no penalty, consumed silently
 
   // Fastest correct answer takes the question.
@@ -502,7 +519,7 @@ async function handleDuelAttempt(
   c.runtime.cancelTriviaTimer(c.chatId, game.timer);
   c.runtime.triviaGames.delete(c.chatId);
   if (player.score >= duel.target) {
-    const wins = c.duelScores.add(c.chatId, nameNorm, player.name);
+    const wins = c.duelScores.add(c.chatId, playerId, player.name);
     await c.reply(
       `🏆 ${player.name} wins the duel! (${player.score}/${duel.target})\n` +
         `Final: ${duelStandings(duel)}\n` +
@@ -516,13 +533,19 @@ async function handleDuelAttempt(
   return true;
 }
 
+function triviaChat(runtime: RuntimeState, chatId: string, scores: TriviaScoreStore): string {
+  const canonical = scores.canonicalPerson(chatId);
+  const keys = new Set([...runtime.triviaGames.keys(), ...runtime.triviaSessions.keys(), ...runtime.triviaDuels.keys()]);
+  return [...keys].find((id) => scores.canonicalPerson(id) === canonical) ?? canonical;
+}
+
 export function makeTrivia(
   runtime: RuntimeState,
   scores: TriviaScoreStore,
   duelScores: DuelWinStore,
 ): Handler {
   return async (ctx) => {
-    const chatId = ctx.msg.chatId;
+    const chatId = triviaChat(runtime, chatKey(ctx.msg), scores);
     const sub = ctx.args.trim().toLowerCase();
     const reply = (t: string) => ctx.reply(t);
     const active = runtime.triviaGames.get(chatId);
@@ -542,16 +565,16 @@ export function makeTrivia(
 
     if (sub === "scores" || sub === "score" || sub === "leaderboard") {
       const top = scores.top(chatId);
-      const trophies = new Map(scores.trophies(chatId, 100).map((t) => [t.name.toLowerCase(), t.trophies]));
-      const totals = new Map(scores.allTime(chatId, 100).map((t) => [t.name.toLowerCase(), t.total]));
+      const trophies = new Map(scores.trophies(chatId, 100).map((t) => [t.senderId, t.trophies]));
+      const totals = new Map(scores.allTime(chatId, 100).map((t) => [t.senderId, t.total]));
       await ctx.reply(
         top.length
           ? "🏆 Trivia leaderboard (this month):\n" +
               top
                 .map((r, i) => {
-                  const n = trophies.get(r.name.toLowerCase()) ?? 0;
-                  const total = totals.get(r.name.toLowerCase()) ?? r.correct;
-                  return `${i + 1}. ${r.name}: ${r.correct} (all-time ${total})${n ? ` ${"🏆".repeat(Math.min(n, 5))}${n > 5 ? `x${n}` : ""}` : ""}`;
+                  const n = trophies.get(r.senderId) ?? 0;
+                  const total = totals.get(r.senderId) ?? r.correct;
+                  return `${i + 1}. ${playerLabel(r, top)}: ${r.correct} (all-time ${total})${n ? ` ${"🏆".repeat(Math.min(n, 5))}${n > 5 ? `x${n}` : ""}` : ""}`;
                 })
                 .join("\n")
           : "No trivia scores here yet this month. Play with `bot.trivia`!",
@@ -563,7 +586,7 @@ export function makeTrivia(
       const top = scores.allTime(chatId);
       await ctx.reply(
         top.length
-          ? "🌟 All-time trivia leaderboard:\n" + top.map((r, i) => `${i + 1}. ${r.name}: ${r.total}`).join("\n")
+          ? "🌟 All-time trivia leaderboard:\n" + top.map((r, i) => `${i + 1}. ${playerLabel(r, top)}: ${r.total}`).join("\n")
           : "No trivia scores here yet. Play with `bot.trivia`!",
       );
       return;
@@ -582,16 +605,16 @@ export function makeTrivia(
 
     if (sub === "duels" || sub === "duelstats" || sub === "duelscores") {
       const top = duelScores.top(chatId);
-      const trophies = new Map(duelScores.trophies(chatId, 100).map((t) => [t.name.toLowerCase(), t.trophies]));
-      const totals = new Map(duelScores.allTime(chatId, 100).map((t) => [t.name.toLowerCase(), t.total]));
+      const trophies = new Map(duelScores.trophies(chatId, 100).map((t) => [t.senderId, t.trophies]));
+      const totals = new Map(duelScores.allTime(chatId, 100).map((t) => [t.senderId, t.total]));
       await ctx.reply(
         top.length
           ? "⚔️ Duel wins (this month):\n" +
               top
                 .map((r, i) => {
-                  const n = trophies.get(r.name.toLowerCase()) ?? 0;
-                  const total = totals.get(r.name.toLowerCase()) ?? r.wins;
-                  return `${i + 1}. ${r.name}: ${r.wins} (all-time ${total})${n ? ` ${"🏆".repeat(Math.min(n, 5))}${n > 5 ? `x${n}` : ""}` : ""}`;
+                  const n = trophies.get(r.senderId) ?? 0;
+                  const total = totals.get(r.senderId) ?? r.wins;
+                  return `${i + 1}. ${playerLabel(r, top)}: ${r.wins} (all-time ${total})${n ? ` ${"🏆".repeat(Math.min(n, 5))}${n > 5 ? `x${n}` : ""}` : ""}`;
                 })
                 .join("\n")
           : "No duels won here yet this month. Start one with `bot.trivia duel`!",
@@ -605,12 +628,13 @@ export function makeTrivia(
         await ctx.reply("No duel is forming here right now. Start one with `bot.trivia duel`.");
         return;
       }
-      const nameNorm = normalizeName(ctx.msg.senderName);
-      if (duel.players.has(nameNorm)) {
+      const playerId = scores.canonicalPerson(messagePerson(ctx.msg));
+      reconcileDuel(duel, (id) => scores.canonicalPerson(id));
+      if ([...duel.players.keys()].some((id) => scores.canonicalPerson(id) === playerId)) {
         await ctx.reply(`${ctx.msg.senderName}, you're already in the duel.`);
         return;
       }
-      duel.players.set(nameNorm, { name: ctx.msg.senderName, score: 0 });
+      duel.players.set(playerId, { name: ctx.msg.senderName, score: 0 });
       await ctx.reply(`✋ ${ctx.msg.senderName} joined the duel! (${duel.players.size} players in)`);
       return;
     }
@@ -699,7 +723,7 @@ export function makeTrivia(
         target,
         phase: "lobby",
         hostName,
-        players: new Map([[normalizeName(hostName), { name: hostName, score: 0 }]]),
+        players: new Map([[scores.canonicalPerson(messagePerson(ctx.msg)), { name: hostName, score: 0 }]]),
         session: { token: null, category, language, queue: [] },
         category,
         language,
@@ -713,7 +737,8 @@ export function makeTrivia(
           `Type \`bot.trivia accept\` to join. The race starts in ${DUEL_LOBBY_MS / 1000}s (need 2+ players).`,
       );
       if (runtime.triviaDuels.get(chatId) === duel) {
-        duel.lobbyTimer = runtime.scheduleTrivia(chatId, () => beginDuel(runtime, chatId, reply, ctx.config), DUEL_LOBBY_MS);
+        duel.lobbyTimer = runtime.scheduleTrivia(chatId, () =>
+          beginDuel(runtime, chatId, reply, ctx.config, (id) => scores.canonicalPerson(id)), DUEL_LOBBY_MS);
       }
       return;
     }

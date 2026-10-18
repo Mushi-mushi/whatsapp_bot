@@ -1,10 +1,14 @@
 import type { Handler } from "../../router/router.js";
 import type { RuntimeState } from "../../state/runtime.js";
 import { createGame, nextBotInsult } from "../insults/game.js";
+import type { SeenActivityStore } from "../../state/repos.js";
+import { chatKey } from "./user-context.js";
+import { messagePerson } from "./local-target.js";
 
-export function makeInsults(runtime: RuntimeState): Handler {
+export function makeInsults(runtime: RuntimeState, people: SeenActivityStore): Handler {
   return (ctx) => {
-    const chat = ctx.msg.chatId;
+    const canonical = people.canonical(chatKey(ctx.msg));
+    const chat = [...runtime.insultGames.keys()].find((key) => people.canonical(key) === canonical) ?? canonical;
     const sender = ctx.msg.senderName || "challenger";
     const sub = ctx.args.trim().toLowerCase();
     const existing = runtime.insultGames.get(chat);
@@ -23,7 +27,7 @@ export function makeInsults(runtime: RuntimeState): Handler {
           `We are already in a heated verbal duel! Give me your comeback or type \`bot.insults stop\` to surrender. (Player ${existing.playerWins} - Bot ${existing.botWins})`,
         );
       }
-      const game = createGame(sender);
+      const game = createGame(sender, messagePerson(ctx.msg));
       runtime.insultGames.set(chat, game);
       const first = nextBotInsult(game);
       return ctx.reply(

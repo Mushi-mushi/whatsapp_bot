@@ -57,7 +57,7 @@ export function ScheduledMessagesCard({ kind }: { kind: "reminders" | "tells" })
         </Button>
       </div>
       <CardDescription>
-        {reminderMode ? "View and cancel reminders still waiting in the scheduler." : "View and cancel tells waiting for their named recipient to speak. Tells are name-based, not bound to a chat or a verified identity."}
+        {reminderMode ? "View and cancel reminders still waiting in the scheduler." : "New tells are bound to a person in one chat. Legacy name-only tells are held and will not be delivered automatically; they can still be cancelled here."}
         {" "}Refreshes every 10 seconds.
         Once handed to delivery, {kind} leave this list and cannot be cancelled here.
         Create {kind} in WhatsApp with {reminderMode ? "bot.remind" : "bot.tell"}.
@@ -79,7 +79,7 @@ export function ScheduledMessagesCard({ kind }: { kind: "reminders" | "tells" })
           : <ul className="space-y-3">{data.entries.map((reminder) => <li key={reminder.id} className="min-w-0 rounded-md border p-3 space-y-2">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 break-words text-sm">
-                {"chatId" in reminder ? <>
+                {"dueAt" in reminder ? <>
                 <h3 className="font-medium break-words">{reminder.chatName || "Unknown chat"}</h3>
                 <p className="break-all text-xs text-muted-foreground">{reminder.chatId}</p>
                 <p>Recipient: {reminder.targetName || "Chat (no named recipient)"}</p>
@@ -88,9 +88,16 @@ export function ScheduledMessagesCard({ kind }: { kind: "reminders" | "tells" })
                   ? "Due now or overdue; awaiting handoff to delivery." : "Scheduled; not yet queued for delivery."}</p>
                 </> : <>
                   <h3 className="font-medium">Recipient: {reminder.targetName}</h3>
+                  {!reminder.legacy && <>
+                    <p>Chat: {reminder.chatName || "Unknown chat"}</p>
+                    <p className="break-all text-xs text-muted-foreground">{reminder.chatId}</p>
+                    <p className="break-all text-xs text-muted-foreground">Identity: {reminder.targetId}</p>
+                  </>}
                   <p>From: {reminder.fromName}</p>
                   <p>Created: <time dateTime={new Date(reminder.createdAt).toISOString()}>{new Date(reminder.createdAt).toLocaleString()}</time></p>
-                  <p className="text-xs text-muted-foreground">Waiting for matching recipient activity; not yet queued for delivery.</p>
+                  <p className="text-xs text-muted-foreground">{reminder.legacy
+                    ? "Legacy tell — held; no verified chat/person identity. Cancel and recreate in WhatsApp."
+                    : "Waiting for this person's activity in this chat; not yet queued for delivery."}</p>
                 </>}
               </div>
               <Button type="button" variant="outline" disabled={busy || !!query.error}

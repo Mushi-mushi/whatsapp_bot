@@ -4,11 +4,12 @@ import type { IncomingMessage } from "../../transport/types.js";
 import type { ProfileService } from "../profiles/service.js";
 import { ollamaChat, ollamaErrorMessage, ollamaListModels, type OllamaMessage } from "../../util/ollama.js";
 import { chatKey, mentionedUsers, rememberMessage, senderKey, userContextBlock } from "./user-context.js";
+import type { AskQuotaStore } from "../../state/ask-quota.js";
 
 // Pipe the user's prompt to a local Ollama model and reply with the answer.
 // When user memory is enabled, the system prompt is enriched with what the bot
 // knows about the asker (and anyone they mention) so answers feel personal.
-export function makeAsk(userMemory: UserMemoryStore, profiler: ProfileService): Handler {
+export function makeAsk(userMemory: UserMemoryStore, profiler: ProfileService, quota: AskQuotaStore): Handler {
   return async (ctx) => {
     const cfg = ctx.config;
     if (!cfg.askEnabled) {
@@ -32,6 +33,13 @@ export function makeAsk(userMemory: UserMemoryStore, profiler: ProfileService): 
     const { model, text } = parseModel(prompt, cfg.ollamaModel);
     if (!text) {
       await ctx.reply("Ask me anything! Usage: `bot.ask What is the capital of France?`");
+      return;
+    }
+
+    const allowance = quota.consume(chatKey(ctx.msg), ctx.msg.senderIdentity ?? ctx.msg.senderId, ctx.msg.senderPhone);
+    if (!allowance.allowed) {
+      const minutes = Math.max(1, Math.ceil((allowance.retryAt - Date.now()) / 60_000));
+      await ctx.reply(`You've used your 10 bot.ask requests in this chat. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`);
       return;
     }
 

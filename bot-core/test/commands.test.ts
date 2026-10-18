@@ -19,6 +19,7 @@ import { ProfileService } from "../src/handlers/profiles/service.js";
 import { PetService } from "../src/pets/service.js";
 import { PetStore } from "../src/pets/store.js";
 import type { Transport } from "../src/transport/types.js";
+import { AskQuotaStore } from "../src/state/ask-quota.js";
 
 // Persisted aliases and IDs must remain compatible with pre-catalogue installs.
 const legacyCommands = {
@@ -54,6 +55,7 @@ function setup() {
     () => configStore.load(), pino({ level: "silent" }));
   const registry = buildCommandRegistry({
     runtime, discipline: new SiestaDisciplineStore(db),
+    askQuota: new AskQuotaStore(db),
     sentiment: new SentimentStore(db), complaints: new ComplaintStore(db),
     seenActivity: new SeenActivityStore(db), tells: new TellStore(db),
     karma: new KarmaStore(db), reminders: new RemindersStore(db),

@@ -1,10 +1,11 @@
 import type { Handler } from "../../router/router.js";
-import type { TellStore } from "../../state/repos.js";
-import { normalizeLooseName } from "../../router/normalize.js";
+import type { SeenActivityStore, TellStore } from "../../state/repos.js";
+import { localTarget } from "./local-target.js";
+import { chatKey } from "./user-context.js";
 
 // bot.tell <name>: <message>  (colon separates a multi-word name from the message;
 // without a colon, the first word is taken as the name).
-export function makeTell(tells: TellStore): Handler {
+export function makeTell(tells: TellStore, people: SeenActivityStore): Handler {
   return (ctx) => {
     const raw = ctx.args.trim();
     if (!raw) {
@@ -29,9 +30,9 @@ export function makeTell(tells: TellStore): Handler {
     if (!name || !message) {
       return ctx.reply("Usage: `bot.tell Alice: call me back`");
     }
-    const digits = name.replace(/\D/g, "");
-    const targetNorm = digits.length >= 6 ? digits : normalizeLooseName(name);
-    tells.add(targetNorm, name, ctx.msg.senderName, message);
-    return ctx.reply(`Got it — I'll tell ${name} next time they're active. 📨`);
+    const target = localTarget(people, ctx.msg, name);
+    if ("error" in target) return ctx.reply(target.error);
+    tells.add(chatKey(ctx.msg), target.person.sender_id, target.person.name, ctx.msg.senderName, message);
+    return ctx.reply(`Got it — I'll tell ${target.person.name} next time they're active in this chat. 📨`);
   };
 }

@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const DATABASE_SCHEMA_VERSION = 7;
+export const DATABASE_SCHEMA_VERSION = 9;
 
 // Single SQLite database (WAL) for config, dedup, and analytics.
 export function openDatabase(path: string): Database.Database {
@@ -310,6 +310,64 @@ function migrate(db: Database.Database): void {
         );
         CREATE INDEX idx_admin_audit_started ON admin_audit(started_at, id);
         PRAGMA user_version = 7;
+      `);
+    })();
+  }
+  if (version < 8) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ask_quota (
+          chat_id TEXT NOT NULL,
+          sender_id TEXT NOT NULL,
+          day TEXT NOT NULL,
+          used INTEGER NOT NULL CHECK(used BETWEEN 1 AND 10),
+          reset_at INTEGER,
+          PRIMARY KEY (chat_id, sender_id)
+        );
+        PRAGMA user_version = 8;
+      `);
+    })();
+  }
+  if (version < 9) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE tells ADD COLUMN chat_id TEXT;
+        ALTER TABLE tells ADD COLUMN target_id TEXT;
+        ALTER TABLE sentiment_log ADD COLUMN chat_id TEXT;
+        ALTER TABLE sentiment_log ADD COLUMN sender_id TEXT;
+        CREATE INDEX idx_sentiment_person ON sentiment_log(chat_id,sender_id);
+        CREATE INDEX idx_sentiment_chat_polarity ON sentiment_log(chat_id,polarity);
+        CREATE INDEX idx_tells_scope ON tells(chat_id,target_id);
+        CREATE TABLE chat_people (
+          chat_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+          name TEXT NOT NULL, name_norm TEXT NOT NULL,
+          last_ts INTEGER NOT NULL, chat_name TEXT,
+          PRIMARY KEY(chat_id, sender_id)
+        );
+        CREATE TABLE player_karma (
+          chat_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+          name TEXT NOT NULL, points INTEGER NOT NULL,
+          PRIMARY KEY(chat_id, sender_id)
+        );
+        CREATE TABLE player_scores (
+          game TEXT NOT NULL CHECK(game IN ('trivia','duel')),
+          chat_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+          name TEXT NOT NULL, score INTEGER NOT NULL,
+          PRIMARY KEY(game, chat_id, sender_id)
+        );
+        CREATE TABLE player_totals (
+          game TEXT NOT NULL CHECK(game IN ('trivia','duel')),
+          chat_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+          name TEXT NOT NULL, total INTEGER NOT NULL,
+          PRIMARY KEY(game, chat_id, sender_id)
+        );
+        CREATE TABLE player_trophies (
+          game TEXT NOT NULL CHECK(game IN ('trivia','duel')),
+          chat_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+          period TEXT NOT NULL, name TEXT NOT NULL, score INTEGER NOT NULL,
+          PRIMARY KEY(game, chat_id, sender_id, period)
+        );
+        PRAGMA user_version = 9;
       `);
     })();
   }

@@ -20,9 +20,10 @@ export const INSULTS_AND_COMEBACKS: Array<{ insult: string; comeback: string }> 
   { insult: "Is that the best you can do?", comeback: "Is that the best you can ask?" },
 ];
 
-export function createGame(targetSender: string, totalRounds = 5): InsultGame {
+export function createGame(targetSender: string, targetId: string, totalRounds = 5): InsultGame {
   return {
     targetSender,
+    targetId,
     currentInsultIndex: null,
     playerWins: 0,
     botWins: 0,

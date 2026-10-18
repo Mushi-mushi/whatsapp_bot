@@ -6,8 +6,10 @@ import { PendingTellsCard } from "./PendingTellsCard";
 
 const sample: TellsResponse = {
   tells: [
-    { id: 1, targetName: "Alice", fromName: "Bob", text: "Call me", createdAt: 1000 },
-    { id: 2, targetName: "Alice", fromName: "Carol", text: "<script>literal text</script>\nsecond line", createdAt: 2000 },
+    { id: 1, targetName: "Alice", fromName: "Bob", text: "Call me", createdAt: 1000,
+      chatId: "group@g.us", chatName: "Friends", targetId: "34600000001@s.whatsapp.net", legacy: false },
+    { id: 2, targetName: "Alice", fromName: "Carol", text: "<script>literal text</script>\nsecond line", createdAt: 2000,
+      chatId: null, chatName: null, targetId: null, legacy: true },
   ], total: 2, page: 1, pageSize: 50, sampledAt: 3000,
 };
 const empty = { ...sample, tells: [], total: 0 };
@@ -38,7 +40,10 @@ describe("pending tells", () => {
     expect(screen.getByText(/<script>literal text/).textContent).toContain("\nsecond line");
     expect(document.querySelector("script")).toBeNull();
     expect(document.querySelectorAll("time")).toHaveLength(2);
-    expect(screen.getByText(/Tells are name-based, not bound to a chat or a verified identity/)).toBeTruthy();
+    expect(screen.getByText(/New tells are bound to a person in one chat/)).toBeTruthy();
+    expect(screen.getByText("Chat: Friends")).toBeTruthy();
+    expect(screen.getByText("Identity: 34600000001@s.whatsapp.net")).toBeTruthy();
+    expect(screen.getByText(/Legacy tell — held/)).toBeTruthy();
     expect(api.getReminders).not.toHaveBeenCalled();
   });
 

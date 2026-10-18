@@ -3,6 +3,7 @@
 
 export interface InsultGame {
   targetSender: string;
+  targetId: string;
   currentInsultIndex: number | null;
   playerWins: number;
   botWins: number;
@@ -22,7 +23,7 @@ export interface TriviaGame {
   timer?: ReturnType<typeof setTimeout>;
   // "classic" awards every correct answerer; "duel" is a race (first correct only).
   mode: "classic" | "duel";
-  // name_norm of players whose question attempt is used: correct in classic, any guess in duels.
+  // Person IDs whose question attempt is used: correct in classic, any guess in duels.
   answered: Set<string>;
   // Classic collection window: once the first correct answer lands, this timer
   // closes the question so stragglers can still score before it advances.
@@ -56,7 +57,7 @@ export interface TriviaDuel {
   target: number;
   phase: "lobby" | "running";
   hostName: string;
-  players: Map<string, DuelPlayer>; // name_norm -> player
+  players: Map<string, DuelPlayer>; // person ID -> player
   session: TriviaSession;
   category?: { id: number; name: string };
   language: "en" | "es";

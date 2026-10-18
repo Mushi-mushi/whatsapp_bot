@@ -125,7 +125,7 @@ describe("administrative audit API", () => {
 
   it("records tell cancellation and manual retry scheduling rather than claiming a message was sent", async () => {
     const { app, deps, db } = await setup();
-    deps.tells.add("alice", "Alice", "Bob", "secret text");
+    deps.tells.add("chat", "alice", "Alice", "Bob", "secret text");
     expect((await app.inject({ method: "DELETE", url: "/api/tells/1", headers })).statusCode).toBe(200);
     db.exec("INSERT INTO outbox (chat_id, body, status, attempts, available_at, created_at) VALUES ('secret','secret','failed',5,0,0)");
     const payload = { expectedRetryCount: 0, acknowledgeDuplicateRisk: true };
@@ -254,7 +254,7 @@ describe("delivery recovery and pending tells API", () => {
     ["POST", "/api/operations/deliveries/1/retry"],
   ] as const)("authenticates %s %s without changing delivery state", async (method, url) => {
     const { app, db, deps } = await failedSetup();
-    deps.tells.add("alice", "Alice", "Bob", "hello");
+    deps.tells.add("chat", "alice", "Alice", "Bob", "hello");
     expect((await app.inject({ method, url, payload: method === "POST" ? retryBody : undefined })).statusCode).toBe(401);
     expect(deps.tells.list(1).total).toBe(1);
     expect(db.prepare("SELECT status, manual_retry_count FROM outbox").get()).toEqual({ status: "failed", manual_retry_count: 0 });
@@ -319,15 +319,16 @@ describe("delivery recovery and pending tells API", () => {
     }
   });
 
-  it("lists tells by creation and ID with original named recipients, no inferred chat or identity", async () => {
+  it("lists tells by creation and ID with explicit chat and recipient identity", async () => {
     const { app, deps } = await setup();
-    for (let i = 0; i < 51; i++) deps.tells.add("alice", "Alice", "Bob", `message ${i}`);
+    for (let i = 0; i < 51; i++) deps.tells.add("chat", "alice", "Alice", "Bob", `message ${i}`);
     const response = await app.inject({ url: "/api/tells", headers });
     expect(response.headers["cache-control"]).toBe("no-store");
     const first = response.json<TellsResponse>();
     expect(first).toMatchObject({ total: 51, page: 1, pageSize: 50 });
     expect(first.tells).toHaveLength(50);
-    expect(first.tells[0]).toEqual({ id: 1, targetName: "Alice", fromName: "Bob", text: "message 0", createdAt: expect.any(Number) });
+    expect(first.tells[0]).toEqual({ id: 1, targetName: "Alice", fromName: "Bob", text: "message 0", createdAt: expect.any(Number),
+      chatId: "chat", chatName: null, targetId: "alice", legacy: false });
     expect((await app.inject({ url: "/api/tells?page=2", headers })).json<TellsResponse>().tells.map((t) => t.id)).toEqual([51]);
     expect((await app.inject({ url: "/api/tells?page=3", headers })).json<TellsResponse>()).toMatchObject({ tells: [], total: 51 });
     expect(deps.outbox.snapshot(Date.now()).counts.pending).toBe(0);
@@ -335,8 +336,8 @@ describe("delivery recovery and pending tells API", () => {
 
   it("cancels just one pending tell, refuses repeated cancellation, and never cancels an already handed-off delivery", async () => {
     const { app, deps, db } = await setup();
-    deps.tells.add("alice", "Alice", "Bob", "cancel me");
-    deps.tells.add("alice", "Alice", "Bob", "keep me");
+    deps.tells.add("chat", "alice", "Alice", "Bob", "cancel me");
+    deps.tells.add("chat", "alice", "Alice", "Bob", "keep me");
     const cancelled = await app.inject({ method: "DELETE", url: "/api/tells/1", headers });
     expect(cancelled.statusCode).toBe(200);
     expect(cancelled.headers["cache-control"]).toBe("no-store");

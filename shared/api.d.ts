@@ -98,6 +98,10 @@ export interface PendingTell {
   fromName: string;
   text: string;
   createdAt: number;
+  chatId: string | null;
+  chatName: string | null;
+  targetId: string | null;
+  legacy: boolean;
 }
 
 export interface TellsResponse {

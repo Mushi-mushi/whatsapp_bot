@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { openDatabase } from "../src/state/db.js";
+import { removeScopedSchema } from "./legacy-schema.js";
 import { OutboxStore } from "../src/state/outbox.js";
 import { DeliveryWorker } from "../src/state/deliveries.js";
 import { RemindersStore, TellStore } from "../src/state/repos.js";
@@ -166,16 +167,17 @@ describe("failed delivery recovery", () => {
       for (const suffix of ["", "-wal", "-shm"]) rmSync(`${path}${suffix}`, { force: true });
       rmdirSync(dir);
     });
-    new TellStore(db).add("alice", "Alice", "Bob", "keep");
-    new TellStore(db).add("bob", "Bob", "Alice", "cancel");
+    new TellStore(db).add("chat", "alice", "Alice", "Bob", "keep");
+    new TellStore(db).add("chat", "bob", "Bob", "Alice", "cancel");
     new RemindersStore(db).add("chat", null, "keep", 9999999999999);
     db.exec(`INSERT INTO outbox (chat_id,body,status,attempts,available_at,created_at,last_error,last_failure_at)
       VALUES ('chat','keep','failed',5,0,0,'old error',1);
       DROP TABLE admin_audit; DROP TABLE delivery_attempts; ALTER TABLE outbox DROP COLUMN manual_retry_count; PRAGMA user_version = 5;`);
+    removeScopedSchema(db);
     const before = db.prepare("SELECT * FROM outbox").get();
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(db.pragma("user_version", { simple: true })).toBe(9);
     expect(db.prepare("SELECT * FROM outbox").get()).toEqual({ ...before as object, manual_retry_count: 0 });
     let store = new OutboxStore(db);
     expect(store.history(1)!.attempts).toEqual([]);

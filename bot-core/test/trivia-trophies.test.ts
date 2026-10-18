@@ -16,8 +16,8 @@ describe("TriviaScoreStore monthly rollover", () => {
     store.add("c", "bob", "Bob", 1, jan);
 
     expect(store.top("c", 5, feb)).toEqual([]);
-    expect(store.trophies("c")).toEqual([{ name: "Ann", trophies: 1 }]);
-    expect(store.history("c")).toEqual([{ period: "2026-01", name: "Ann", score: 3 }]);
+    expect(store.trophies("c")).toEqual([{ senderId: "ann", name: "Ann", trophies: 1 }]);
+    expect(store.history("c")).toEqual([{ period: "2026-01", senderId: "ann", name: "Ann", score: 3 }]);
   });
 
   it("shares the trophy on ties and skips non-positive winners", () => {
@@ -37,11 +37,11 @@ describe("TriviaScoreStore monthly rollover", () => {
     store.add("c", "ann", "Ann", -1, jan);
     store.add("c", "ann", "Ann", 1, feb);
 
-    expect(store.top("c", 5, feb)).toEqual([{ name: "Ann", correct: 1 }]);
-    expect(store.allTime("c")).toEqual([{ name: "Ann", total: 3 }]);
+    expect(store.top("c", 5, feb)).toEqual([{ senderId: "ann", name: "Ann", correct: 1 }]);
+    expect(store.allTime("c")).toEqual([{ senderId: "ann", name: "Ann", total: 3 }]);
   });
 
-  it("seeds lifetime totals from existing scores and trophies", () => {
+  it("leaves historical name-only scores and trophies unattributed", () => {
     const path = join(mkdtempSync(join(tmpdir(), "trivia-")), "bot.db");
     const db = openDatabase(path);
     db.prepare("INSERT INTO trivia_scores VALUES ('c','ann','Ann',2)").run();
@@ -50,7 +50,7 @@ describe("TriviaScoreStore monthly rollover", () => {
     db.close();
 
     const store = new TriviaScoreStore(openDatabase(path));
-    expect(store.allTime("c")).toEqual([{ name: "Ann", total: 7 }]);
+    expect(store.allTime("c")).toEqual([]);
   });
 
   it("accumulates trophies across months", () => {
@@ -59,6 +59,6 @@ describe("TriviaScoreStore monthly rollover", () => {
     store.add("c", "ann", "Ann", 1, feb);
     store.top("c", 5, mar);
 
-    expect(store.trophies("c")).toEqual([{ name: "Ann", trophies: 2 }]);
+    expect(store.trophies("c")).toEqual([{ senderId: "ann", name: "Ann", trophies: 2 }]);
   });
 });
