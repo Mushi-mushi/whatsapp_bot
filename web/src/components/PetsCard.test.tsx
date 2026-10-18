@@ -23,14 +23,29 @@ const pet: GroupPet = {
 };
 const clients: QueryClient[] = [];
 afterEach(() => { cleanup(); clients.splice(0).forEach((c) => c.clear()); vi.resetAllMocks(); vi.restoreAllMocks(); vi.useRealTimers(); });
-function mount(response = data) {
-  vi.mocked(api.getPets).mockResolvedValue(response);
+function mount(response = data, load: () => Promise<PetsResponse> = () => Promise.resolve(response)) {
+  vi.mocked(api.getPets).mockImplementation(load);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   clients.push(client);
   render(<QueryClientProvider client={client}><PetsCard /></QueryClientProvider>);
   return client;
 }
 describe("group pet editor", () => {
+  it("shows loading instead of a successful empty group list", () => {
+    mount(data, () => new Promise(() => {}));
+    expect(screen.getByRole("status").textContent).toContain("Loading pets");
+    expect(screen.queryByText(/No approved groups/)).toBeNull();
+  });
+
+  it("shows failed loading and retries without claiming there are no approved groups", async () => {
+    mount(data, () => Promise.reject(new Error("pets unavailable")));
+    expect((await screen.findByRole("alert")).textContent).toContain("pets unavailable");
+    expect(screen.queryByText(/No approved groups/)).toBeNull();
+    vi.mocked(api.getPets).mockResolvedValue({ ...data, groups: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry pets" }));
+    expect(await screen.findByText(/No approved groups/)).toBeTruthy();
+  });
+
   it("confirms evolution, updates live form and preserves unsaved settings", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.mocked(api.evolvePet).mockResolvedValue({

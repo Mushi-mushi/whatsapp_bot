@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api, type ProfileSummary } from "@/lib/api";
 import { Brain, ChevronDown, ChevronRight, Loader2, RotateCw, Trash2 } from "lucide-react";
+import { EmptyState, LoadingState, QueryError } from "@/components/QueryFeedback";
 
 function timeAgo(ts: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -52,23 +53,21 @@ export function ProfilesCard() {
         <CardTitle className="flex items-center gap-2">
           <Brain className="h-4 w-4" /> Learned profiles
         </CardTitle>
-        <Button variant="outline" size="sm" onClick={() => profilesQuery.refetch()} disabled={profilesQuery.isFetching}>
+        <Button aria-label="Refresh profiles" variant="outline" size="sm" onClick={() => profilesQuery.refetch()} disabled={profilesQuery.isFetching}>
           {profilesQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
         </Button>
       </CardHeader>
       <CardContent className="space-y-2">
         {profilesQuery.isLoading && (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-          </p>
+          <LoadingState>Loading profiles...</LoadingState>
         )}
         {profilesQuery.isError && (
-          <p role="alert" className="text-sm text-destructive">{profilesQuery.error.message}</p>
+          <QueryError message={profilesQuery.error.message} onRetry={() => void profilesQuery.refetch()} retrying={profilesQuery.isFetching} retryLabel="Retry profiles" />
         )}
         {!profilesQuery.isLoading && !profilesQuery.isError && profiles.length === 0 && (
-          <p className="text-sm text-muted-foreground">
+          <EmptyState>
             No profiles yet. The bot learns separately about each person in each chat.
-          </p>
+          </EmptyState>
         )}
 
         {profiles.map((p) => (
@@ -78,6 +77,7 @@ export function ProfilesCard() {
             open={openKey === p.sender_key}
             deep={openKey === p.sender_key ? detailQuery.data?.deep : undefined}
             deepLoading={openKey === p.sender_key && detailQuery.isLoading}
+            deepRetrying={openKey === p.sender_key && detailQuery.isFetching}
             deepError={openKey === p.sender_key ? detailQuery.error?.message : undefined}
             onRetryDetail={() => void detailQuery.refetch()}
             onToggle={() => setOpenKey((k) => (k === p.sender_key ? null : p.sender_key))}
@@ -108,6 +108,7 @@ interface RowProps {
   open: boolean;
   deep?: string;
   deepLoading: boolean;
+  deepRetrying: boolean;
   deepError?: string;
   onRetryDetail: () => void;
   onToggle: () => void;
@@ -119,11 +120,11 @@ interface RowProps {
   deleteError?: string;
 }
 
-function ProfileRow({ profile, open, deep, deepLoading, deepError, onRetryDetail, onToggle, onRefresh, onDelete, refreshing, deleting, refreshError, deleteError }: RowProps) {
+function ProfileRow({ profile, open, deep, deepLoading, deepRetrying, deepError, onRetryDetail, onToggle, onRefresh, onDelete, refreshing, deleting, refreshError, deleteError }: RowProps) {
   return (
     <div className="rounded-md border">
       <div className="flex items-start gap-2 p-3">
-        <button onClick={onToggle} className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground" aria-label={open ? "Collapse" : "Expand"}>
+        <button type="button" onClick={onToggle} className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground" aria-label={open ? "Collapse" : "Expand"} aria-expanded={open}>
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
         <div className="min-w-0 flex-1">
@@ -139,14 +140,9 @@ function ProfileRow({ profile, open, deep, deepLoading, deepError, onRetryDetail
           {open && (
             <div className="mt-2 border-t pt-2">
               {deepLoading ? (
-                <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading dossier…
-                </p>
+                <LoadingState>Loading dossier…</LoadingState>
               ) : deepError ? (
-                <div>
-                  <p role="alert" className="text-sm text-destructive">{deepError}</p>
-                  <Button variant="outline" size="sm" onClick={onRetryDetail}>Retry dossier</Button>
-                </div>
+                <QueryError message={deepError} onRetry={onRetryDetail} retrying={deepRetrying} retryLabel="Retry dossier" />
               ) : (
                 <pre className="whitespace-pre-wrap break-words font-sans text-sm text-foreground">{deep}</pre>
               )}
@@ -156,10 +152,10 @@ function ProfileRow({ profile, open, deep, deepLoading, deepError, onRetryDetail
           {deleteError && <p role="alert" className="mt-1 text-xs text-destructive">{deleteError}</p>}
         </div>
         <div className="flex shrink-0 gap-1">
-          <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing} title="Rebuild profile now">
+          <Button aria-label={`Rebuild profile for ${profile.name} in ${profile.chat_id}`} variant="outline" size="sm" onClick={onRefresh} disabled={refreshing || deleting} title="Rebuild profile now">
             {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
           </Button>
-          <Button variant="outline" size="sm" onClick={onDelete} disabled={deleting} title="Forget this user">
+          <Button aria-label={`Forget ${profile.name} in ${profile.chat_id}`} variant="outline" size="sm" onClick={onDelete} disabled={deleting || refreshing} title="Forget this user">
             {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
           </Button>
         </div>

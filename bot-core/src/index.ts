@@ -164,10 +164,13 @@ async function main(): Promise<void> {
   const unsubscribeChats = transport.onChatsDiscovered((names) => knownChats.upsert(names));
 
   const { startApi } = await import("./api/server.js");
+  const outbox = new OutboxStore(db);
   const app = await startApi(
     {
       transport,
       configStore,
+      jobs,
+      outbox,
       knownChats,
       triviaScores,
       userMemory,
@@ -188,7 +191,7 @@ async function main(): Promise<void> {
   await transport.start();
   logger.info("bot-core started");
 
-  const deliveries = new DeliveryWorker(new OutboxStore(db), async (chatId, body, delivery) => {
+  const deliveries = new DeliveryWorker(outbox, async (chatId, body, delivery) => {
     const prefix = config.botReplyPrefix?.trim();
     const text = prefix ? `${prefix}\n${body}` : body;
     if (delivery.pet_event_id) {

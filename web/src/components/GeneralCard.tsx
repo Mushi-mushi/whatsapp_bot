@@ -95,6 +95,7 @@ export function GeneralCard({ config, onChange }: Props) {
             </div>
             <div className="flex gap-2">
               <Input
+                aria-label="Instagram deletion target"
                 placeholder="Phone number or name…"
                 value={instaTarget}
                 onChange={(e) => setInstaTarget(e.target.value)}
@@ -130,7 +131,7 @@ export function GeneralCard({ config, onChange }: Props) {
           <NumberField
             label="Transcription timeout (s)"
             value={config.transcriptionTimeoutSeconds}
-            fallback={90}
+            min={5}
             onChange={(v) => onChange({ transcriptionTimeoutSeconds: v })}
           />
         </div>
@@ -138,8 +139,8 @@ export function GeneralCard({ config, onChange }: Props) {
         <div className="mt-3 flex items-center justify-between gap-4 border-t border-input pt-3">
           <div>
             <p className="text-sm font-medium">Trivia leaderboard</p>
-            <p className="text-xs text-muted-foreground">
-              {triviaError || "Reset all trivia scores across chats."}
+            <p role={triviaError ? "alert" : triviaCleared ? "status" : undefined} className="text-xs text-muted-foreground">
+              {triviaError || (triviaCleared ? "Trivia scores cleared." : "Reset all trivia scores across chats.")}
             </p>
           </div>
           <Button variant="outline" onClick={clearTrivia} disabled={triviaPending}>

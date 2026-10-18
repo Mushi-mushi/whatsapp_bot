@@ -4,6 +4,7 @@ import { api, type PetGroup, type PetsResponse, type PetSettings, type PetUpdate
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { EmptyState, LoadingState, QueryError } from "@/components/QueryFeedback";
 
 const FIELDS: { key: keyof PetSettings; label: string; min: number; max: number; step?: number }[] = [
   { key: "wakeStart", label: "Waking start (UTC hour)", min: 0, max: 23 },
@@ -48,13 +49,13 @@ export function PetsCard() {
         One pet per approved group. Save group approvals in Access first.
         Pet settings and actions save immediately here, separately from the top Save changes button.
       </p>
-      {query.error && <p role="alert">{query.error.message}</p>}
+      {query.error && <QueryError message={query.error.message} retryLabel="Retry pets" retrying={pending || query.isFetching} onRetry={() => void query.refetch()} />}
       <Button variant="outline" disabled={pending || query.isFetching} onClick={async () => {
         if (!canDiscard()) return;
         const result = await query.refetch();
         if (!result.error) { setReload((n) => n + 1); setDirty(false); }
       }}>Reload pets</Button>
-      {query.isPending && <p>Loading pets...</p>}
+      {query.isPending && <LoadingState>Loading pets...</LoadingState>}
       {query.data && <>
         <label className="block space-y-1">Group
           <select className={SELECT_CLASS} value={group?.id ?? ""} disabled={pending} onChange={(event) => {
@@ -63,7 +64,7 @@ export function PetsCard() {
             {query.data.groups.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.id})</option>)}
           </select>
         </label>
-        {!group && <p>No approved groups. Add and save one in Access, then reload pets.</p>}
+        {!group && !query.error && <EmptyState>No approved groups. Add and save one in Access, then reload pets.</EmptyState>}
         {group && <PetEditor key={`${group.id}:${reload}`} group={group} data={query.data}
           onDirty={setDirty} onPending={setPending} onStatus={updateStatus} onSaved={(pet, revision) => {
             setDirty(false);

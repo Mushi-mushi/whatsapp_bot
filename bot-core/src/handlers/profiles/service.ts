@@ -55,8 +55,9 @@ export class ProfileService {
             ? await this.refresh(senderKey, name) : null);
         } catch (error) {
           reject(error);
+          throw error;
         }
-      });
+      }, 1, "profile");
       if (!accepted) reject(new ProfileQueueError());
     });
   }

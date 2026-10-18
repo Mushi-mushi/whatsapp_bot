@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { openDatabase } from "../src/state/db.js";
 import { UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { memoryKey } from "../src/state/identity.js";
+import { OutboxStore } from "../src/state/outbox.js";
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const close of cleanup.splice(0)) close(); });
@@ -27,6 +28,8 @@ describe("chat memory migration", () => {
       INSERT INTO tells (target_norm, target_name, from_name, message, created_ts) VALUES ('alice', 'Alice', 'Bob', 'hello', 1);
       INSERT INTO pets VALUES ('group@g.us', '{}');
       INSERT INTO outbox (chat_id, body, available_at, created_at) VALUES ('group@g.us', 'queued', 2, 1);
+      INSERT INTO outbox (chat_id, body, status, attempts, available_at, created_at, lease_until, claim_token, last_error)
+        VALUES ('group@g.us', 'claimed', 'sending', 2, 2, 1, 300000, 'existing-claim', 'old failure');
       INSERT INTO siesta_discipline (chat_id, sender_id, armed) VALUES ('group@g.us', '123', 1);
       DROP TABLE user_messages;
       DROP TABLE user_profiles;
@@ -46,9 +49,10 @@ describe("chat memory migration", () => {
     `);
     const tables = ["kv", "contacts", "chat_directory", "reminders", "tells", "pets", "outbox", "siesta_discipline"];
     const before = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
+    db.exec("DROP INDEX idx_outbox_failures; ALTER TABLE outbox DROP COLUMN last_failure_at;");
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
     expect(db.prepare("SELECT * FROM user_messages").all()).toEqual([]);
     expect(db.prepare("SELECT * FROM user_profiles").all()).toEqual([]);
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
@@ -56,10 +60,22 @@ describe("chat memory migration", () => {
     const key = memoryKey("group@g.us", "123");
     new UserMemoryStore(db).record(key, "Alice", "Friends", "fresh scoped message", 50);
     new UserProfileStore(db).upsert({ sender_key: key, name: "Alice", deep: "fresh dossier", short: "fresh", last_profiled_id: 1 });
+    // Simulate a version-four installation: adding monitoring must not clear
+    // the already isolated memory or alter existing outbox claims.
+    db.exec("DROP INDEX idx_outbox_failures; ALTER TABLE outbox DROP COLUMN last_failure_at; PRAGMA user_version = 4;");
     db.close();
     db = openDatabase(path);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
     expect(new UserMemoryStore(db).recentFor(key)[0].message).toBe("fresh scoped message");
     expect(new UserProfileStore(db).get(key)?.deep).toBe("fresh dossier");
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+    const outbox = new OutboxStore(db);
+    expect(outbox.snapshot(3).recentFailures[0]).toMatchObject({ failedAt: null, status: "sending", attempts: 2 });
+    outbox.failed({ id: 2, chat_id: "group@g.us", body: "claimed", attempts: 2, claim_token: "existing-claim" }, "new failure", 3);
+    const snapshot = outbox.snapshot(3);
+    db.close();
+    db = openDatabase(path);
+    expect(new OutboxStore(db).snapshot(3)).toEqual(snapshot);
+    expect(new UserMemoryStore(db).recentFor(key)[0].message).toBe("fresh scoped message");
   });
 });

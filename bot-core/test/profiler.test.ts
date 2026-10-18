@@ -148,6 +148,7 @@ describe("ProfileService.refresh", () => {
     release();
     await failed;
     await jobs.stop();
+    expect(jobs.snapshot()).toMatchObject({ failed: 1, recentFailures: [{ kind: "profile" }] });
   });
 
   it("can learn again from new messages after forgetting", async () => {

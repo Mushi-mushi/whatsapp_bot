@@ -72,6 +72,10 @@ dashboard's manual re-link action is still available when fresh pairing is neede
   All preserve existing configuration,
   contacts, reminders and tells. Back up before upgrading; older binaries
   cannot open a newer database.
+- Database version 5 adds a nullable outbox failure timestamp and an index for
+  operations monitoring, preserving existing rows and chat-scoped memory.
+  Old unresolved failures show an unknown failure time until another failure
+  occurs. This does not repeat the version 4 memory reset.
 - The backend runs as UID 1000. On Linux, ensure the mounted `data/` directory
   is writable by that UID before deployment. Do not loosen auth-file permissions.
 
@@ -120,12 +124,52 @@ forgetting is not a permanent opt-out.
 The dashboard reconnects its live status stream when the API token changes and
 uses `/api/status` snapshots while retrying interrupted streams. Reverting
 configuration edits to the saved values clears the unsaved-changes indicator.
-Chat-directory and profile errors are displayed with retry actions where
-applicable instead of appearing as empty results.
+Query cards distinguish loading, failed and successfully empty results, with
+retry actions for unavailable data and AI services. Fields have associated labels
+and hints; icon-only profile actions expose accessible names.
+
+Numeric configuration fields keep blank, out-of-range and fractional integer
+drafts visible with validation errors instead of silently substituting defaults.
+Valid zero and fractional values are retained where the setting permits them.
+Correct invalid settings before saving or changing sections; confirmed Reload
+discards them. Background configuration refreshes do not overwrite invalid drafts.
+Backend validation remains authoritative. Pet settings retain their independent
+save workflow; sleep duration validation never silently clamps input.
 
 Message bodies are no longer logged by incoming-message middleware. Analytics
 and delivered outbox rows still contain message text: apply a retention policy
 appropriate to your chats and protect backups as sensitive data.
+
+## Operations Overview
+
+The dashboard's **Operations** tab polls `GET /api/operations` every five seconds
+while open (background tabs may pause polling). The endpoint uses the existing
+API authentication and sends `Cache-Control: no-store`. Monitoring is read-only:
+it never claims deliveries, recovers leases, retries failures or changes config.
+Manual Refresh and error/retry states are available; a failed refresh keeps the
+last successful snapshot explicitly marked as potentially stale.
+
+- **Background jobs:** capacity, running/queued work, queue age, execution
+  duration, completed/failed counts and rejection counts by reason. Counters
+  and the latest 20 thrown execution failures reset on process restart.
+  A completed handler may have handled a service error internally; these are
+  not comprehensive AI/service health metrics.
+- **Durable deliveries:** all retained pending/sending/failed/sent/cancelled
+  outbox rows, pending work ready now, pending retries, expired leases and the
+  next attempt or lease-recovery eligibility time. These rows cover reminders,
+  matched tells and pet announcements, not ordinary bot replies. Eligibility
+  is not a delivery guarantee: transport connectivity or pet state may defer it.
+- **Recent unresolved delivery failures:** at most 20 rows, ordered by last
+  failure time, one per delivery rather than one per attempt. Successful
+  retries and cancellations leave the list; exhausted failures remain.
+  Version 4 failures have an unknown failure timestamp until another failure.
+  Delivery state and new failure timestamps survive restarts.
+
+Only bounded metadata is exposed: no chat/person identifiers, message bodies,
+prompts, credentials or raw errors. Consult server logs for diagnostics (delivery
+IDs help locate delivery failures). There are deliberately no manual retry or
+cancel controls; ambiguous acknowledgements still require care to avoid replaying
+an already delivered message.
 
 ## Shared Group Pet
 
@@ -274,6 +318,14 @@ across downtime. Re-enabling keeps the existing pet, not a fresh replacement.
 Stop `bot-core` before copying all of `data/`, including the SQLite WAL/SHM files
 if present and the `auth/` directory. Restart after the copy completes. For a
 live backup, use SQLite's backup API; copying only an open `bot.db` is unsafe.
+Open the source database directly with a SQLite client for this operation, not
+the application's database opener (which runs migrations). Verify the backup
+with `PRAGMA integrity_check` before upgrading. A database-only backup does not
+include WhatsApp authentication files; protect and back those up separately.
+Prefer storing backups outside the repository. Runtime `data/`, `auth/`,
+`backup/`, `backups/`, SQLite database files and their sidecars are ignored by
+Git, as are local environment files. Ignore rules do not protect files already
+tracked by Git; check `git ls-files` before committing runtime-related changes.
 Test restoration into a separate directory, without simultaneously connecting
 two bot instances with the same WhatsApp credentials. Restore a matching
 application/database version; newer database versions fail closed.

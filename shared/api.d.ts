@@ -216,3 +216,49 @@ export interface DisciplineResponse {
 export interface DisciplineMutationResponse extends DisciplineResponse {
   ok: true;
 }
+
+export type BackgroundJobKind = "command" | "profile";
+
+export interface BackgroundJobFailure {
+  id: number;
+  kind: BackgroundJobKind;
+  startedAt: number;
+  failedAt: number;
+}
+
+export interface BackgroundJobsSnapshot {
+  capacity: number;
+  accepting: boolean;
+  running: { kind: BackgroundJobKind; startedAt: number } | null;
+  queued: number;
+  oldestQueuedAt: number | null;
+  completed: number;
+  failed: number;
+  rejected: { capacity: number; duplicate: number; stopping: number };
+  recentFailures: BackgroundJobFailure[];
+}
+
+export interface DeliveryFailure {
+  id: number;
+  status: "pending" | "sending" | "failed";
+  attempts: number;
+  failedAt: number | null;
+  retryAt: number | null;
+}
+
+export interface OutboxSnapshot {
+  counts: Record<"pending" | "sending" | "failed" | "sent" | "cancelled", number>;
+  ready: number;
+  retrying: number;
+  expiredLeases: number;
+  nextAttemptAt: number | null;
+  recentFailures: DeliveryFailure[];
+}
+
+export interface OperationsResponse {
+  sampledAt: number;
+  startedAt: number;
+  deliveryReady: boolean;
+  jobs: BackgroundJobsSnapshot;
+  outbox: OutboxSnapshot;
+}

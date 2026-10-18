@@ -13,17 +13,21 @@ import { MemoryCard } from "@/components/MemoryCard";
 import { ProfilesCard } from "@/components/ProfilesCard";
 import { PetsCard } from "@/components/PetsCard";
 import { DisciplineCard } from "@/components/DisciplineCard";
+import { OperationsCard } from "@/components/OperationsCard";
+import { FieldValidationProvider, useFieldErrors } from "@/components/fields";
+import { LoadingState, QueryError } from "@/components/QueryFeedback";
 import { Bot, Brain, Check, Image, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles } from "lucide-react";
 
 const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;
 
-type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline";
+type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations";
 
 // Which config fields live on which tab — drives the per-tab "unsaved" dot.
 const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
   connection: [],
   pets: [],
   discipline: [],
+  operations: [],
   general: [
     "transcriptionEnabled", "audioDownloadEnabled", "acknowledgeMedia", "deleteInstagramPosts",
     "instagramDeleteSenders", "respondToOwnCommands", "botReplyPrefix", "auralisBaseUrl",
@@ -55,7 +59,13 @@ function changedTabs(draft: BotConfig, baseline: BotConfig | null): Set<Tab> {
 }
 
 export default function App() {
+  return <FieldValidationProvider><Dashboard /></FieldValidationProvider>;
+}
+
+function Dashboard() {
   const queryClient = useQueryClient();
+  const fieldErrors = useFieldErrors();
+  const hasInvalidFields = Object.keys(fieldErrors).length > 0;
   const status = useStatusStream();
   const configQuery = useQuery({
     queryKey: ["config"],
@@ -74,14 +84,22 @@ export default function App() {
   const dirty = draft !== null && baseline !== null && JSON.stringify(draft) !== JSON.stringify(baseline);
   const [revision, setRevision] = useState("");
   const [tab, setTab] = useState<Tab>("connection");
+  const [editorVersion, setEditorVersion] = useState(0);
+  const selectTab = (next: Tab) => {
+    if (hasInvalidFields) {
+      document.getElementById(Object.keys(fieldErrors)[0])?.focus();
+      return;
+    }
+    setTab(next);
+  };
 
   useEffect(() => {
-    if (configQuery.data && !dirty) {
+    if (configQuery.data && !dirty && !hasInvalidFields) {
       setDraft(configQuery.data.config);
       setBaseline(configQuery.data.config);
       setRevision(configQuery.data.revision);
     }
-  }, [configQuery.data, dirty]);
+  }, [configQuery.data, dirty, hasInvalidFields]);
 
   useEffect(() => {
     if (!saved) return;
@@ -107,15 +125,15 @@ export default function App() {
 
   if (!draft && configQuery.isError) {
     return <main className="mx-auto max-w-lg space-y-4 px-4 py-8">
-      <p role="alert">Configuration could not be loaded: {configQuery.error.message}</p>
-      <Button onClick={() => void configQuery.refetch()}><RotateCw className="h-4 w-4" /> Retry</Button>
+      <QueryError message={`Configuration could not be loaded: ${configQuery.error.message}`}
+        onRetry={() => void configQuery.refetch()} retrying={configQuery.isFetching} />
     </main>;
   }
 
   if (!draft) {
     return (
       <div className="flex h-screen items-center justify-center text-muted-foreground">
-        <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading…
+        <LoadingState>Loading configuration...</LoadingState>
       </div>
     );
   }
@@ -145,12 +163,13 @@ export default function App() {
             variant="outline"
             disabled={saveMutation.isPending}
             onClick={async () => {
-              if (dirty && !window.confirm("Discard unsaved changes and reload?")) return;
+              if ((dirty || hasInvalidFields) && !window.confirm("Discard unsaved changes and reload?")) return;
               const result = await configQuery.refetch();
               if (result.data && !result.error) {
                 setDraft(result.data.config);
                 setBaseline(result.data.config);
                 setRevision(result.data.revision);
+                setEditorVersion((version) => version + 1);
                 saveMutation.reset();
               }
               void chatsQuery.refetch();
@@ -158,7 +177,7 @@ export default function App() {
           >
             <RotateCw className="h-4 w-4" /> Reload
           </Button>
-          <Button onClick={() => saveMutation.mutate({ config: draft, revision })} disabled={!dirty || saveMutation.isPending}>
+          <Button onClick={() => saveMutation.mutate({ config: draft, revision })} disabled={!dirty || hasInvalidFields || saveMutation.isPending}>
             {saveMutation.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : saved ? (
@@ -170,38 +189,46 @@ export default function App() {
       </header>
 
       {dirty && <p className="mb-3 text-sm text-muted-foreground">Unsaved changes</p>}
+      {hasInvalidFields && <p role="status" className="mb-3 text-sm text-destructive">
+        Correct invalid settings before saving or changing sections: {Object.values(fieldErrors).join(", ")}. Reload can discard these edits.
+      </p>}
+      {saved && <p role="status" className="mb-3 text-sm text-muted-foreground">Configuration saved.</p>}
       {(saveMutation.error || configQuery.error) && <p role="alert" className="mb-4 text-sm text-destructive">{(saveMutation.error || configQuery.error)?.message}</p>}
 
       <StatusStrip status={status} model={draft.ollamaModel} aiEnabled={draft.askEnabled} />
 
-      <nav className="mb-4 flex flex-wrap gap-1 border-b">
-        <TabButton active={tab === "connection"} onClick={() => setTab("connection")}>
+      <nav aria-label="Dashboard sections" className="mb-4 flex flex-wrap gap-1 border-b">
+        <TabButton active={tab === "connection"} onClick={() => selectTab("connection")}>
           <Smartphone className="h-4 w-4" /> Connection
         </TabButton>
-        <TabButton active={tab === "general"} onClick={() => setTab("general")} dirty={dirtyTabs.has("general")}>
+        <TabButton active={tab === "general"} onClick={() => selectTab("general")} dirty={dirtyTabs.has("general")}>
           <SlidersHorizontal className="h-4 w-4" /> General
         </TabButton>
-        <TabButton active={tab === "access"} onClick={() => setTab("access")} dirty={dirtyTabs.has("access")}>
+        <TabButton active={tab === "access"} onClick={() => selectTab("access")} dirty={dirtyTabs.has("access")}>
           <ShieldCheck className="h-4 w-4" /> Access
         </TabButton>
-        <TabButton active={tab === "ai"} onClick={() => setTab("ai")} enabled={draft.askEnabled} dirty={dirtyTabs.has("ai")}>
+        <TabButton active={tab === "ai"} onClick={() => selectTab("ai")} enabled={draft.askEnabled} dirty={dirtyTabs.has("ai")}>
           <Sparkles className="h-4 w-4" /> AI
         </TabButton>
-        <TabButton active={tab === "paint"} onClick={() => setTab("paint")} enabled={draft.paintEnabled} dirty={dirtyTabs.has("paint")}>
+        <TabButton active={tab === "paint"} onClick={() => selectTab("paint")} enabled={draft.paintEnabled} dirty={dirtyTabs.has("paint")}>
           <Image className="h-4 w-4" /> Paint &amp; Film
         </TabButton>
-        <TabButton active={tab === "memory"} onClick={() => setTab("memory")} enabled={draft.userMemoryEnabled} dirty={dirtyTabs.has("memory")}>
+        <TabButton active={tab === "memory"} onClick={() => selectTab("memory")} enabled={draft.userMemoryEnabled} dirty={dirtyTabs.has("memory")}>
           <Brain className="h-4 w-4" /> Memory &amp; profiles
         </TabButton>
-        <TabButton active={tab === "pets"} onClick={() => setTab("pets")}>
+        <TabButton active={tab === "pets"} onClick={() => selectTab("pets")}>
           <Sparkles className="h-4 w-4" /> Pets
         </TabButton>
-        <TabButton active={tab === "discipline"} onClick={() => setTab("discipline")}>
+        <TabButton active={tab === "discipline"} onClick={() => selectTab("discipline")}>
           <Moon className="h-4 w-4" /> Sleep
+        </TabButton>
+        <TabButton active={tab === "operations"} onClick={() => selectTab("operations")}>
+          <SlidersHorizontal className="h-4 w-4" /> Operations
         </TabButton>
       </nav>
 
       {tab === "pets" && <PetsCard />}
+      {tab === "operations" && <OperationsCard />}
 
       {tab === "discipline" && (
         <div className="grid min-w-0 gap-4">
@@ -221,13 +248,13 @@ export default function App() {
       )}
 
       {tab === "general" && (
-        <fieldset disabled={saveMutation.isPending} className="grid min-w-0 gap-4 lg:grid-cols-2">
+        <fieldset key={editorVersion} disabled={saveMutation.isPending} className="grid min-w-0 gap-4 lg:grid-cols-2">
           <GeneralCard config={draft} onChange={patch} />
         </fieldset>
       )}
 
       {tab === "access" && (
-        <fieldset disabled={saveMutation.isPending} className="grid min-w-0 gap-4">
+        <fieldset key={editorVersion} disabled={saveMutation.isPending} className="grid min-w-0 gap-4">
           <ApprovedSenders
             senders={draft.approvedSenders}
             chats={chatsQuery.data?.chats ?? []}
@@ -241,20 +268,20 @@ export default function App() {
       )}
 
       {tab === "ai" && (
-        <fieldset disabled={saveMutation.isPending} className="grid min-w-0 gap-4 lg:grid-cols-2">
+        <fieldset key={editorVersion} disabled={saveMutation.isPending} className="grid min-w-0 gap-4 lg:grid-cols-2">
           <AiCard config={draft} onChange={patch} />
         </fieldset>
       )}
 
       {tab === "paint" && (
-        <fieldset disabled={saveMutation.isPending} className="grid min-w-0 gap-4 lg:grid-cols-2">
+        <fieldset key={editorVersion} disabled={saveMutation.isPending} className="grid min-w-0 gap-4 lg:grid-cols-2">
           <PaintCard config={draft} onChange={patch} />
         </fieldset>
       )}
 
       {tab === "memory" && (
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">
-          <fieldset disabled={saveMutation.isPending} className="min-w-0 space-y-4">
+          <fieldset key={editorVersion} disabled={saveMutation.isPending} className="min-w-0 space-y-4">
             <MemoryCard config={draft} onChange={patch} />
           </fieldset>
           <div className="min-w-0 space-y-4">
@@ -270,6 +297,7 @@ function TabButton({ active, onClick, enabled, dirty, children }: { active: bool
   return (
     <button
       type="button"
+      aria-current={active ? "page" : undefined}
       onClick={onClick}
       className={
         "flex items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition-colors " +
@@ -335,6 +363,7 @@ function TokenGate({ onSubmit }: { onSubmit: () => void }) {
           <p className="text-sm text-muted-foreground">Enter the API token to continue.</p>
         </div>
         <Input
+          aria-label="API token"
           type="password"
           autoFocus
           placeholder="API token"

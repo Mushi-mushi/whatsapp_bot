@@ -4,11 +4,13 @@ import type {
   ProfileDetail, ProfileRefreshResponse, ProfilesResponse,
   ChatsResponse, ContactsResponse, DisciplineResponse, DisciplineMutationResponse,
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
+  OperationsResponse,
 } from "../../../shared/api.js";
 export type {
   BotConfig, ConfigSnapshot, Status, ConnectionState, ConnectionHealth,
   ChatIdentity, SiestaStatus, DisciplinePlayer, Contact, ProfileSummary,
   ProfileDetail, PetSettings, GroupPet, PetGroup, PetsResponse, PetUpdate, PetRequestChoice,
+  OperationsResponse,
 } from "../../../shared/api.js";
 
 const TOKEN_KEY = "apiToken";
@@ -60,6 +62,8 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  getOperations: () =>
+    fetch("/api/operations", { headers: authHeaders(), cache: "no-store" }).then(json<OperationsResponse>),
   getSiesta: () =>
     fetch("/api/siesta", { headers: authHeaders(), cache: "no-store" }).then(json<SiestaStatus>),
   cancelSiesta: () =>
@@ -106,17 +110,10 @@ export const api = {
     fetch("/api/ollama/models", { headers: authHeaders() }).then(
       json<{ ok: boolean; models: string[] }>,
     ),
-  getComfyStatus: async (): Promise<{ reachable: boolean; version?: string | null }> => {
-    try {
-      const res = await fetch("/api/comfyui/status", { headers: authHeaders() });
-      if (res.status === 401) throw new ApiError(401, "unauthorized");
-      const data = (await res.json().catch(() => ({}))) as { reachable?: boolean; version?: string | null };
-      return { reachable: !!data.reachable, version: data.version };
-    } catch (err) {
-      if (err instanceof ApiError) throw err;
-      return { reachable: false };
-    }
-  },
+  getComfyStatus: () =>
+    fetch("/api/comfyui/status", { headers: authHeaders() }).then(
+      json<{ reachable: boolean; version?: string | null }>,
+    ),
   resetTriviaScores: () =>
     fetch("/api/trivia/reset", { method: "POST", headers: authHeaders() }).then(
       json<{ ok: boolean }>,

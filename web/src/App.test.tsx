@@ -3,19 +3,33 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { api, type BotConfig } from "./lib/api";
+import { config } from "@/test/fixtures";
 
 vi.mock("./lib/api", async (original) => ({
   ...await original<typeof import("./lib/api")>(),
-  api: { getConfig: vi.fn(), getChats: vi.fn(), saveConfig: vi.fn() },
+  api: { getConfig: vi.fn(), getChats: vi.fn(), saveConfig: vi.fn(), getOperations: vi.fn() },
 }));
 vi.mock("@/components/StatusCard", () => ({ StatusCard: () => null }));
 vi.mock("@/lib/useStatusStream", () => ({ useStatusStream: () => null }));
-vi.mock("@/components/GeneralCard", () => ({
-  GeneralCard: ({ config, onChange }: { config: BotConfig; onChange: (patch: Partial<BotConfig>) => void }) =>
-    <input aria-label="Prefix" value={config.botReplyPrefix} onChange={(event) => onChange({ botReplyPrefix: event.target.value })} />,
-}));
+vi.mock("@/components/PetsCard", async () => {
+  const { useState } = await import("react");
+  return { PetsCard: () => {
+    const [name, setName] = useState("Mochi");
+    return <input aria-label="Pet draft" value={name} onChange={(event) => setName(event.target.value)} />;
+  } };
+});
+vi.mock("@/components/GeneralCard", async () => {
+  const { NumberField } = await import("@/components/fields");
+  return {
+    GeneralCard: ({ config, onChange }: { config: BotConfig; onChange: (patch: Partial<BotConfig>) => void }) =>
+      <>
+        <input aria-label="Prefix" value={config.botReplyPrefix} onChange={(event) => onChange({ botReplyPrefix: event.target.value })} />
+        <NumberField label="Timeout" value={config.transcriptionTimeoutSeconds} min={5}
+          onChange={(value) => onChange({ transcriptionTimeoutSeconds: value })} />
+      </>,
+  };
+});
 
-const config = { botReplyPrefix: "original", approvedSenders: [] } as unknown as BotConfig;
 const clients: QueryClient[] = [];
 beforeEach(() => {
   vi.mocked(api.getConfig).mockResolvedValue({ config, revision: "first" });
@@ -76,7 +90,7 @@ describe("configuration editor", () => {
     mount();
     await screen.findByRole("button", { name: "Connection" });
     expect(within(screen.getByRole("navigation")).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
-      "Connection", "General", "Access", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep",
+      "Connection", "General", "Access", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep", "Operations",
     ]);
     expect(screen.queryByLabelText("Prefix")).toBeNull();
   });
@@ -122,5 +136,80 @@ describe("configuration editor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull());
     expect((screen.getByLabelText("Prefix") as HTMLInputElement).value).toBe("saved");
+  });
+
+  it("blocks saving and navigation for invalid numeric drafts, then accepts corrected values", async () => {
+    mount();
+    fireEvent.change(await openPrefix(), { target: { value: "changed" } });
+    const number = screen.getByRole("spinbutton", { name: "Timeout" });
+    fireEvent.change(number, { target: { value: "" } });
+    expect(screen.getByRole("alert").textContent).toBe("Enter a number.");
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Access" }));
+    expect(screen.getByRole("spinbutton", { name: "Timeout" })).toBe(number);
+    expect(document.activeElement).toBe(number);
+    expect(api.saveConfig).not.toHaveBeenCalled();
+    fireEvent.change(number, { target: { value: "15" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Access" }));
+    expect(screen.getByRole("button", { name: "Access" }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("preserves invalid numeric input when a background config refresh arrives", async () => {
+    const client = mount();
+    await openPrefix();
+    const number = screen.getByRole("spinbutton", { name: "Timeout" }) as HTMLInputElement;
+    fireEvent.change(number, { target: { value: "2" } });
+    act(() => client.setQueryData(["config"], { config: { ...config, transcriptionTimeoutSeconds: 120 }, revision: "remote" }));
+    expect(number.value).toBe("2");
+    expect(screen.getByRole("alert").textContent).toBe("Enter at least 5.");
+  });
+
+  it("reloads and discards invalid-only drafts after confirmation", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mount();
+    await openPrefix();
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Timeout" }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(window.confirm).toHaveBeenCalledOnce();
+    expect((screen.getByRole("spinbutton", { name: "Timeout" }) as HTMLInputElement).value).toBe("90");
+    fireEvent.click(screen.getByRole("button", { name: "Access" }));
+    expect(screen.getByRole("button", { name: "Access" }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("keeps invalid-only drafts when discard confirmation is cancelled", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    mount();
+    await openPrefix();
+    const number = screen.getByRole("spinbutton", { name: "Timeout" }) as HTMLInputElement;
+    fireEvent.change(number, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(api.getConfig).toHaveBeenCalledTimes(1);
+    expect(number.value).toBe("");
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
+  it("does not reset independent pet drafts when global configuration is reloaded", async () => {
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Pets" }));
+    const pet = screen.getByLabelText("Pet draft") as HTMLInputElement;
+    fireEvent.change(pet, { target: { value: "Unsaved pet" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(api.getConfig).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText("Pet draft")).toBe(pet);
+    expect(pet.value).toBe("Unsaved pet");
+  });
+
+  it("opens operations separately without fetching it on other sections", async () => {
+    vi.mocked(api.getOperations).mockReturnValue(new Promise(() => {}));
+    mount();
+    await screen.findByRole("button", { name: "Operations" });
+    expect(api.getOperations).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Operations" }));
+    expect(await screen.findByRole("heading", { name: "Operations overview" })).toBeTruthy();
+    expect(api.getOperations).toHaveBeenCalledOnce();
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

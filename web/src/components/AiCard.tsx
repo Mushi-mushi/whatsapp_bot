@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { api, type BotConfig } from "@/lib/api";
 import { Row, TextField, NumberField, TextAreaField } from "@/components/fields";
 import { CheckCircle2, Loader2, Plug, XCircle } from "lucide-react";
+import { QueryError } from "@/components/QueryFeedback";
 
 interface Props {
   config: BotConfig;
@@ -31,8 +32,9 @@ export function AiCard({ config, onChange }: Props) {
         </Row>
 
         <div className="space-y-1 pt-2">
-          <p className="text-sm font-medium">Ollama model</p>
+          <label htmlFor="ollama-model" className="text-sm font-medium">Ollama model</label>
           <select
+            id="ollama-model"
             value={config.ollamaModel}
             onChange={(e) => onChange({ ollamaModel: e.target.value })}
             className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
@@ -42,9 +44,12 @@ export function AiCard({ config, onChange }: Props) {
             ))}
           </select>
         </div>
+        {modelsQuery.error && <QueryError message={`Could not load Ollama models: ${modelsQuery.error.message}`}
+          onRetry={() => void modelsQuery.refetch()} retrying={modelsQuery.isFetching} retryLabel="Retry models" />}
+        {modelsQuery.isSuccess && models.length === 0 && <p className="text-sm text-muted-foreground">No models installed. Install a model in Ollama, then test again.</p>}
 
         <div className="flex items-center justify-between gap-3 pt-2">
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {modelsQuery.isFetching ? (
               <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…</>
             ) : reachable ? (
@@ -63,7 +68,7 @@ export function AiCard({ config, onChange }: Props) {
           <NumberField
             label="Timeout (s)"
             value={config.ollamaTimeoutSeconds}
-            fallback={120}
+            min={5}
             onChange={(v) => onChange({ ollamaTimeoutSeconds: v })}
           />
           <TextField

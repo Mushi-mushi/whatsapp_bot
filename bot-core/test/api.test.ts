@@ -12,7 +12,9 @@ import { RuntimeState } from "../src/state/runtime.js";
 import { DEFAULT_CONFIG } from "../src/config/schema.js";
 import { REDACTED } from "../src/config/secrets.js";
 import type { BotConfig, ConfigSaveResponse, ProfileDetail, ProfilesResponse } from "../../shared/api.js";
+import type { OperationsResponse } from "../../shared/api.js";
 import { memoryKey } from "../src/state/identity.js";
+import { OutboxStore } from "../src/state/outbox.js";
 
 const ALICE = memoryKey("group@g.us", "alice");
 const ALICE_PATH = `/api/profiles/${encodeURIComponent(ALICE)}`;
@@ -33,6 +35,7 @@ async function setup(apiToken: string | undefined = "test-token") {
   const profiler = new ProfileService(userMemory, userProfiles, jobs, () => configStore.load(), logger);
   const deps: ApiDeps = {
     apiToken,
+    jobs, outbox: new OutboxStore(db),
     configStore, knownChats: new KnownChatsStore(db),
     triviaScores: new TriviaScoreStore(db), userMemory, userProfiles, profiler, logger,
     pets: new PetService(new PetStore(db), () => configStore.load(), () => true),
@@ -50,7 +53,7 @@ async function setup(apiToken: string | undefined = "test-token") {
   };
   const app = await createApi(deps);
   cleanup.push(async () => { await jobs.stop(); runtime.dispose(); await app.close(); db.close(); });
-  return { app, deps, listeners, runtime, discipline, jobs };
+  return { app, deps, listeners, runtime, discipline, jobs, db };
 }
 
 describe("profile lifecycle controls", () => {
@@ -70,6 +73,31 @@ describe("profile lifecycle controls", () => {
     release();
     expect((await pending).statusCode).toBe(422);
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  describe("operations API", () => {
+    it("requires authentication, disables caching and exposes metadata without content or raw errors", async () => {
+      const { app, deps, jobs, db } = await setup();
+      expect((await app.inject({ url: "/api/operations" })).statusCode).toBe(401);
+      db.prepare(`INSERT INTO outbox(chat_id,body,status,attempts,available_at,created_at,last_error,last_failure_at)
+        VALUES ('SECRET-CHAT','SECRET-BODY','failed',5,10,0,'SECRET-ERROR',10)`).run();
+      jobs.submit("SECRET-KEY", async () => { throw new Error("SECRET-PROMPT"); });
+      await jobs.stop();
+      const response = await app.inject({ url: "/api/operations", headers: { authorization: "Bearer test-token" } });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["cache-control"]).toBe("no-store");
+      const data = response.json<OperationsResponse>();
+      expect(data).toMatchObject({
+        sampledAt: expect.any(Number), startedAt: expect.any(Number), deliveryReady: true,
+        jobs: { failed: 1, accepting: false }, outbox: { counts: { failed: 1 }, recentFailures: [{ attempts: 5 }] },
+      });
+      expect(data.startedAt).toBeLessThanOrEqual(data.sampledAt);
+      expect(response.body).not.toContain("SECRET");
+      vi.spyOn(deps.transport, "getStatus").mockReturnValue({
+        state: "close", health: "unknown", qrDataUrl: null, pairingCode: null, me: null, lastActivityAt: null,
+      });
+      expect((await app.inject({ url: "/api/operations", headers: { authorization: "Bearer test-token" } })).json<OperationsResponse>().deliveryReady).toBe(false);
+    });
   });
 
   it("reports a busy queue as a retryable failure", async () => {

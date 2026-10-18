@@ -24,6 +24,14 @@ function mount() {
 }
 
 describe("profile error states", () => {
+  it("shows a live loading state and labels its refresh action", () => {
+    vi.mocked(api.getProfiles).mockReturnValue(new Promise(() => {}));
+    mount();
+    expect(screen.getByRole("status").textContent).toContain("Loading profiles");
+    expect((screen.getByRole("button", { name: "Refresh profiles" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText(/No profiles yet/)).toBeNull();
+  });
+
   it("distinguishes identical person and chat names and deletes only the chosen scoped entry", async () => {
     const other = { ...profile, sender_key: '["other@g.us","alice"]', chat_id: "other@g.us" };
     vi.mocked(api.getProfiles).mockResolvedValue({ profiles: [profile, other] });
@@ -64,5 +72,8 @@ describe("profile error states", () => {
     mount();
     expect((await screen.findByRole("alert")).textContent).toContain("profiles offline");
     expect(screen.queryByText(/No profiles yet/)).toBeNull();
+    vi.mocked(api.getProfiles).mockResolvedValue({ profiles: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry profiles" }));
+    expect(await screen.findByText(/No profiles yet/)).toBeTruthy();
   });
 });

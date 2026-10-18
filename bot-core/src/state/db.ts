@@ -14,7 +14,7 @@ export function openDatabase(path: string): Database.Database {
 
 function migrate(db: Database.Database): void {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 4) throw new Error("Database schema is newer than this application");
+  if (version > 5) throw new Error("Database schema is newer than this application");
   db.exec(`
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
@@ -262,6 +262,15 @@ function migrate(db: Database.Database): void {
           updated_at INTEGER NOT NULL
         );
         PRAGMA user_version = 4;
+      `);
+    })();
+  }
+  if (version < 5) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE outbox ADD COLUMN last_failure_at INTEGER;
+        CREATE INDEX idx_outbox_failures ON outbox(last_failure_at DESC) WHERE last_error IS NOT NULL;
+        PRAGMA user_version = 5;
       `);
     })();
   }

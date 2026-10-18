@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { api, type BotConfig } from "@/lib/api";
 import { Row, TextField, NumberField, TextAreaField } from "@/components/fields";
 import { CheckCircle2, Loader2, Plug, XCircle } from "lucide-react";
+import { QueryError } from "@/components/QueryFeedback";
 
 interface Props {
   config: BotConfig;
@@ -34,7 +35,7 @@ export function PaintCard({ config, onChange }: Props) {
           onChange={(v) => onChange({ paintBaseUrl: v })}
         />
         <div className="flex items-center justify-between gap-3 pt-2">
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {statusQuery.isFetching ? (
               <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…</>
             ) : reachable ? (
@@ -47,6 +48,8 @@ export function PaintCard({ config, onChange }: Props) {
             <Plug className="h-4 w-4" /> Test
           </Button>
         </div>
+        {statusQuery.error && <QueryError message={`ComfyUI status unavailable: ${statusQuery.error.message}`}
+          onRetry={() => void statusQuery.refetch()} retrying={statusQuery.isFetching} retryLabel="Retry ComfyUI status" />}
 
         <p className="pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Checkpoints</p>
         <TextField
@@ -69,14 +72,14 @@ export function PaintCard({ config, onChange }: Props) {
           <TextField label="Scheduler" value={config.paintScheduler} placeholder="normal" onChange={(v) => onChange({ paintScheduler: v })} />
         </div>
         <div className="grid grid-cols-2 gap-2 pt-2">
-          <NumberField label="Steps" value={config.paintSteps} fallback={24} onChange={(v) => onChange({ paintSteps: v })} />
-          <NumberField label="CFG scale" value={config.paintCfgScale} fallback={7} onChange={(v) => onChange({ paintCfgScale: v })} />
+          <NumberField label="Steps" value={config.paintSteps} min={1} max={150} onChange={(v) => onChange({ paintSteps: v })} />
+          <NumberField label="CFG scale" value={config.paintCfgScale} min={1} max={30} step="any" onChange={(v) => onChange({ paintCfgScale: v })} />
         </div>
 
         <p className="pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dimensions</p>
         <div className="grid grid-cols-2 gap-2 pt-1">
-          <NumberField label="Width" value={config.paintWidth} fallback={768} onChange={(v) => onChange({ paintWidth: v })} />
-          <NumberField label="Height" value={config.paintHeight} fallback={768} onChange={(v) => onChange({ paintHeight: v })} />
+          <NumberField label="Width" value={config.paintWidth} min={256} max={2048} onChange={(v) => onChange({ paintWidth: v })} />
+          <NumberField label="Height" value={config.paintHeight} min={256} max={2048} onChange={(v) => onChange({ paintHeight: v })} />
         </div>
 
         <p className="pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Image-to-image</p>
@@ -85,14 +88,14 @@ export function PaintCard({ config, onChange }: Props) {
             label="Denoise"
             hint="0.1 keeps photo, 1.0 repaints"
             value={config.paintDenoise}
-            fallback={0.6}
+            min={0.1} max={1} step="any"
             onChange={(v) => onChange({ paintDenoise: v })}
           />
           <NumberField
             label="Flux guidance"
             hint="~2.5 subtle, 3.5–4 bold"
             value={config.paintGuidance}
-            fallback={3.5}
+            min={1} max={10} step="any"
             onChange={(v) => onChange({ paintGuidance: v })}
           />
         </div>

@@ -15,12 +15,15 @@ import type { PetService } from "../pets/service.js";
 import { SPECIES, isSpecies, statusText, type Pet } from "../pets/model.js";
 import { DEFAULT_PET_SETTINGS, PetSettingsSchema, petSettings } from "../pets/settings.js";
 import type { RuntimeState } from "../state/runtime.js";
+import type { BackgroundJobs } from "../router/jobs.js";
+import type { OutboxStore } from "../state/outbox.js";
 import type {
   BotConfig, ChatsResponse, ContactsResponse, DisciplinePlayer, DisciplineResponse,
   DisciplineMutationResponse, SiestaStatus, GroupPet, PetsResponse, PetActionResponse,
   PetUpdate, ConfigSaveResponse, ProfileDetail, ProfilesResponse,
   ProfileRefreshResponse,
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
+  OperationsResponse,
 } from "../../../shared/api.js";
 
 export interface ApiDeps {
@@ -35,6 +38,8 @@ export interface ApiDeps {
   runtime: RuntimeState;
   discipline: SiestaDisciplineStore;
   contacts: ContactsStore;
+  jobs: BackgroundJobs;
+  outbox: OutboxStore;
   onConfigChange: () => void;
   logger: Logger;
   apiToken?: string;
@@ -60,6 +65,7 @@ function extractToken(req: FastifyRequest): string | null {
 export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   if (!deps.apiToken && !deps.allowInsecureApi) throw new Error("API_TOKEN is required");
   const app = Fastify({ logger: false });
+  const startedAt = Date.now() - Math.floor(process.uptime() * 1000);
   app.addHook("onError", async (req, _reply, error) => {
     deps.logger.error({ err: error, method: req.method, url: req.routeOptions.url }, "API request failed");
   });
@@ -80,6 +86,14 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
 
   app.get("/api/status", async () => deps.transport.getStatus());
   app.get("/api/health", async () => ({ ok: true, connection: deps.transport.getStatus().state }));
+  app.get("/api/operations", async (_req, reply): Promise<OperationsResponse> => {
+    reply.header("Cache-Control", "no-store");
+    const sampledAt = Date.now();
+    return {
+      sampledAt, startedAt, deliveryReady: deps.transport.getStatus().state === "open",
+      jobs: deps.jobs.snapshot(), outbox: deps.outbox.snapshot(sampledAt),
+    };
+  });
   app.get("/api/siesta", async (): Promise<SiestaStatus> => ({
     sleeping: deps.runtime.isSleeping(),
     until: deps.runtime.isSleeping() ? deps.runtime.siestaUntil : null,

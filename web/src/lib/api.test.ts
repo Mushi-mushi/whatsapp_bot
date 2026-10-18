@@ -1,26 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError, clearToken, setToken } from "./api";
 import type {
-  BotConfig, ConfigSaveResponse, ConfigSnapshot, PetSettings, PetUpdate,
+  ConfigSaveResponse, ConfigSnapshot, PetSettings, PetUpdate,
   PetActionResponse, ProfileDetail, ProfileRefreshResponse, DisciplineMutationResponse,
 } from "../../../shared/api.js";
 
-const config: BotConfig = {
-  transcriptionEnabled: true, transcriptionProvider: "auralis", auralisBaseUrl: "http://auralis:8000",
-  transcriptionTimeoutSeconds: 90, audioDownloadEnabled: true,
-  askEnabled: true, ollamaBaseUrl: "http://ollama:11434", ollamaModel: "test-model",
-  ollamaTimeoutSeconds: 120, ollamaKeepAlive: "5m", askSystemPrompt: "Be concise.",
-  userMemoryEnabled: true, userMemoryLimit: 50, userMemoryContext: 20,
-  profileRefreshEvery: 25, profileMaxAgeDays: 7, profileSampleSize: 50, profileShortMaxChars: 400,
-  redditClientId: "", redditClientSecret: "", redditUserAgent: "test", redditRefreshToken: "",
-  paintEnabled: false, paintBaseUrl: "http://comfyui:8188", paintCheckpoint: "test.safetensors",
-  paintFluxCheckpoint: "flux.safetensors", paintSampler: "euler", paintScheduler: "normal",
-  paintSteps: 24, paintWidth: 768, paintHeight: 768, paintCfgScale: 7,
-  paintNegativePrompt: "", paintDenoise: 0.5, paintGuidance: 3.5,
-  botReplyPrefix: "Bot:", acknowledgeMedia: false, deleteInstagramPosts: false,
-  instagramDeleteSenders: [], respondToOwnCommands: true, approvedSenders: [],
-  commands: { "bot.ask": "ask" }, keywordResponses: {},
-};
+import { config, operations } from "@/test/fixtures";
 const settings: PetSettings = {
   wakeStart: 8, wakeEnd: 22, firstRequestMinutes: 15,
   requestMinHours: 8, requestMaxHours: 12, maxRequestsPerDay: 3,
@@ -54,6 +39,13 @@ afterEach(() => {
 });
 
 describe("shared API wire contracts", () => {
+  it("fetches the operations contract without caching and includes authentication", async () => {
+    fetcher.mockResolvedValue(Response.json(operations));
+    expect(await api.getOperations()).toEqual(operations);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/operations");
+    expect(fetcher.mock.calls[0][1]?.cache).toBe("no-store");
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).has("Authorization")).toBe(true);
+  });
   it("reads raw configuration and captures the revision from ETag", async () => {
     fetcher.mockResolvedValue(Response.json(config, { headers: { ETag: '"first"' } }));
     const result: ConfigSnapshot = await api.getConfig();
@@ -134,5 +126,22 @@ describe("shared API wire contracts", () => {
   it("keeps API failures out of typed success responses", async () => {
     fetcher.mockResolvedValue(Response.json({ ok: false, error: "Profile refresh queue is busy." }, { status: 503 }));
     await expect(api.refreshProfile("123")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it.each([401, 502])("surfaces ComfyUI HTTP %s instead of returning a successful offline status", async (status) => {
+    fetcher.mockResolvedValue(Response.json({ error: "service unavailable" }, { status }));
+    await expect(api.getComfyStatus()).rejects.toMatchObject({ status, message: "service unavailable" });
+  });
+
+  it("propagates ComfyUI network failures and invalid JSON", async () => {
+    fetcher.mockRejectedValueOnce(new TypeError("network failed"));
+    await expect(api.getComfyStatus()).rejects.toThrow("network failed");
+    fetcher.mockResolvedValueOnce(new Response("invalid json"));
+    await expect(api.getComfyStatus()).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  it("preserves a successful ComfyUI status", async () => {
+    fetcher.mockResolvedValue(Response.json({ ok: true, reachable: true, version: "1.2" }));
+    expect(await api.getComfyStatus()).toEqual({ ok: true, reachable: true, version: "1.2" });
   });
 });

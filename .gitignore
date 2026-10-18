@@ -1,5 +1,15 @@
 # Runtime data & secrets — WhatsApp auth session keys + SQLite DB. Never commit.
 data/
+auth/
+backup/
+backups/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+creds.json
 .env
 .env.*
 !.env.example

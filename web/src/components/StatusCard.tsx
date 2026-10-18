@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, type Status } from "@/lib/api";
 import { AlertTriangle, Loader2, QrCode, Smartphone, Wifi, WifiOff } from "lucide-react";
+import { LoadingState, QueryError } from "@/components/QueryFeedback";
 
 const STATE_LABEL: Record<string, { text: string; variant: "success" | "muted" | "destructive" | "default" | "warning" }> = {
   open: { text: "Connected", variant: "success" },
@@ -93,7 +94,8 @@ export function StatusCard({ status }: { status: Status | null }) {
             </Button>
           </div>
         )}
-        {siesta.error && <p role="alert" className="text-sm text-destructive">Siesta status unavailable: {siesta.error.message}</p>}
+        {siesta.isPending && <LoadingState>Loading siesta status...</LoadingState>}
+        {siesta.error && <QueryError message={`Siesta status unavailable: ${siesta.error.message}`} onRetry={() => void siesta.refetch()} retrying={siesta.isFetching} retryLabel="Retry siesta status" />}
         {cancelSiesta.error && <p role="alert" className="text-sm text-destructive">Could not cancel siesta: {cancelSiesta.error.message}</p>}
 
         {state === "open" && !stale && (
@@ -138,6 +140,7 @@ export function StatusCard({ status }: { status: Status | null }) {
             </p>
             <div className="flex gap-2">
               <Input
+                aria-label="Phone with country code"
                 className="min-w-0"
                 placeholder="Phone with country code, e.g. 34600123456"
                 value={phone}
