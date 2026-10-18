@@ -1,12 +1,29 @@
 name: Checks
-on: [push, pull_request]
+on: [push, pull_request, merge_group, workflow_dispatch]
 permissions:
   contents: read
 jobs:
-  test:
+  runtime-data:
+    name: Runtime data guard
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test .github/scripts/check-tracked-data.test.mjs
+      - run: node .github/scripts/check-tracked-data.mjs
+  test:
+    needs: runtime-data
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -30,3 +47,35 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
+  docker:
+    name: Docker (${{ matrix.service }})
+    needs: runtime-data
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [bot-core, web]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build production image without publishing
+        run: docker build --file "${{ matrix.service }}/Dockerfile" --tag "whatsapp-bot-${{ matrix.service }}:ci" .
+  required:
+    name: CI required
+    if: ${{ always() }}
+    needs: [runtime-data, test, docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to succeed
+        env:
+          DATA_RESULT: ${{ needs.runtime-data.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          DOCKER_RESULT: ${{ needs.docker.result }}
+        run: |
+          if [ "$DATA_RESULT" != success ] || [ "$TEST_RESULT" != success ] || [ "$DOCKER_RESULT" != success ]; then
+            echo "Required CI failed: runtime-data=$DATA_RESULT test=$TEST_RESULT docker=$DOCKER_RESULT"
+            exit 1
+          fi

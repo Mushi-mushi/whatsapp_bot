@@ -48,6 +48,44 @@ a maximum of 30 seconds; receiving messages resets the backoff. Quiet chats
 alone do not trigger recovery. This recovery preserves credentials; the
 dashboard's manual re-link action is still available when fresh pairing is needed.
 
+## Continuous Integration And Merge Protection
+
+The Checks workflow runs on pushes, pull requests, merge queues and manual
+dispatch. It checks tracked runtime-data paths before installing project
+dependencies, then runs backend typechecks/lint/tests/build, dashboard
+tests/build and independent production Docker builds for both services.
+Docker builds use the repository-root context, publish no images and require no
+runtime credentials, live database, WhatsApp connection or inference services.
+
+Run the data guard locally before committing:
+
+```sh
+node --test .github/scripts/check-tracked-data.test.mjs
+node .github/scripts/check-tracked-data.mjs
+```
+
+The guard rejects tracked runtime/auth/backup directories, SQLite databases and
+sidecars, local environment files (except `.env.example`), `creds.json`, logs and
+any tracked files matching current Git ignore rules. It inspects Git's index,
+not private local file contents, and still catches known runtime paths if their
+ignore rules are removed. This is a filename/index safeguard, not a general
+secret-content scanner or a scan of previous commits. Never put real credentials
+in source or environment examples; exposed credentials must be rotated.
+
+The stable **CI required** check succeeds only if the guard, existing `test` job
+and both Docker builds succeed; failed, cancelled or skipped prerequisites do
+not pass the gate. To enforce it after this workflow has been pushed and run:
+
+1. Open repository **Settings → Rules → Rulesets** (or branch protection).
+2. Target `main`, require a pull request before merging, and require the
+   **CI required** status check from GitHub Actions.
+3. Require the branch to be up to date before merging, and avoid bypasses if
+   all changes must be checked.
+
+Workflow files alone cannot enable repository-level enforcement. A repository
+administrator must apply these settings, subject to GitHub plan availability.
+Do not rename the gate without updating the required status check.
+
 ## Upgrading Existing Installations
 
 - Back up the database and authentication directory before upgrading.
