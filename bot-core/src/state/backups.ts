@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { BackupSnapshot } from "../../../shared/api.js";
+import { checkDatabaseIntegrity } from "./database-checks.js";
 
 const DAY_MS = 86_400_000;
 const STATUS_KEY = "database_backup_status";
@@ -107,9 +108,7 @@ export class BackupWorker {
       const copy = new Database(partial, { fileMustExist: true });
       try {
         copy.pragma("journal_mode = DELETE");
-        const checks = copy.pragma("integrity_check") as { integrity_check: string }[];
-        if (checks.length !== 1 || checks[0].integrity_check !== "ok") throw new Error("Backup integrity check failed");
-        if ((copy.pragma("foreign_key_check") as unknown[]).length) throw new Error("Backup foreign key check failed");
+        checkDatabaseIntegrity(copy);
       } finally {
         copy.close();
       }

@@ -632,6 +632,126 @@ the bot, preserve the current data first, restore a matching-version database
 with its auth files and remove only obsolete live WAL/SHM sidecars while stopped.
 Never connect two bot instances with the same WhatsApp credentials.
 
+### Repeatable Isolated Restore Verification
+
+Build the backend once, then pass the **absolute path to a completed standalone
+database backup**. In PowerShell, from the repository root:
+
+```powershell
+npm --prefix bot-core run build
+if ($LASTEXITCODE -eq 0) {
+  npm --prefix bot-core run backup:verify -- "C:\Backups\whatsapp_bot\automatic\bot-auto-<timestamp>-<uuid>.db"
+}
+```
+
+Use `npm --prefix bot-core run backup:verify -- --help` for usage. Relative paths
+are relative to the backend package, not necessarily your invoking shell.
+For JSON-only output (without npm's script banner), run the built CLI directly:
+
+```powershell
+node .\bot-core\dist\cli\verify-backup.js "C:\Backups\whatsapp_bot\automatic\bot-auto-<timestamp>-<uuid>.db"
+```
+
+The command copies the source into a new `bot-restore-check-*` directory under
+the operating system temporary directory, with owner-only directory/file modes
+where supported. Secure that location with Windows ACLs or equivalent too. It:
+
+1. Rejects missing, directory, symlink and `.partial` inputs, and any source with
+   a `-wal`, `-shm` or `-journal` sidecar. Do not delete source sidecars to bypass
+   this check: obtain a proper standalone online backup instead.
+2. Hashes the source and isolated copy and checks source hashes again during
+   verification. A moving/changing source is not certified.
+3. Opens **only the temporary copy** with raw read-only SQLite, checks structural
+   integrity and foreign keys, and requires the current application schema
+   version, required tables/columns/indexes and declared foreign-key structure.
+4. Reports counts for every application table (including reminders, tells,
+   outbox, pets, attempt history and audit records), file size and SHA-256.
+   Counts can legitimately be zero. No row contents, paths, identities,
+   credentials or raw SQLite/OS errors appear in the report.
+5. Closes SQLite and deletes only its own temporary database/sidecars/directory
+   before reporting success. Cleanup failure returns a failure, not a pass.
+
+Exit codes are **0** for a verified backup (or help), **1** for verification or
+cleanup failure, and **2** for invalid CLI arguments. Failures are controlled
+JSON on stderr; successful verification is JSON on stdout. No bot runtime is
+imported: no WhatsApp connection, HTTP API, auth reads, delivery workers,
+retention jobs, source writes or migrations of the restored database run.
+An expected-schema reference is created in memory only. Runtime `DB_PATH`,
+`AUTH_DIR` and API settings are not used.
+
+Use a matching application release for an older/newer backup; the command fails
+closed on schema mismatch rather than migrating it. This checks database
+recoverability at verification time, not message correctness, off-device
+availability, auth validity, inference service readiness or a complete system
+recovery. A syntactically compatible database can still contain incorrect
+business data. Record the backup hash, application commit/image and verification
+time securely outside Git. Normal backup retention still governs old snapshots.
+
+For a production-image check without network access, credentials or live-data
+mounts, use `docker run`, **not** a second Compose bot instance:
+
+```powershell
+docker run --rm --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,size=512m `
+  --mount "type=bind,source=C:\Backups\whatsapp_bot\automatic,target=/input,readonly" `
+  --entrypoint node whatsapp_bot-bot-core `
+  dist/cli/verify-backup.js "/input/bot-auto-<timestamp>-<uuid>.db"
+```
+
+Use an image built from this release (or `docker compose build bot-core` first).
+Mount only the selected backup directory read-only, never `data` or `auth`.
+Provide sufficient temporary space for the database copy; adjust the tmpfs
+limit for large databases. The command does not update Operations backup status
+or the administrative audit trail.
+
+### Disaster-Recovery Runbook
+
+1. **Prepare and identify the recovery set.** Keep off-device copies of a
+   verified standalone database, a separately secured WhatsApp `auth` snapshot,
+   local environment/secrets, the matching application commit or image, and any
+   required custom ComfyUI assets/models/workflows. Database-only automatic
+   backups do not contain these other dependencies. Never put recovery data
+   or credentials in Git.
+2. **Rehearse offline first.** Run the isolated verifier above against the
+   selected backup using matching code. Compare its aggregate counts and hash
+   against the intended recovery point. Do not start WhatsApp or delivery
+   workers during the rehearsal.
+3. **Stop the active instance and prevent competing starts.** Stop the
+   dashboard and backend (`docker compose stop web bot-core`), and ensure no
+   other host or process uses the same WhatsApp credentials. Do not use
+   `docker compose down -v`. Preserve a separate full copy of the current
+   stopped `data` directory, including auth and any WAL/SHM/journal files,
+   before replacing anything.
+4. **Stage recovery outside the live directory.** Restore the verified
+   standalone database as `bot.db` and the chosen `auth` snapshot into a
+   separate protected staging directory. Keep recovery snapshots unmodified.
+   Check file ownership/access, environment/secrets, backup mount and the
+   matching backend image. Do not mix a standalone restored database with
+   stale live WAL/SHM files; quarantine the entire old stopped data set, then
+   activate the staged directory at the configured data bind location.
+   Do not remove sidecars from the preserved original snapshot.
+5. **Understand replay before starting.** Restoring rewinds application state:
+   reminders/tells and pending or expired-lease outbox rows may send again,
+   even if WhatsApp received them after the recovery point. The isolated
+   verifier never claims or sends them, but a normal backend does. There is
+   no delivery-disabled restore startup mode. Review the recovery point and
+   accept duplicate/replay risk before starting; never blindly retry failures.
+6. **Start exactly one matching backend.** If deliberately upgrading an older
+   recovery set, verify it first with matching old code, then take another
+   backup and follow the documented migration/reset policy before using new
+   code. Older binaries reject newer schemas; image rollback alone cannot
+   undo a database migration.
+7. **Validate recovery before normal use.** Check container health, WhatsApp
+   connection (re-pair only if the restored session is invalid), database
+   integrity/foreign keys, expected aggregate counts, protected pet state,
+   queue status, service diagnostics and a fresh verified backup. Then start
+   the dashboard. Confirm the backup/auth/off-device procedures remain valid.
+   Do not test delivery recovery by replaying real failed messages.
+8. **If validation fails, stop again.** Preserve the failed recovery state
+   separately and return to the saved pre-restore data plus matching image,
+   or select another verified recovery point. Never run the old and restored
+   bot concurrently. Record recovery decisions outside Git without messages
+   or secrets.
+
 ## Paint Models
 
 `bot.paint <prompt>` generates a still image with the configured default

@@ -2,6 +2,8 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+export const DATABASE_SCHEMA_VERSION = 7;
+
 // Single SQLite database (WAL) for config, dedup, and analytics.
 export function openDatabase(path: string): Database.Database {
   mkdirSync(dirname(path), { recursive: true });
@@ -14,7 +16,7 @@ export function openDatabase(path: string): Database.Database {
 
 function migrate(db: Database.Database): void {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 7) throw new Error("Database schema is newer than this application");
+  if (version > DATABASE_SCHEMA_VERSION) throw new Error("Database schema is newer than this application");
   db.exec(`
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
