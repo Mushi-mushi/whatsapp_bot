@@ -154,6 +154,33 @@ export interface DeliveryRetryResponse {
   retriedId: number;
 }
 
+export type AuditAction = "reminder.cancel" | "tell.cancel" | "delivery.retry" | "config.save"
+  | "pet.update" | "pet.save" | "pet.enable" | "pet.disable" | "pet.pause" | "pet.resume"
+  | "pet.request" | "pet.evolve" | "profile.refresh" | "profile.forget"
+  | "siesta.cancel" | "discipline.sleep" | "discipline.arm" | "discipline.wake"
+  | "trivia.reset" | "trivia.close-month" | "connection.pair" | "connection.resync" | "connection.relink";
+
+export interface AuditEntry {
+  id: number;
+  action: AuditAction;
+  targetId: string | null;
+  actor: "authenticated-api" | "local-insecure-api";
+  startedAt: number;
+  completedAt: number | null;
+  outcome: "succeeded" | "rejected" | "failed" | "unknown";
+  statusCode: number | null;
+}
+
+export interface AuditResponse {
+  entries: AuditEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sampledAt: number;
+  retentionDays: number;
+  maxEntries: number;
+}
+
 export interface DisciplinePlayer {
   chatId: string;
   chatName: string | null;

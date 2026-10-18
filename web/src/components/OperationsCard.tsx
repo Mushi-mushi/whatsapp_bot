@@ -6,6 +6,7 @@ import { EmptyState, LoadingState, QueryError } from "@/components/QueryFeedback
 import { RotateCw } from "lucide-react";
 import { ServiceDiagnostics } from "./ServiceDiagnostics";
 import { FailedDeliveries } from "./FailedDeliveries";
+import { AuditTrail } from "./AuditTrail";
 
 function timestamp(value: number | null): string {
   return value === null ? "Unknown (before monitoring was added)" : new Date(value).toLocaleString();
@@ -131,6 +132,7 @@ export function OperationsCard() {
         </section>
       </>}
       <FailedDeliveries />
+      <AuditTrail />
     </CardContent>
   </Card>;
 }

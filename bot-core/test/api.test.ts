@@ -12,11 +12,12 @@ import { RuntimeState } from "../src/state/runtime.js";
 import { DEFAULT_CONFIG } from "../src/config/schema.js";
 import { REDACTED } from "../src/config/secrets.js";
 import type { BotConfig, ConfigSaveResponse, ProfileDetail, ProfilesResponse } from "../../shared/api.js";
-import type { OperationsResponse, RemindersResponse, ReminderCancelResponse, TellsResponse, FailedDeliveriesResponse, DeliveryHistoryResponse } from "../../shared/api.js";
+import type { OperationsResponse, RemindersResponse, ReminderCancelResponse, TellsResponse, FailedDeliveriesResponse, DeliveryHistoryResponse, AuditResponse } from "../../shared/api.js";
 import { memoryKey } from "../src/state/identity.js";
 import { OutboxStore } from "../src/state/outbox.js";
 import { BackupWorker } from "../src/state/backups.js";
 import { DeliveryWorker } from "../src/state/deliveries.js";
+import { AuditStore } from "../src/state/audit.js";
 
 const ALICE = memoryKey("group@g.us", "alice");
 const ALICE_PATH = `/api/profiles/${encodeURIComponent(ALICE)}`;
@@ -24,7 +25,7 @@ const ALICE_PATH = `/api/profiles/${encodeURIComponent(ALICE)}`;
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 
-async function setup(apiToken: string | undefined = "test-token") {
+async function setup(apiToken: string | undefined = "test-token", allowInsecureApi = false) {
   const db = openDatabase(":memory:");
   const listeners = new Set<(status: unknown) => void>();
   const logger = pino({ level: "silent" });
@@ -37,9 +38,11 @@ async function setup(apiToken: string | undefined = "test-token") {
   const profiler = new ProfileService(userMemory, userProfiles, jobs, () => configStore.load(), logger);
   const deps: ApiDeps = {
     apiToken,
+    allowInsecureApi,
     jobs, outbox: new OutboxStore(db),
     reminders: new RemindersStore(db),
     tells: new TellStore(db),
+    audit: new AuditStore(db),
     backups: new BackupWorker(db, { retentionDays: 14 }, logger),
     configStore, knownChats: new KnownChatsStore(db),
     triviaScores: new TriviaScoreStore(db), userMemory, userProfiles, profiler, logger,
@@ -60,6 +63,180 @@ async function setup(apiToken: string | undefined = "test-token") {
   cleanup.push(async () => { await jobs.stop(); runtime.dispose(); await app.close(); db.close(); });
   return { app, deps, listeners, runtime, discipline, jobs, db };
 }
+
+describe("administrative audit API", () => {
+  const headers = { authorization: "Bearer test-token" };
+
+  it("authenticates audit reads and mutations, but never audits rejected authentication or read-only requests", async () => {
+    const { app, deps } = await setup();
+    expect((await app.inject({ url: "/api/operations/audit" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "DELETE", url: "/api/reminders/1" })).statusCode).toBe(401);
+    expect((await app.inject({ url: "/api/operations/audit", headers })).statusCode).toBe(200);
+    expect((await app.inject({ url: "/api/operations", headers })).statusCode).toBe(200);
+    expect(deps.audit.list(1).total).toBe(0);
+  });
+
+  it("records successful, repeated/conflicting and invalid cancellation attempts with safe targets", async () => {
+    const { app, deps } = await setup();
+    deps.reminders.add("secret-chat", "Secret name", "secret message", 0);
+    await app.inject({ method: "DELETE", url: "/api/reminders/1", headers });
+    await app.inject({ method: "DELETE", url: "/api/reminders/1", headers });
+    await app.inject({ method: "DELETE", url: "/api/reminders/invalid-secret", headers });
+    const response = await app.inject({ url: "/api/operations/audit", headers });
+    expect(response.headers["cache-control"]).toBe("no-store");
+    const data = response.json<AuditResponse>();
+    expect(data).toMatchObject({ total: 3, page: 1, pageSize: 50, retentionDays: 90, maxEntries: 10000 });
+    expect(data.entries.map((e) => [e.action, e.targetId, e.outcome, e.statusCode])).toEqual([
+      ["reminder.cancel", null, "rejected", 400],
+      ["reminder.cancel", "1", "rejected", 409],
+      ["reminder.cancel", "1", "succeeded", 200],
+    ]);
+    expect(data.entries.every((e) => e.actor === "authenticated-api" && e.completedAt !== null)).toBe(true);
+    expect(response.body).not.toContain("secret");
+    expect(response.body).not.toContain("test-token");
+  });
+
+  it("audits malformed authenticated JSON without persisting its contents", async () => {
+    const { app, deps } = await setup();
+    const response = await app.inject({ method: "PUT", url: "/api/config",
+      headers: { ...headers, "content-type": "application/json" }, payload: '{"secret-value"' });
+    expect(response.statusCode).toBe(400);
+    expect(deps.audit.list(1).entries[0]).toMatchObject({ action: "config.save", outcome: "rejected", statusCode: 400 });
+    expect(JSON.stringify(deps.audit.list(1))).not.toContain("secret-value");
+  });
+
+  it("records config outcomes, never secret values, bodies or revision headers", async () => {
+    const { app, deps } = await setup();
+    const config = await app.inject({ url: "/api/config", headers });
+    const save = await app.inject({ method: "PUT", url: "/api/config",
+      headers: { ...headers, "if-match": config.headers.etag as string },
+      payload: { ...config.json(), redditClientSecret: "secret-credential", askSystemPrompt: "secret-prompt" } });
+    expect(save.statusCode).toBe(200);
+    const conflict = await app.inject({ method: "PUT", url: "/api/config",
+      headers: { ...headers, "if-match": config.headers.etag as string }, payload: config.json() });
+    expect(conflict.statusCode).toBe(412);
+    const entries = deps.audit.list(1).entries;
+    expect(entries.map((e) => [e.action, e.targetId, e.outcome])).toEqual([
+      ["config.save", null, "rejected"], ["config.save", null, "succeeded"],
+    ]);
+    const raw = JSON.stringify(entries);
+    for (const secret of ["secret", "reddit", "askSystemPrompt", config.headers.etag]) expect(raw).not.toContain(secret);
+  });
+
+  it("records tell cancellation and manual retry scheduling rather than claiming a message was sent", async () => {
+    const { app, deps, db } = await setup();
+    deps.tells.add("alice", "Alice", "Bob", "secret text");
+    expect((await app.inject({ method: "DELETE", url: "/api/tells/1", headers })).statusCode).toBe(200);
+    db.exec("INSERT INTO outbox (chat_id, body, status, attempts, available_at, created_at) VALUES ('secret','secret','failed',5,0,0)");
+    const payload = { expectedRetryCount: 0, acknowledgeDuplicateRisk: true };
+    expect((await app.inject({ method: "POST", url: "/api/operations/deliveries/1/retry", headers, payload })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/api/operations/deliveries/1/retry", headers, payload })).statusCode).toBe(409);
+    expect(deps.audit.list(1).entries.map((e) => [e.action, e.targetId, e.statusCode])).toEqual([
+      ["delivery.retry", "1", 409], ["delivery.retry", "1", 200], ["tell.cancel", "1", 200],
+    ]);
+    expect(deps.outbox.snapshot(Date.now()).counts).toMatchObject({ pending: 1, sent: 0 });
+  });
+
+  it("uses stable keyed opaque references for chat/person targets, with no body/identity data", async () => {
+    const { app, deps, db } = await setup();
+    const chatId = "secret-chat@g.us";
+    const key = memoryKey(chatId, "secret-person");
+    await app.inject({ method: "POST", url: "/api/pets/" + chatId + "/evolve", headers, payload: { expectedStage: 0 } });
+    await app.inject({ method: "POST", url: "/api/pets/" + chatId + "/request", headers, payload: { kind: "feed" } });
+    await app.inject({ method: "DELETE", url: `/api/profiles/${encodeURIComponent(key)}`, headers });
+    for (const verb of ["arm", "wake"]) {
+      await app.inject({ method: "POST", url: "/api/discipline/" + verb, headers,
+        payload: { chatId, senderId: "secret-person@s.whatsapp.net" } });
+    }
+    const entries = deps.audit.list(1).entries;
+    expect(entries[0].targetId).toMatch(/^player:[a-f0-9]{64}$/);
+    expect(entries[0].targetId).toBe(entries[1].targetId);
+    expect(entries[2].targetId).toMatch(/^profile:[a-f0-9]{64}$/);
+    expect(entries[3].targetId).toMatch(/^chat:[a-f0-9]{64}$/);
+    expect(entries[3].targetId).toBe(entries[4].targetId);
+    expect(JSON.stringify(db.prepare("SELECT * FROM admin_audit").all())).not.toContain("secret");
+    expect(entries.map((entry) => entry.action)).toEqual([
+      "discipline.wake", "discipline.arm", "profile.forget", "pet.request", "pet.evolve",
+    ]);
+  });
+
+  it("records specific pet management actions using only controlled labels", async () => {
+    const { app, deps } = await setup();
+    const chatId = "group@g.us";
+    deps.configStore.save({ ...deps.configStore.load(), approvedSenders: [chatId] });
+    for (const action of ["enable", "save", "pause", "resume", "disable"]) {
+      const list = (await app.inject({ url: "/api/pets", headers })).json();
+      const response = await app.inject({ method: "PUT", url: `/api/pets/${chatId}`,
+        headers: { ...headers, "if-match": list.groups[0].revision },
+        payload: { action, name: "Secret pet name", species: "fox", settings: DEFAULT_PET_SETTINGS } });
+      expect(response.statusCode).toBe(200);
+    }
+    expect(deps.audit.list(1).entries.map((e) => e.action)).toEqual(["pet.disable", "pet.resume", "pet.pause", "pet.save", "pet.enable"]);
+    expect(JSON.stringify(deps.audit.list(1))).not.toContain("Secret pet name");
+  });
+
+  it("audits all other administrative surfaces and preserves explicit HTTP failures", async () => {
+    const { app, deps } = await setup();
+    deps.transport.requestPairingCode = vi.fn().mockResolvedValue("secret-pairing-code");
+    deps.transport.resyncContacts = vi.fn().mockResolvedValue(undefined);
+    deps.transport.relink = vi.fn().mockRejectedValue(new Error("secret transport failure"));
+    vi.spyOn(deps.profiler, "requestRefresh").mockRejectedValue(new Error("secret model failure"));
+    const cases = [
+      ["/api/siesta/cancel", {}, "siesta.cancel", 200],
+      ["/api/discipline/sleep", { chatId: "secret-chat", senderId: "secret-person", minutes: 5 }, "discipline.sleep", 200],
+      ["/api/trivia/reset", {}, "trivia.reset", 200],
+      ["/api/trivia/close-month", { period: "2026-09" }, "trivia.close-month", 200],
+      ["/api/pair", { phoneNumber: "secret-phone" }, "connection.pair", 200],
+      ["/api/resync", {}, "connection.resync", 200],
+      ["/api/relink", {}, "connection.relink", 500],
+      ["/api/profiles/secret-key/refresh", {}, "profile.refresh", 502],
+    ] as const;
+    for (const [url, payload, action, statusCode] of cases) {
+      const response = await app.inject({ method: "POST", url, headers, payload });
+      expect(response.statusCode).toBe(statusCode);
+      expect(deps.audit.list(1).entries[0]).toMatchObject({ action, statusCode,
+        outcome: statusCode >= 500 ? "failed" : "succeeded" });
+    }
+    expect(JSON.stringify(deps.audit.list(1))).not.toContain("secret");
+  });
+
+  it("refuses to execute a mutation when the initial audit write fails and logs the failure", async () => {
+    const { app, deps, db } = await setup();
+    const error = vi.spyOn(deps.logger, "error");
+    deps.reminders.add("chat", null, "keep", 0);
+    db.exec("CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
+    const response = await app.inject({ method: "DELETE", url: "/api/reminders/1", headers });
+    expect(response.statusCode).toBe(500);
+    expect(deps.reminders.list(1).total).toBe(1);
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ method: "DELETE", url: "/api/reminders/:id" }), "API request failed");
+  });
+
+  it("leaves an explicit unknown record and returns an error if completion persistence fails after a mutation", async () => {
+    const { app, deps, db } = await setup();
+    const error = vi.spyOn(deps.logger, "error");
+    deps.reminders.add("chat", null, "cancel", 0);
+    db.exec("CREATE TRIGGER fail_audit_complete BEFORE UPDATE ON admin_audit BEGIN SELECT RAISE(ABORT, 'audit completion unavailable'); END");
+    const response = await app.inject({ method: "DELETE", url: "/api/reminders/1", headers });
+    expect(response.statusCode).toBe(500);
+    expect(deps.reminders.list(1).total).toBe(0);
+    expect(deps.audit.list(1).entries[0]).toMatchObject({ action: "reminder.cancel", outcome: "unknown", statusCode: null, completedAt: null });
+    expect(error).toHaveBeenCalled();
+    db.exec("DROP TRIGGER fail_audit_complete");
+    expect((await app.inject({ method: "DELETE", url: "/api/reminders/1", headers })).statusCode).toBe(409);
+  });
+
+  it("labels explicitly allowed unauthenticated local API mode without inventing an authenticated actor", async () => {
+    const { app, deps } = await setup("", true);
+    expect((await app.inject({ method: "POST", url: "/api/siesta/cancel" })).statusCode).toBe(200);
+    expect(deps.audit.list(1).entries[0].actor).toBe("local-insecure-api");
+  });
+
+  it.each(["0", "-1", "1.5", "abc", "1000001", "", "1e2"])("rejects invalid audit page %s without auditing the read", async (page) => {
+    const { app, deps } = await setup();
+    expect((await app.inject({ url: `/api/operations/audit?page=${page}`, headers })).statusCode).toBe(400);
+    expect(deps.audit.list(1).total).toBe(0);
+  });
+});
 
 describe("delivery recovery and pending tells API", () => {
   const headers = { authorization: "Bearer test-token" };

@@ -357,6 +357,70 @@ Manual-retry rounds and retained history distinguish subsequent attempts.
 Back up the database before deploying this migration; older schema-5 binaries
 cannot open a migrated schema-6 database.
 
+### Administrative Audit Trail
+
+**Operations → Administrative audit trail** shows paginated, metadata-only
+administrative API history, polling every 10 seconds independently of other
+panels. Loading, read errors, retry, empty and explicitly stale snapshots are
+distinct. New entries and retention can shift pages; Previous remains available
+after an empty or failed later page. Times use the browser's local timezone.
+
+`GET /api/operations/audit?page=1` uses existing API authentication and
+`Cache-Control: no-store`, returning
+`{ entries, total, page, pageSize, sampledAt, retentionDays, maxEntries }`.
+Pages contain 50 records, newest request ID first; valid pages are whole numbers
+from 1 to 1000000 (invalid input returns 400). Reads never create audit entries.
+There are no audit deletion or replay controls.
+
+Each record has an action, target reference (if applicable), start/completion
+timestamps, actor category, HTTP status and outcome:
+
+- `succeeded`: the server prepared a successful response; not proof of message
+  delivery or client receipt. A delivery retry records scheduling only.
+- `rejected`: the server rejected the request, including validation errors,
+  stale revisions and cancellation/retry conflicts.
+- `failed`: a server/upstream error; changes may already have occurred.
+- `unknown`: a request is in progress or was interrupted before its outcome
+  could be persisted. These remain unknown across restarts, never inferred as
+  successes or automatically replayed.
+
+Covered actions include reminder/tell cancellation, manual delivery retries,
+configuration saves, pet save/enable/disable/pause/resume/challenge/evolution,
+profile refresh/forget, siesta cancellation, player discipline, trivia
+reset/month-close, contact resync, pairing and relinking. Only administrative API
+requests are covered, not bot commands, background worker actions, read requests
+or rejected authentication attempts. New mutation routes must be added to the
+controlled action catalogue; API registration fails if one is missing.
+
+The shared bearer token cannot identify a named operator: the actor is
+`authenticated-api`, or `local-insecure-api` for explicitly enabled legacy local
+access. Numeric reminder/tell/delivery IDs remain usable references. Chat,
+profile and player targets use domain-separated HMAC-SHA256 opaque references,
+keyed by the existing API token. They are stable while that token is unchanged,
+but change on token rotation (or API-process restart in insecure mode).
+References allow correlation, not recovery of raw identities. No names, phone
+numbers, chat IDs, messages, prompts, credentials, request/response bodies,
+configuration values, IP addresses, raw errors or revision headers are stored.
+Global actions and invalid/unavailable targets have a null target reference.
+
+The additive **schema 7** migration preserves existing state and starts a new
+history; earlier actions are not reconstructed. Audit rows survive restart and
+are included in normal database backups. Retention is **90 days with a hard cap
+of the latest 10,000 requests**, enforced on each new entry and by the existing
+startup/daily retention worker, independently of the analytics/delivery
+retention toggle. Audit cleanup does not prune other protected bot data.
+Older backup files retain their own historical snapshot until backup retention
+removes them. This database-backed history is not tamper-proof.
+
+A durable unknown-outcome entry is inserted **before** an authenticated mutation
+executes. If that insert or required retention fails, the mutation is blocked
+with an explicit server error. Outcomes are persisted before responding. If
+completion persistence fails after a mutation, the API logs and returns an error
+and the record stays unknown; inspect current state before retrying because the
+action may already have applied. Audit persistence and arbitrary asynchronous
+external operations are not one atomic transaction.
+Back up before deploying schema 7; schema-6 binaries cannot open it.
+
 ## Shared Group Pet
 
 Pets are opt-in, with one independent pet per WhatsApp group ID. First approve

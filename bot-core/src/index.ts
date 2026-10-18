@@ -19,6 +19,7 @@ import {
 } from "./state/repos.js";
 import { RuntimeState } from "./state/runtime.js";
 import { OutboxStore } from "./state/outbox.js";
+import { AuditStore } from "./state/audit.js";
 import { DeliveryWorker } from "./state/deliveries.js";
 import { RetentionWorker } from "./state/retention.js";
 import { BackupWorker, backupOptions } from "./state/backups.js";
@@ -177,6 +178,7 @@ async function main(): Promise<void> {
       backups,
       reminders,
       tells,
+      audit: new AuditStore(db),
       knownChats,
       triviaScores,
       userMemory,

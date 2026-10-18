@@ -7,6 +7,7 @@ import type {
   OperationsResponse, ServiceDiagnosticsResponse,
   RemindersResponse, ReminderCancelResponse,
   TellsResponse, TellCancelResponse, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest, DeliveryRetryResponse,
+  AuditResponse,
 } from "../../../shared/api.js";
 export type {
   BotConfig, ConfigSnapshot, Status, ConnectionState, ConnectionHealth,
@@ -15,6 +16,7 @@ export type {
   OperationsResponse, ServiceDiagnosticsResponse,
   ScheduledReminder, RemindersResponse,
   PendingTell, TellsResponse, FailedDelivery, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest,
+  AuditEntry, AuditResponse,
 } from "../../../shared/api.js";
 
 const TOKEN_KEY = "apiToken";
@@ -66,6 +68,8 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  getAudit: (page = 1) =>
+    fetch(`/api/operations/audit?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<AuditResponse>),
   getTells: (page = 1) =>
     fetch(`/api/tells?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<TellsResponse>),
   cancelTell: (id: number) =>

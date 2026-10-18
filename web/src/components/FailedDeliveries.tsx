@@ -40,6 +40,7 @@ export function FailedDeliveries() {
       client.invalidateQueries({ queryKey: ["failed-deliveries"] }),
       client.invalidateQueries({ queryKey: ["delivery-history"] }),
       client.invalidateQueries({ queryKey: ["operations"] }),
+      client.invalidateQueries({ queryKey: ["audit"] }),
     ]),
   });
   const data = query.data;

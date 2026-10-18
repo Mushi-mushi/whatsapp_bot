@@ -19,6 +19,8 @@ import type { RuntimeState } from "../state/runtime.js";
 import type { BackgroundJobs } from "../router/jobs.js";
 import type { OutboxStore } from "../state/outbox.js";
 import type { BackupWorker } from "../state/backups.js";
+import type { AuditStore } from "../state/audit.js";
+import { registerAudit } from "./audit.js";
 import type {
   BotConfig, ChatsResponse, ContactsResponse, DisciplinePlayer, DisciplineResponse,
   DisciplineMutationResponse, SiestaStatus, GroupPet, PetsResponse, PetActionResponse,
@@ -47,6 +49,7 @@ export interface ApiDeps {
   backups: BackupWorker;
   reminders: RemindersStore;
   tells: TellStore;
+  audit: AuditStore;
   onConfigChange: () => void;
   logger: Logger;
   apiToken?: string;
@@ -91,6 +94,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   } else {
     deps.logger.warn("API_TOKEN not set — the API and dashboard are UNAUTHENTICATED.");
   }
+  registerAudit(app, deps.audit, deps.apiToken);
 
   app.get("/api/status", async () => deps.transport.getStatus());
   const listPage = z.object({
@@ -98,6 +102,12 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   });
   const recordId = z.object({
     id: z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.number().int().safe()),
+  });
+  app.get("/api/operations/audit", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = listPage.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Invalid audit page. Use a whole number from 1 to 1000000." });
+    return deps.audit.list(parsed.data.page);
   });
   app.get("/api/reminders", async (req, reply) => {
     reply.header("Cache-Control", "no-store");

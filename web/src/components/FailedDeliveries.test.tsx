@@ -77,6 +77,7 @@ describe("failed-delivery recovery", () => {
     await waitFor(() => expect(screen.queryByText("Failed delivery #1")).toBeNull());
     expect(screen.getByText("Failed delivery #2")).toBeTruthy();
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["operations"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["audit"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["delivery-history"] });
     expect(screen.getByRole("status").textContent).toContain("does not confirm delivery");
   });

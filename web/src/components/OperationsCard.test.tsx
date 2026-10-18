@@ -6,6 +6,7 @@ import { operations } from "@/test/fixtures";
 import { OperationsCard } from "./OperationsCard";
 vi.mock("./ServiceDiagnostics", () => ({ ServiceDiagnostics: () => null }));
 vi.mock("./FailedDeliveries", () => ({ FailedDeliveries: () => null }));
+vi.mock("./AuditTrail", () => ({ AuditTrail: () => null }));
 
 const clients: QueryClient[] = [];
 beforeEach(() => { vi.spyOn(api, "getOperations").mockResolvedValue(operations); });

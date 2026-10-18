@@ -39,6 +39,16 @@ afterEach(() => {
 });
 
 describe("shared API wire contracts", () => {
+  it("fetches paginated audit metadata with authentication/no caching and propagates read errors", async () => {
+    const result = { entries: [], total: 0, page: 2, pageSize: 50, sampledAt: 100, retentionDays: 90, maxEntries: 10000 };
+    fetcher.mockResolvedValue(Response.json(result));
+    expect(await api.getAudit(2)).toEqual(result);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/operations/audit?page=2");
+    expect(fetcher.mock.calls[0][1]?.cache).toBe("no-store");
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).has("Authorization")).toBe(true);
+    fetcher.mockResolvedValue(Response.json({ error: "Audit unavailable" }, { status: 503 }));
+    await expect(api.getAudit()).rejects.toMatchObject({ status: 503, message: "Audit unavailable" });
+  });
   it("lists pending tells with authentication/no caching and propagates cancellation conflicts", async () => {
     const data = { tells: [], total: 0, page: 2, pageSize: 50, sampledAt: 100 };
     fetcher.mockResolvedValue(Response.json(data));

@@ -14,7 +14,7 @@ export function openDatabase(path: string): Database.Database {
 
 function migrate(db: Database.Database): void {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 6) throw new Error("Database schema is newer than this application");
+  if (version > 7) throw new Error("Database schema is newer than this application");
   db.exec(`
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
@@ -290,6 +290,24 @@ function migrate(db: Database.Database): void {
         );
         CREATE INDEX idx_delivery_attempts_outbox ON delivery_attempts(outbox_id, id DESC);
         PRAGMA user_version = 6;
+      `);
+    })();
+  }
+  if (version < 7) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE admin_audit (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          action TEXT NOT NULL,
+          target_id TEXT,
+          actor TEXT NOT NULL CHECK(actor IN ('authenticated-api', 'local-insecure-api')),
+          started_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          outcome TEXT NOT NULL CHECK(outcome IN ('succeeded', 'rejected', 'failed', 'unknown')),
+          status_code INTEGER CHECK(status_code BETWEEN 100 AND 599)
+        );
+        CREATE INDEX idx_admin_audit_started ON admin_audit(started_at, id);
+        PRAGMA user_version = 7;
       `);
     })();
   }

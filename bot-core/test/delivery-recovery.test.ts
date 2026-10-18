@@ -171,11 +171,11 @@ describe("failed delivery recovery", () => {
     new RemindersStore(db).add("chat", null, "keep", 9999999999999);
     db.exec(`INSERT INTO outbox (chat_id,body,status,attempts,available_at,created_at,last_error,last_failure_at)
       VALUES ('chat','keep','failed',5,0,0,'old error',1);
-      DROP TABLE delivery_attempts; ALTER TABLE outbox DROP COLUMN manual_retry_count; PRAGMA user_version = 5;`);
+      DROP TABLE admin_audit; DROP TABLE delivery_attempts; ALTER TABLE outbox DROP COLUMN manual_retry_count; PRAGMA user_version = 5;`);
     const before = db.prepare("SELECT * FROM outbox").get();
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(6);
+    expect(db.pragma("user_version", { simple: true })).toBe(7);
     expect(db.prepare("SELECT * FROM outbox").get()).toEqual({ ...before as object, manual_retry_count: 0 });
     let store = new OutboxStore(db);
     expect(store.history(1)!.attempts).toEqual([]);
