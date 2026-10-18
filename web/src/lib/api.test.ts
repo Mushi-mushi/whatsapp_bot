@@ -39,6 +39,46 @@ afterEach(() => {
 });
 
 describe("shared API wire contracts", () => {
+  it("lists pending tells with authentication/no caching and propagates cancellation conflicts", async () => {
+    const data = { tells: [], total: 0, page: 2, pageSize: 50, sampledAt: 100 };
+    fetcher.mockResolvedValue(Response.json(data));
+    expect(await api.getTells(2)).toEqual(data);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/tells?page=2");
+    expect(fetcher.mock.calls[0][1]?.cache).toBe("no-store");
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).has("Authorization")).toBe(true);
+    fetcher.mockResolvedValue(Response.json({ ok: true, cancelledId: 42 }));
+    expect(await api.cancelTell(42)).toEqual({ ok: true, cancelledId: 42 });
+    expect(fetcher.mock.calls[1][0]).toBe("/api/tells/42");
+    expect(fetcher.mock.calls[1][1]?.method).toBe("DELETE");
+    expect(new Headers(fetcher.mock.calls[1][1]?.headers).has("Authorization")).toBe(true);
+    fetcher.mockResolvedValue(Response.json({ error: "Tell is no longer pending" }, { status: 409 }));
+    await expect(api.cancelTell(42)).rejects.toMatchObject({ status: 409, message: "Tell is no longer pending" });
+  });
+
+  it("uses authenticated no-store failure/history reads and explicit versioned retry acknowledgement", async () => {
+    const data = { deliveries: [], total: 0, page: 2, pageSize: 50, sampledAt: 100 };
+    fetcher.mockResolvedValue(Response.json(data));
+    expect(await api.getFailedDeliveries(2)).toEqual(data);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/operations/failed-deliveries?page=2");
+    expect(fetcher.mock.calls[0][1]?.cache).toBe("no-store");
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).has("Authorization")).toBe(true);
+    fetcher.mockResolvedValue(Response.json({ id: 42, total: 0, attempts: [] }));
+    expect(await api.getDeliveryHistory(42)).toEqual({ id: 42, total: 0, attempts: [] });
+    expect(fetcher.mock.calls[1][0]).toBe("/api/operations/deliveries/42/history");
+    expect(fetcher.mock.calls[1][1]?.cache).toBe("no-store");
+    expect(new Headers(fetcher.mock.calls[1][1]?.headers).has("Authorization")).toBe(true);
+    const request = { expectedRetryCount: 2, acknowledgeDuplicateRisk: true } as const;
+    fetcher.mockResolvedValue(Response.json({ ok: true, retriedId: 42 }));
+    expect(await api.retryDelivery(42, request)).toEqual({ ok: true, retriedId: 42 });
+    const [url, init] = fetcher.mock.calls[2];
+    expect(url).toBe("/api/operations/deliveries/42/retry");
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).has("Authorization")).toBe(true);
+    expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
+    expect(JSON.parse(init?.body as string)).toEqual(request);
+    fetcher.mockResolvedValue(Response.json({ error: "Delivery changed" }, { status: 409 }));
+    await expect(api.retryDelivery(42, request)).rejects.toMatchObject({ status: 409, message: "Delivery changed" });
+  });
   it("lists reminder pages with authentication and no caching and cancels only by ID", async () => {
     const data = { reminders: [], total: 0, page: 2, pageSize: 50, sampledAt: 100 };
     fetcher.mockResolvedValue(Response.json(data));

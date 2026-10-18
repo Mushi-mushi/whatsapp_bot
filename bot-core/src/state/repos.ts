@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.js";
 import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
-import type { Contact, RemindersResponse, ScheduledReminder } from "../../../shared/api.js";
+import type { Contact, PendingTell, RemindersResponse, ScheduledReminder, TellsResponse } from "../../../shared/api.js";
 import { memoryChat } from "./identity.js";
 
 const CONFIG_KEY = "config";
@@ -386,6 +386,21 @@ export interface Tell {
 
 export class TellStore {
   constructor(private readonly db: Database.Database) {}
+
+  list(page: number, now = Date.now()): TellsResponse {
+    return this.db.transaction(() => {
+      const pageSize = 50;
+      const { total } = this.db.prepare("SELECT COUNT(*) AS total FROM tells").get() as { total: number };
+      const tells = this.db.prepare(`SELECT id, target_name AS targetName, from_name AS fromName,
+        message AS text, created_ts AS createdAt FROM tells ORDER BY created_ts, id LIMIT ? OFFSET ?`)
+        .all(pageSize, (page - 1) * pageSize) as PendingTell[];
+      return { tells, total, page, pageSize, sampledAt: now };
+    })();
+  }
+
+  remove(id: number): boolean {
+    return this.db.prepare("DELETE FROM tells WHERE id = ?").run(id).changes === 1;
+  }
 
   add(targetNorm: string, targetName: string, fromName: string, message: string): void {
     this.db

@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
 import { redactSecrets, restoreSecrets } from "../config/secrets.js";
-import type { ConfigStore, ContactsStore, KnownChatsStore, RemindersStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
+import type { ConfigStore, ContactsStore, KnownChatsStore, RemindersStore, SiestaDisciplineStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
 import { disciplineKey } from "../state/repos.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import { ProfileQueueError } from "../handlers/profiles/service.js";
@@ -27,6 +27,7 @@ import type {
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
   OperationsResponse,
   ReminderCancelResponse,
+  TellCancelResponse, DeliveryRetryResponse,
 } from "../../../shared/api.js";
 
 export interface ApiDeps {
@@ -45,6 +46,7 @@ export interface ApiDeps {
   outbox: OutboxStore;
   backups: BackupWorker;
   reminders: RemindersStore;
+  tells: TellStore;
   onConfigChange: () => void;
   logger: Logger;
   apiToken?: string;
@@ -91,15 +93,15 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   }
 
   app.get("/api/status", async () => deps.transport.getStatus());
-  const reminderPage = z.object({
+  const listPage = z.object({
     page: z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.number().int().max(1_000_000)).default("1"),
   });
-  const reminderId = z.object({
+  const recordId = z.object({
     id: z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.number().int().safe()),
   });
   app.get("/api/reminders", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
-    const parsed = reminderPage.safeParse(req.query);
+    const parsed = listPage.safeParse(req.query);
     if (!parsed.success) {
       reply.code(400);
       return { ok: false, error: "Invalid reminders page. Use a whole number from 1 to 1000000." };
@@ -108,7 +110,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
   });
   app.delete("/api/reminders/:id", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
-    const parsed = reminderId.safeParse(req.params);
+    const parsed = recordId.safeParse(req.params);
     if (!parsed.success) {
       reply.code(400);
       return { ok: false, error: "Invalid reminder ID." };
@@ -118,6 +120,49 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       return { ok: false, error: "Reminder is no longer scheduled. It may already be queued, sent or cancelled; no delivery was cancelled." };
     }
     return { ok: true, cancelledId: parsed.data.id } satisfies ReminderCancelResponse;
+  });
+  app.get("/api/tells", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = listPage.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Invalid tells page. Use a whole number from 1 to 1000000." });
+    return deps.tells.list(parsed.data.page);
+  });
+  app.delete("/api/tells/:id", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = recordId.safeParse(req.params);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Invalid tell ID." });
+    if (!deps.tells.remove(parsed.data.id)) {
+      return reply.code(409).send({ ok: false, error: "Tell is no longer pending. It may already be queued, sent or cancelled; no delivery was cancelled." });
+    }
+    return { ok: true, cancelledId: parsed.data.id } satisfies TellCancelResponse;
+  });
+  app.get("/api/operations/failed-deliveries", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = listPage.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Invalid failed deliveries page. Use a whole number from 1 to 1000000." });
+    return deps.outbox.listFailed(parsed.data.page);
+  });
+  app.get("/api/operations/deliveries/:id/history", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = recordId.safeParse(req.params);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Invalid delivery ID." });
+    const history = deps.outbox.history(parsed.data.id);
+    if (!history) return reply.code(404).send({ ok: false, error: "Delivery not found; it may have been pruned." });
+    return history;
+  });
+  app.post("/api/operations/deliveries/:id/retry", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const params = recordId.safeParse(req.params);
+    const body = z.object({ expectedRetryCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1),
+      acknowledgeDuplicateRisk: z.literal(true) }).strict().safeParse(req.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ ok: false, error: "A valid delivery ID, retry count and duplicate-risk acknowledgement are required." });
+    }
+    if (!deps.outbox.retryFailed(params.data.id, body.data.expectedRetryCount)) {
+      return reply.code(409).send({ ok: false, error: "Delivery changed or is no longer failed. Refresh before retrying; no retry was scheduled." });
+    }
+    deps.logger.info({ id: params.data.id, retryCount: body.data.expectedRetryCount + 1 }, "manual delivery retry scheduled");
+    return { ok: true, retriedId: params.data.id } satisfies DeliveryRetryResponse;
   });
   app.get("/api/operations/services", async (_req, reply) => {
     reply.header("Cache-Control", "no-store");

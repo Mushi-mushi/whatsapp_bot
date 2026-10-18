@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState, QueryError } from "@/components/QueryFeedback";
 import { RotateCw } from "lucide-react";
 import { ServiceDiagnostics } from "./ServiceDiagnostics";
+import { FailedDeliveries } from "./FailedDeliveries";
 
 function timestamp(value: number | null): string {
   return value === null ? "Unknown (before monitoring was added)" : new Date(value).toLocaleString();
@@ -32,7 +33,7 @@ export function OperationsCard() {
         </Button>
       </div>
       <CardDescription>
-        Read-only queue and delivery monitoring. Refreshes every 5 seconds while this section is open.
+        Queue and delivery monitoring, with explicit recovery of exhausted deliveries below. Overview refreshes every 5 seconds while this section is open.
         Message contents, identities and raw errors are not included.
       </CardDescription>
     </CardHeader>
@@ -115,12 +116,12 @@ export function OperationsCard() {
             : `Next attempt eligible at ${timestamp(data.outbox.nextAttemptAt)} (or now if overdue); connection and pet state may defer it.`}</p>
           <p className="text-xs text-muted-foreground">
             Counts cover retained outbox rows, not all outgoing WhatsApp replies. Ready and retrying are subsets of pending.
-            Expired leases recover on the next connected worker pass. Failed deliveries have exhausted 5 attempts.
+            Expired leases recover on the next connected worker pass. Failed deliveries have exhausted their attempt budget.
           </p>
           <h4 className="text-sm font-medium">Recent unresolved delivery failures</h4>
           {data.outbox.recentFailures.length === 0 ? <EmptyState>No unresolved delivery failures.</EmptyState>
             : <ul className="space-y-2">{data.outbox.recentFailures.map((failure) => <li key={failure.id} className="rounded-md border p-3 text-sm">
-              <p>Delivery #{failure.id} · {failure.status} · {failure.attempts}/5 attempts</p>
+              <p>Delivery #{failure.id} · {failure.status} · {failure.attempts}/5 attempt budget used</p>
               <p>Last failure: {timestamp(failure.failedAt)}</p>
               <p>{failure.retryAt === null ? "No automatic retry remaining."
                 : `${failure.status === "sending" ? "Lease expires" : "Retry eligible"} at ${timestamp(failure.retryAt)}`}</p>
@@ -129,6 +130,7 @@ export function OperationsCard() {
           <p className="text-xs text-muted-foreground">Latest 20 unresolved rows, one per delivery; successful retries and cancellations leave this list. Delivery state survives restarts.</p>
         </section>
       </>}
+      <FailedDeliveries />
     </CardContent>
   </Card>;
 }

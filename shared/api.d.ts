@@ -92,6 +92,68 @@ export interface ReminderCancelResponse {
   cancelledId: number;
 }
 
+export interface PendingTell {
+  id: number;
+  targetName: string;
+  fromName: string;
+  text: string;
+  createdAt: number;
+}
+
+export interface TellsResponse {
+  tells: PendingTell[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sampledAt: number;
+}
+
+export type TellCancelResponse = ReminderCancelResponse;
+
+export type DeliveryFailureKind = "timeout" | "lease-expired" | "send-error" | "unknown";
+export type DeliveryAttemptOutcome = "sending" | "sent" | "failed" | "cancelled" | "deferred" | "lease-expired";
+
+export interface FailedDelivery {
+  id: number;
+  attempts: number;
+  retryCount: number;
+  failedAt: number | null;
+  failureKind: DeliveryFailureKind;
+}
+
+export interface FailedDeliveriesResponse {
+  deliveries: FailedDelivery[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sampledAt: number;
+}
+
+export interface DeliveryAttempt {
+  id: number;
+  retryCount: number;
+  startedAt: number;
+  finishedAt: number | null;
+  outcome: DeliveryAttemptOutcome;
+  failureKind: DeliveryFailureKind | null;
+}
+
+export interface DeliveryHistoryResponse {
+  id: number;
+  attempts: DeliveryAttempt[];
+  total: number;
+}
+
+export interface DeliveryRetryRequest {
+  expectedRetryCount: number;
+  acknowledgeDuplicateRisk: true;
+}
+
+export interface DeliveryRetryResponse {
+  ok: true;
+  retriedId: number;
+}
+
 export interface DisciplinePlayer {
   chatId: string;
   chatName: string | null;

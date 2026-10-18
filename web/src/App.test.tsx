@@ -7,10 +7,11 @@ import { config } from "@/test/fixtures";
 
 vi.mock("./lib/api", async (original) => ({
   ...await original<typeof import("./lib/api")>(),
-  api: { getConfig: vi.fn(), getChats: vi.fn(), saveConfig: vi.fn(), getOperations: vi.fn(), getReminders: vi.fn(), cancelReminder: vi.fn() },
+  api: { getConfig: vi.fn(), getChats: vi.fn(), saveConfig: vi.fn(), getOperations: vi.fn(), getReminders: vi.fn(), cancelReminder: vi.fn(), getTells: vi.fn(), cancelTell: vi.fn() },
 }));
 vi.mock("@/components/StatusCard", () => ({ StatusCard: () => null }));
 vi.mock("@/components/ServiceDiagnostics", () => ({ ServiceDiagnostics: () => null }));
+vi.mock("@/components/FailedDeliveries", () => ({ FailedDeliveries: () => null }));
 vi.mock("@/lib/useStatusStream", () => ({ useStatusStream: () => null }));
 vi.mock("@/components/PetsCard", async () => {
   const { useState } = await import("react");
@@ -111,7 +112,7 @@ describe("configuration editor", () => {
     mount();
     await screen.findByRole("button", { name: "Connection" });
     expect(within(screen.getByRole("navigation")).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
-      "Connection", "General", "Access", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep", "Operations", "Reminders",
+      "Connection", "General", "Access", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep", "Operations", "Reminders", "Pending tells",
     ]);
     expect(screen.queryByLabelText("Prefix")).toBeNull();
   });
@@ -242,6 +243,18 @@ describe("configuration editor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reminders" }));
     expect(await screen.findByText("No scheduled reminders.")).toBeTruthy();
     expect(api.getReminders).toHaveBeenCalledWith(1);
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(api.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("opens pending tells independently without saving configuration", async () => {
+    vi.mocked(api.getTells).mockResolvedValue({ tells: [], total: 0, page: 1, pageSize: 50, sampledAt: 1000 });
+    mount();
+    await screen.findByRole("button", { name: "Pending tells" });
+    expect(api.getTells).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Pending tells" }));
+    expect(await screen.findByText("No pending tells.")).toBeTruthy();
+    expect(api.getTells).toHaveBeenCalledWith(1);
     expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
     expect(api.saveConfig).not.toHaveBeenCalled();
   });

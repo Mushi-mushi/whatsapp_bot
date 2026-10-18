@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { Reminder } from "./repos.js";
-import type { DeliveryFailure, OutboxSnapshot } from "../../../shared/api.js";
+import type { DeliveryAttempt, DeliveryAttemptOutcome, DeliveryFailure, DeliveryFailureKind, DeliveryHistoryResponse, FailedDeliveriesResponse, FailedDelivery, OutboxSnapshot } from "../../../shared/api.js";
 
 export interface Delivery {
   id: number;
@@ -10,6 +10,13 @@ export interface Delivery {
   claim_token: string;
   attempts: number;
   pet_event_id?: string | null;
+}
+
+function failureKind(error: string | null): DeliveryFailureKind {
+  if (error === null) return "unknown";
+  if (error === "Error: Delivery timed out") return "timeout";
+  if (error === "Delivery lease expired") return "lease-expired";
+  return "send-error";
 }
 
 export class OutboxStore {
@@ -29,6 +36,9 @@ export class OutboxStore {
 
   claim(now: number): Delivery | undefined {
     return this.db.transaction(() => {
+      this.db.prepare(`UPDATE delivery_attempts SET outcome = 'lease-expired', failure_kind = 'lease-expired', finished_at = ?
+        WHERE outcome = 'sending' AND claim_token IN (SELECT claim_token FROM outbox WHERE status = 'sending' AND lease_until <= ?)`)
+        .run(now, now);
       this.db.prepare("UPDATE outbox SET status = 'failed', last_error = 'Delivery lease expired', last_failure_at = ? WHERE status = 'sending' AND lease_until <= ? AND attempts >= 5").run(now, now);
       const row = this.db.prepare(`SELECT * FROM outbox WHERE attempts < 5 AND
         ((status = 'pending' AND available_at <= ?) OR (status = 'sending' AND lease_until <= ?))
@@ -37,6 +47,10 @@ export class OutboxStore {
       const token = randomUUID();
       this.db.prepare("UPDATE outbox SET status = 'sending', attempts = attempts + 1, lease_until = ?, claim_token = ? WHERE id = ?")
         .run(now + 300_000, token, row.id);
+      this.db.prepare(`INSERT INTO delivery_attempts (outbox_id, claim_token, retry_count, started_at, outcome)
+        SELECT id, ?, manual_retry_count, ?, 'sending' FROM outbox WHERE id = ?`).run(token, now, row.id);
+      this.db.prepare(`DELETE FROM delivery_attempts WHERE outbox_id = ? AND id NOT IN
+        (SELECT id FROM delivery_attempts WHERE outbox_id = ? ORDER BY id DESC LIMIT 50)`).run(row.id, row.id);
       return { ...row, claim_token: token, attempts: row.attempts + 1 };
     })();
   }
@@ -45,26 +59,76 @@ export class OutboxStore {
     this.db.transaction(() => {
       const result = this.db.prepare("UPDATE outbox SET status = 'sent', lease_until = NULL, last_error = NULL WHERE id = ? AND claim_token = ? AND status = 'sending'")
         .run(delivery.id, delivery.claim_token);
-      if (result.changes) onSent?.();
+      if (result.changes) {
+        this.finishAttempt(delivery, "sent", Date.now());
+        onSent?.();
+      }
     })();
   }
 
   cancel(delivery: Delivery): void {
-    this.db.prepare("UPDATE outbox SET status = 'cancelled', lease_until = NULL WHERE id = ? AND claim_token = ? AND status = 'sending'")
-      .run(delivery.id, delivery.claim_token);
+    this.db.transaction(() => {
+      const result = this.db.prepare("UPDATE outbox SET status = 'cancelled', lease_until = NULL WHERE id = ? AND claim_token = ? AND status = 'sending'")
+        .run(delivery.id, delivery.claim_token);
+      if (result.changes) this.finishAttempt(delivery, "cancelled", Date.now());
+    })();
   }
 
   defer(delivery: Delivery, now: number): void {
-    this.db.prepare(`UPDATE outbox SET status = 'pending', attempts = attempts - 1,
-      available_at = ?, lease_until = NULL WHERE id = ? AND claim_token = ? AND status = 'sending'`)
-      .run(now + 15_000, delivery.id, delivery.claim_token);
+    this.db.transaction(() => {
+      const result = this.db.prepare(`UPDATE outbox SET status = 'pending', attempts = attempts - 1,
+        available_at = ?, lease_until = NULL WHERE id = ? AND claim_token = ? AND status = 'sending'`)
+        .run(now + 15_000, delivery.id, delivery.claim_token);
+      if (result.changes) this.finishAttempt(delivery, "deferred", now);
+    })();
   }
 
   failed(delivery: Delivery, error: unknown, now: number): void {
     const status = delivery.attempts >= 5 ? "failed" : "pending";
     const delay = Math.min(900_000, 5000 * 2 ** (delivery.attempts - 1));
-    this.db.prepare("UPDATE outbox SET status = ?, available_at = ?, lease_until = NULL, last_error = ?, last_failure_at = ? WHERE id = ? AND claim_token = ? AND status = 'sending'")
-      .run(status, now + delay, String(error).slice(0, 300), now, delivery.id, delivery.claim_token);
+    this.db.transaction(() => {
+      const message = String(error).slice(0, 300);
+      const result = this.db.prepare("UPDATE outbox SET status = ?, available_at = ?, lease_until = NULL, last_error = ?, last_failure_at = ? WHERE id = ? AND claim_token = ? AND status = 'sending'")
+        .run(status, now + delay, message, now, delivery.id, delivery.claim_token);
+      if (result.changes) this.finishAttempt(delivery, "failed", now, failureKind(message));
+    })();
+  }
+
+  private finishAttempt(delivery: Delivery, outcome: DeliveryAttemptOutcome, now: number, kind: DeliveryFailureKind | null = null): void {
+    this.db.prepare(`UPDATE delivery_attempts SET outcome = ?, finished_at = ?, failure_kind = ?
+      WHERE claim_token = ? AND outcome = 'sending'`).run(outcome, now, kind, delivery.claim_token);
+  }
+
+  listFailed(page: number, now = Date.now()): FailedDeliveriesResponse {
+    return this.db.transaction(() => {
+      const pageSize = 50;
+      const { total } = this.db.prepare("SELECT COUNT(*) AS total FROM outbox WHERE status = 'failed'").get() as { total: number };
+      const rows = this.db.prepare(`SELECT id, attempts, manual_retry_count AS retryCount,
+        last_failure_at AS failedAt, last_error AS error FROM outbox WHERE status = 'failed'
+        ORDER BY last_failure_at DESC, id DESC LIMIT ? OFFSET ?`).all(pageSize, (page - 1) * pageSize) as
+        (Omit<FailedDelivery, "failureKind"> & { error: string | null })[];
+      return { deliveries: rows.map(({ error, ...row }) => ({ ...row, failureKind: failureKind(error) })),
+        total, page, pageSize, sampledAt: now };
+    })();
+  }
+
+  history(id: number): DeliveryHistoryResponse | undefined {
+    return this.db.transaction(() => {
+      if (!this.db.prepare("SELECT id FROM outbox WHERE id = ?").get(id)) return undefined;
+      const { total } = this.db.prepare("SELECT COUNT(*) AS total FROM delivery_attempts WHERE outbox_id = ?").get(id) as { total: number };
+      const attempts = this.db.prepare(`SELECT id, retry_count AS retryCount, started_at AS startedAt,
+        finished_at AS finishedAt, outcome, failure_kind AS failureKind FROM delivery_attempts
+        WHERE outbox_id = ? ORDER BY id DESC LIMIT 50`).all(id) as DeliveryAttempt[];
+      return { id, attempts, total };
+    })();
+  }
+
+  retryFailed(id: number, expectedRetryCount: number, now = Date.now()): boolean {
+    // Leave one attempt in the existing five-attempt budget; no automatic retry cycle.
+    return this.db.prepare(`UPDATE outbox SET status = 'pending', attempts = 4, available_at = ?,
+      lease_until = NULL, claim_token = NULL, manual_retry_count = manual_retry_count + 1
+      WHERE id = ? AND status = 'failed' AND manual_retry_count = ?`)
+      .run(now, id, expectedRetryCount).changes === 1;
   }
 
   snapshot(now: number): OutboxSnapshot {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import { createApi, type ApiDeps } from "../src/api/server.js";
 import { openDatabase } from "../src/state/db.js";
-import { ConfigStore, ContactsStore, KnownChatsStore, RemindersStore, SiestaDisciplineStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
+import { ConfigStore, ContactsStore, KnownChatsStore, RemindersStore, SiestaDisciplineStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
 import { ProfileQueueError, ProfileService } from "../src/handlers/profiles/service.js";
 import { PetService } from "../src/pets/service.js";
@@ -12,7 +12,7 @@ import { RuntimeState } from "../src/state/runtime.js";
 import { DEFAULT_CONFIG } from "../src/config/schema.js";
 import { REDACTED } from "../src/config/secrets.js";
 import type { BotConfig, ConfigSaveResponse, ProfileDetail, ProfilesResponse } from "../../shared/api.js";
-import type { OperationsResponse, RemindersResponse, ReminderCancelResponse } from "../../shared/api.js";
+import type { OperationsResponse, RemindersResponse, ReminderCancelResponse, TellsResponse, FailedDeliveriesResponse, DeliveryHistoryResponse } from "../../shared/api.js";
 import { memoryKey } from "../src/state/identity.js";
 import { OutboxStore } from "../src/state/outbox.js";
 import { BackupWorker } from "../src/state/backups.js";
@@ -39,6 +39,7 @@ async function setup(apiToken: string | undefined = "test-token") {
     apiToken,
     jobs, outbox: new OutboxStore(db),
     reminders: new RemindersStore(db),
+    tells: new TellStore(db),
     backups: new BackupWorker(db, { retentionDays: 14 }, logger),
     configStore, knownChats: new KnownChatsStore(db),
     triviaScores: new TriviaScoreStore(db), userMemory, userProfiles, profiler, logger,
@@ -59,6 +60,121 @@ async function setup(apiToken: string | undefined = "test-token") {
   cleanup.push(async () => { await jobs.stop(); runtime.dispose(); await app.close(); db.close(); });
   return { app, deps, listeners, runtime, discipline, jobs, db };
 }
+
+describe("delivery recovery and pending tells API", () => {
+  const headers = { authorization: "Bearer test-token" };
+  const retryBody = { expectedRetryCount: 0, acknowledgeDuplicateRisk: true };
+  async function failedSetup() {
+    const result = await setup();
+    result.db.prepare(`INSERT INTO outbox (chat_id, body, status, attempts, available_at, created_at, last_error)
+      VALUES ('secret-chat', 'secret-text', 'failed', 5, 0, 0, 'secret error')`).run();
+    return result;
+  }
+
+  it.each([
+    ["GET", "/api/tells"], ["DELETE", "/api/tells/1"],
+    ["GET", "/api/operations/failed-deliveries"], ["GET", "/api/operations/deliveries/1/history"],
+    ["POST", "/api/operations/deliveries/1/retry"],
+  ] as const)("authenticates %s %s without changing delivery state", async (method, url) => {
+    const { app, db, deps } = await failedSetup();
+    deps.tells.add("alice", "Alice", "Bob", "hello");
+    expect((await app.inject({ method, url, payload: method === "POST" ? retryBody : undefined })).statusCode).toBe(401);
+    expect(deps.tells.list(1).total).toBe(1);
+    expect(db.prepare("SELECT status, manual_retry_count FROM outbox").get()).toEqual({ status: "failed", manual_retry_count: 0 });
+  });
+
+  it("lists bounded sanitized failures and history without sensitive fields", async () => {
+    const { app } = await failedSetup();
+    const response = await app.inject({ url: "/api/operations/failed-deliveries", headers });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.json<FailedDeliveriesResponse>()).toMatchObject({
+      total: 1, page: 1, pageSize: 50, deliveries: [{ id: 1, attempts: 5, retryCount: 0, failureKind: "send-error" }],
+    });
+    expect(response.body).not.toContain("secret");
+    const history = await app.inject({ url: "/api/operations/deliveries/1/history", headers });
+    expect(history.headers["cache-control"]).toBe("no-store");
+    expect(history.json<DeliveryHistoryResponse>()).toEqual({ id: 1, total: 0, attempts: [] });
+    expect((await app.inject({ url: "/api/operations/deliveries/999/history", headers })).statusCode).toBe(404);
+  });
+
+  it.each([{}, { expectedRetryCount: 0 }, { ...retryBody, acknowledgeDuplicateRisk: false },
+    { ...retryBody, expectedRetryCount: -1 }, { ...retryBody, expectedRetryCount: 0.5 },
+    { ...retryBody, expectedRetryCount: "0" }, { ...retryBody, extra: true }])("requires an explicit valid retry acknowledgement: %j", async (payload) => {
+    const { app, deps } = await failedSetup();
+    expect((await app.inject({ method: "POST", url: "/api/operations/deliveries/1/retry", headers, payload })).statusCode).toBe(400);
+    expect(deps.outbox.listFailed(1).total).toBe(1);
+  });
+
+  it("schedules a single retry atomically and rejects concurrent/stale requests even after another failure", async () => {
+    const { app, deps } = await failedSetup();
+    const request = () => app.inject({ method: "POST", url: "/api/operations/deliveries/1/retry", headers, payload: retryBody });
+    const responses = await Promise.all([request(), request()]);
+    expect(responses.map((r) => r.statusCode).sort()).toEqual([200, 409]);
+    expect(responses.find((r) => r.statusCode === 200)!.json()).toEqual({ ok: true, retriedId: 1 });
+    expect(deps.outbox.snapshot(Date.now()).counts).toMatchObject({ pending: 1, sent: 0 });
+    const delivery = deps.outbox.claim(Date.now())!;
+    expect(delivery.attempts).toBe(5);
+    expect((await request()).statusCode).toBe(409);
+    deps.outbox.failed(delivery, "failed again", Date.now());
+    expect((await request()).statusCode).toBe(409);
+    expect(deps.outbox.listFailed(1).deliveries[0].retryCount).toBe(1);
+    const next = await app.inject({ method: "POST", url: "/api/operations/deliveries/1/retry", headers,
+      payload: { ...retryBody, expectedRetryCount: 1 } });
+    expect(next.statusCode).toBe(200);
+  });
+
+  it.each(["0", "-1", "abc", "1.2", "9007199254740992"])("rejects invalid IDs on every new record endpoint: %s", async (id) => {
+    const { app } = await failedSetup();
+    for (const [method, url] of [
+      ["DELETE", `/api/tells/${id}`],
+      ["GET", `/api/operations/deliveries/${id}/history`],
+      ["POST", `/api/operations/deliveries/${id}/retry`],
+    ] as const) {
+      expect((await app.inject({ method, url, headers, payload: method === "POST" ? retryBody : undefined })).statusCode).toBe(400);
+    }
+  });
+
+  it.each(["0", "-1", "abc", "1.2", "1000001"])("rejects invalid list pages: %s", async (page) => {
+    const { app } = await setup();
+    for (const url of [`/api/tells?page=${page}`, `/api/operations/failed-deliveries?page=${page}`]) {
+      expect((await app.inject({ url, headers })).statusCode).toBe(400);
+    }
+  });
+
+  it("lists tells by creation and ID with original named recipients, no inferred chat or identity", async () => {
+    const { app, deps } = await setup();
+    for (let i = 0; i < 51; i++) deps.tells.add("alice", "Alice", "Bob", `message ${i}`);
+    const response = await app.inject({ url: "/api/tells", headers });
+    expect(response.headers["cache-control"]).toBe("no-store");
+    const first = response.json<TellsResponse>();
+    expect(first).toMatchObject({ total: 51, page: 1, pageSize: 50 });
+    expect(first.tells).toHaveLength(50);
+    expect(first.tells[0]).toEqual({ id: 1, targetName: "Alice", fromName: "Bob", text: "message 0", createdAt: expect.any(Number) });
+    expect((await app.inject({ url: "/api/tells?page=2", headers })).json<TellsResponse>().tells.map((t) => t.id)).toEqual([51]);
+    expect((await app.inject({ url: "/api/tells?page=3", headers })).json<TellsResponse>()).toMatchObject({ tells: [], total: 51 });
+    expect(deps.outbox.snapshot(Date.now()).counts.pending).toBe(0);
+  });
+
+  it("cancels just one pending tell, refuses repeated cancellation, and never cancels an already handed-off delivery", async () => {
+    const { app, deps, db } = await setup();
+    deps.tells.add("alice", "Alice", "Bob", "cancel me");
+    deps.tells.add("alice", "Alice", "Bob", "keep me");
+    const cancelled = await app.inject({ method: "DELETE", url: "/api/tells/1", headers });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.headers["cache-control"]).toBe("no-store");
+    expect(cancelled.json()).toEqual({ ok: true, cancelledId: 1 });
+    expect((await app.inject({ method: "DELETE", url: "/api/tells/1", headers })).statusCode).toBe(409);
+    deps.tells.enqueueFor("alice", "chat", "Alice");
+    const before = db.prepare("SELECT * FROM outbox").all();
+    const conflict = await app.inject({ method: "DELETE", url: "/api/tells/2", headers });
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json().error).toContain("no delivery was cancelled");
+    expect(db.prepare("SELECT * FROM outbox").all()).toEqual(before);
+    expect(deps.outbox.claim(Date.now())!.body).toContain("keep me");
+    expect(deps.tells.list(1).tells).toEqual([]);
+  });
+});
 
 describe("scheduled reminders API", () => {
   const headers = { authorization: "Bearer test-token" };

@@ -176,6 +176,7 @@ async function main(): Promise<void> {
       outbox,
       backups,
       reminders,
+      tells,
       knownChats,
       triviaScores,
       userMemory,

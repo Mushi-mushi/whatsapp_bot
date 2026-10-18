@@ -14,7 +14,7 @@ export function openDatabase(path: string): Database.Database {
 
 function migrate(db: Database.Database): void {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 5) throw new Error("Database schema is newer than this application");
+  if (version > 6) throw new Error("Database schema is newer than this application");
   db.exec(`
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
@@ -271,6 +271,25 @@ function migrate(db: Database.Database): void {
         ALTER TABLE outbox ADD COLUMN last_failure_at INTEGER;
         CREATE INDEX idx_outbox_failures ON outbox(last_failure_at DESC) WHERE last_error IS NOT NULL;
         PRAGMA user_version = 5;
+      `);
+    })();
+  }
+  if (version < 6) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE outbox ADD COLUMN manual_retry_count INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE delivery_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          outbox_id INTEGER NOT NULL REFERENCES outbox(id) ON DELETE CASCADE,
+          claim_token TEXT NOT NULL UNIQUE,
+          retry_count INTEGER NOT NULL,
+          started_at INTEGER NOT NULL,
+          finished_at INTEGER,
+          outcome TEXT NOT NULL CHECK(outcome IN ('sending', 'sent', 'failed', 'cancelled', 'deferred', 'lease-expired')),
+          failure_kind TEXT CHECK(failure_kind IN ('timeout', 'lease-expired', 'send-error', 'unknown'))
+        );
+        CREATE INDEX idx_delivery_attempts_outbox ON delivery_attempts(outbox_id, id DESC);
+        PRAGMA user_version = 6;
       `);
     })();
   }

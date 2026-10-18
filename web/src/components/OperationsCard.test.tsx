@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { operations } from "@/test/fixtures";
 import { OperationsCard } from "./OperationsCard";
 vi.mock("./ServiceDiagnostics", () => ({ ServiceDiagnostics: () => null }));
+vi.mock("./FailedDeliveries", () => ({ FailedDeliveries: () => null }));
 
 const clients: QueryClient[] = [];
 beforeEach(() => { vi.spyOn(api, "getOperations").mockResolvedValue(operations); });
@@ -114,7 +115,7 @@ describe("operations overview", () => {
     expect(screen.getByText(/Running profile refresh/).textContent).toContain("0h 1m 5s");
     expect(screen.getByText(/Delivery transport disconnected/)).toBeTruthy();
     expect(screen.getByText(/Command failed at/)).toBeTruthy();
-    expect(screen.getByText(/Delivery #7/).textContent).toContain("2/5 attempts");
+    expect(screen.getByText(/Delivery #7/).textContent).toContain("2/5 attempt budget used");
     expect(screen.getByText(/Unknown \(before monitoring/)).toBeTruthy();
     expect(screen.getByText(/No automatic retry remaining/)).toBeTruthy();
     expect(screen.getByText(/Lease expires at/)).toBeTruthy();

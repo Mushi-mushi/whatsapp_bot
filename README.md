@@ -231,11 +231,32 @@ even if the subsequent refresh fails. Delivery aggregate counts are available in
 Operations; individual reminder delivery history is not provided.
 No schema migration or changes to existing reminder creation/delivery are needed.
 
+## Pending Tells
+
+The **Pending tells** tab lists and cancels tells not yet handed to delivery.
+It shares the Reminders pagination, 10-second refresh, confirmation, stale-data
+handling and immediate (not configuration Save) cancellation behavior.
+Create tells in WhatsApp with `bot.tell`; dashboard creation/editing is not provided.
+Tells are matched by normalized recipient name when that recipient speaks;
+they are not chat-scoped or linked to a verified person ID. The list shows the
+original recipient name, sender name, message and browser-local creation time,
+without inventing a chat or identity. These are private contents: restrict
+dashboard access to trusted users.
+
+Authenticated, `Cache-Control: no-store` endpoints:
+
+- `GET /api/tells?page=1`: `{ tells, total, page, pageSize, sampledAt }`, 50 per
+  page ordered by creation time then ID. Same page limits as Reminders.
+- `DELETE /api/tells/:id`: `{ ok: true, cancelledId }`; invalid IDs return 400.
+  The pending-row deletion and transactional handoff are mutually exclusive.
+  A missing/already handed-off/already cancelled row returns 409 and never
+  cancels a queued, sending, sent or failed outbox delivery.
+
 ## Operations Overview
 
 The dashboard's **Operations** tab polls `GET /api/operations` every five seconds
 while open (background tabs may pause polling). The endpoint uses the existing
-API authentication and sends `Cache-Control: no-store`. Monitoring is read-only:
+API authentication and sends `Cache-Control: no-store`. This overview endpoint is read-only:
 it never claims deliveries, recovers leases, retries failures or changes config.
 Manual Refresh and error/retry states are available; a failed refresh keeps the
 last successful snapshot explicitly marked as potentially stale.
@@ -285,9 +306,56 @@ successful generation. Failed panel refreshes retain explicitly stale results.
 
 Only bounded metadata is exposed: no chat/person identifiers, message bodies,
 prompts, credentials or raw errors. Consult server logs for diagnostics (delivery
-IDs help locate delivery failures). There are deliberately no manual retry or
-cancel controls; ambiguous acknowledgements still require care to avoid replaying
-an already delivered message.
+IDs help locate delivery failures). Retry controls are separate from the
+read-only overview and require explicit confirmation; outbox cancellation is
+not provided.
+
+### Failed-Delivery Recovery
+
+**Operations → Failed-delivery recovery** lists all exhausted deliveries in
+50-row pages, newest failure first (ID breaks ties). The list polls every 10
+seconds independently of the overview and service checks. Failed refreshes
+retain explicitly stale data and disable retry controls. Inspect a delivery to
+load sanitized attempt history; message bodies, identities, claim tokens and raw
+errors are never returned by either endpoint.
+
+**Retry once** requires confirmation acknowledging that a previous send might
+already have succeeded and that retrying may send a duplicate. Each confirmation
+permits **one additional send attempt**, not a new five-attempt automatic cycle.
+It reuses the existing outbox row, sends nothing inline, and preserves normal
+transport readiness and pet-state defer/cancel/on-sent checks. Scheduling a
+retry is not confirmation of delivery. There is no bulk retry.
+
+Authenticated, `Cache-Control: no-store` endpoints:
+
+- `GET /api/operations/failed-deliveries?page=1` returns
+  `{ deliveries, total, page, pageSize, sampledAt }`. Page limits match Reminders.
+  Each row contains only ID, attempt budget, manual retry count, last failure
+  timestamp and a controlled `timeout`, `lease-expired`, `send-error` or `unknown`
+  category. Old failure timestamps/categories may be unknown.
+- `GET /api/operations/deliveries/:id/history` returns `{ id, attempts, total }`
+  for any retained outbox state; missing/pruned IDs return 404. History records
+  claim start/finish times, outcomes, manual-retry round and sanitized failure
+  category, newest first. Invalid IDs return 400.
+- `POST /api/operations/deliveries/:id/retry` requires JSON
+  `{ "expectedRetryCount": 0, "acknowledgeDuplicateRisk": true }`, using the
+  current count from the list, and returns `{ ok: true, retriedId }`.
+  Missing/invalid acknowledgement, count or ID returns 400. An atomic
+  failed-state/count check returns 409 for stale or concurrent requests, missing
+  rows or any state other than failed. Even if a manual attempt fails again, an
+  old confirmation cannot schedule another retry.
+
+The additive **schema 6** migration preserves all existing data and claims,
+adds a manual-retry counter and starts recording claim history. Earlier attempts
+are not reconstructed. At most 50 claims per delivery are retained, including
+deferred/cancelled/expired claims. Deferred claims do not consume a send attempt.
+History survives restarts and is deleted with its outbox row by the existing
+sent/cancelled retention policy; pending/sending/failed rows remain protected.
+The existing `attempts` field is the five-attempt **budget used**, not a lifetime
+send count: a manual retry leaves one slot (4/5 used), then its claim uses 5/5.
+Manual-retry rounds and retained history distinguish subsequent attempts.
+Back up the database before deploying this migration; older schema-5 binaries
+cannot open a migrated schema-6 database.
 
 ## Shared Group Pet
 

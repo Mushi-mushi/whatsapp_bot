@@ -6,6 +6,7 @@ import type {
   PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
   OperationsResponse, ServiceDiagnosticsResponse,
   RemindersResponse, ReminderCancelResponse,
+  TellsResponse, TellCancelResponse, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest, DeliveryRetryResponse,
 } from "../../../shared/api.js";
 export type {
   BotConfig, ConfigSnapshot, Status, ConnectionState, ConnectionHealth,
@@ -13,6 +14,7 @@ export type {
   ProfileDetail, PetSettings, GroupPet, PetGroup, PetsResponse, PetUpdate, PetRequestChoice,
   OperationsResponse, ServiceDiagnosticsResponse,
   ScheduledReminder, RemindersResponse,
+  PendingTell, TellsResponse, FailedDelivery, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest,
 } from "../../../shared/api.js";
 
 const TOKEN_KEY = "apiToken";
@@ -64,6 +66,18 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  getTells: (page = 1) =>
+    fetch(`/api/tells?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<TellsResponse>),
+  cancelTell: (id: number) =>
+    fetch(`/api/tells/${id}`, { method: "DELETE", headers: authHeaders() }).then(json<TellCancelResponse>),
+  getFailedDeliveries: (page = 1) =>
+    fetch(`/api/operations/failed-deliveries?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<FailedDeliveriesResponse>),
+  getDeliveryHistory: (id: number) =>
+    fetch(`/api/operations/deliveries/${id}/history`, { headers: authHeaders(), cache: "no-store" }).then(json<DeliveryHistoryResponse>),
+  retryDelivery: (id: number, request: DeliveryRetryRequest) =>
+    fetch(`/api/operations/deliveries/${id}/retry`, {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request),
+    }).then(json<DeliveryRetryResponse>),
   getReminders: (page = 1) =>
     fetch(`/api/reminders?page=${page}`, { headers: authHeaders(), cache: "no-store" }).then(json<RemindersResponse>),
   cancelReminder: (id: number) =>
