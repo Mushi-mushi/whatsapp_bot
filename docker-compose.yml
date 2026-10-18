@@ -2,7 +2,9 @@
 #   docker compose up -d --build
 services:
   bot-core:
-    build: ./bot-core
+    build:
+      context: .
+      dockerfile: bot-core/Dockerfile
     restart: always
     environment:
       # Set to link by pairing code on first login (digits only, with country code).
@@ -31,7 +33,9 @@ services:
       retries: 3
 
   web:
-    build: ./web
+    build:
+      context: .
+      dockerfile: web/Dockerfile
     restart: always
     depends_on:
       bot-core:

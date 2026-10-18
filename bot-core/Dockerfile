@@ -6,21 +6,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+WORKDIR /app/bot-core
 
-COPY package.json package-lock.json ./
+COPY bot-core/package.json bot-core/package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json ./
-COPY src ./src
+COPY shared /app/shared
+COPY bot-core/tsconfig.json ./
+COPY bot-core/src ./src
 RUN npm run build
 RUN npm prune --omit=dev
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/dist ./dist
-COPY --from=build --chown=node:node /app/package.json ./package.json
+COPY --from=build --chown=node:node /app/bot-core/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/bot-core/dist ./dist
+COPY --from=build --chown=node:node /app/bot-core/package.json ./package.json
 RUN mkdir -p /data && chown node:node /data
 
 ENV NODE_ENV=production \

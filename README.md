@@ -421,6 +421,27 @@ npm --prefix web test
 npm --prefix web run build
 ```
 
+### Shared API Contracts
+
+`shared/api.d.ts` contains the dependency-free, type-only wire contracts used by
+both applications. Existing backend and dashboard import locations re-export
+these types for compatibility. Keep database rows and transport-specific objects
+out of this file; only JSON payloads and client snapshots belong here.
+
+Configuration and pet-setting schemas are checked against the shared contracts
+for field names and output types. API response builders also check their DTOs
+against the contracts. Runtime validation remains on the backend; these shared
+types do not validate untrusted JSON in the browser or change any response shape.
+Configuration revisions still travel in ETag headers, while pet revisions are
+included in their response bodies.
+
+Both application Docker builds now use the repository root as their context so
+they can read `shared/`. Compose already supplies the correct context. For a
+standalone build, run `docker build -f bot-core/Dockerfile .` or
+`docker build -f web/Dockerfile .` from the repository root. The root
+`.dockerignore` allowlists build inputs and excludes local credentials, data,
+dependencies and generated output. Runtime images do not need the declarations.
+
 Set `API_TOKEN` for normal backend development. `ALLOW_INSECURE_API=true` is an
 explicit local-only escape hatch and binds the API to 127.0.0.1. The dashboard
 dev server proxies to `BOT_CORE_URL` (default http://localhost:5000).

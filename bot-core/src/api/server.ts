@@ -15,6 +15,13 @@ import type { PetService } from "../pets/service.js";
 import { SPECIES, isSpecies, statusText, type Pet } from "../pets/model.js";
 import { DEFAULT_PET_SETTINGS, PetSettingsSchema, petSettings } from "../pets/settings.js";
 import type { RuntimeState } from "../state/runtime.js";
+import type {
+  BotConfig, ChatsResponse, ContactsResponse, DisciplinePlayer, DisciplineResponse,
+  DisciplineMutationResponse, SiestaStatus, GroupPet, PetsResponse, PetActionResponse,
+  PetUpdate, ConfigSaveResponse, ProfileDetail, ProfilesResponse,
+  ProfileRefreshResponse,
+  PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
+} from "../../../shared/api.js";
 
 export interface ApiDeps {
   transport: Transport;
@@ -73,7 +80,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
 
   app.get("/api/status", async () => deps.transport.getStatus());
   app.get("/api/health", async () => ({ ok: true, connection: deps.transport.getStatus().state }));
-  app.get("/api/siesta", async () => ({
+  app.get("/api/siesta", async (): Promise<SiestaStatus> => ({
     sleeping: deps.runtime.isSleeping(),
     until: deps.runtime.isSleeping() ? deps.runtime.siestaUntil : null,
   }));
@@ -103,7 +110,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     const phone = contact?.phone ?? (jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : "");
     return disciplineKey(jid, phone);
   };
-  const disciplineView = (now = Date.now()) => {
+  const disciplineView = (now = Date.now()): DisciplinePlayer[] => {
     const chats = new Map(deps.knownChats.list().map((c) => [c.id, c.name]));
     return deps.discipline.listActive(now).map((e) => ({
       chatId: e.chatId,
@@ -114,12 +121,16 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       armed: e.armed,
     }));
   };
-  const disciplineTarget = z.object({ chatId: z.string().min(1), senderId: z.string().min(1) });
-  const disciplineSleep = disciplineTarget.extend({ minutes: z.number().int().min(1).max(60) });
+  const disciplineTarget = z.object({
+    chatId: z.string().min(1), senderId: z.string().min(1),
+  }) satisfies z.ZodType<DisciplineTarget, z.ZodTypeDef, unknown>;
+  const disciplineSleep = disciplineTarget.extend({
+    minutes: z.number().int().min(1).max(60),
+  }) satisfies z.ZodType<DisciplineSleepRequest, z.ZodTypeDef, unknown>;
 
   app.get("/api/discipline", async (_req, reply) => {
     reply.header("Cache-Control", "no-store");
-    return { players: disciplineView() };
+    return { players: disciplineView() } satisfies DisciplineResponse;
   });
   app.post("/api/discipline/sleep", async (req, reply) => {
     const parsed = disciplineSleep.safeParse(req.body);
@@ -129,7 +140,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     }
     const { chatId, senderId, minutes } = parsed.data;
     deps.discipline.putToSleep(chatId, canonicalTarget(senderId), Date.now() + minutes * 60_000);
-    return { ok: true, players: disciplineView() };
+    return { ok: true, players: disciplineView() } satisfies DisciplineMutationResponse;
   });
   app.post("/api/discipline/arm", async (req, reply) => {
     const parsed = disciplineTarget.safeParse(req.body);
@@ -138,7 +149,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       return { ok: false, error: parsed.error.flatten() };
     }
     deps.discipline.arm(parsed.data.chatId, canonicalTarget(parsed.data.senderId));
-    return { ok: true, players: disciplineView() };
+    return { ok: true, players: disciplineView() } satisfies DisciplineMutationResponse;
   });
   app.post("/api/discipline/wake", async (req, reply) => {
     const parsed = disciplineTarget.safeParse(req.body);
@@ -147,7 +158,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       return { ok: false, error: parsed.error.flatten() };
     }
     deps.discipline.wake(parsed.data.chatId, canonicalTarget(parsed.data.senderId));
-    return { ok: true, players: disciplineView() };
+    return { ok: true, players: disciplineView() } satisfies DisciplineMutationResponse;
   });
 
   // Known contacts (JID + display name + phone) for the dashboard's player picker.
@@ -157,14 +168,14 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       .filter((c) => c.name.trim())
       .map((c) => ({ jid: c.jid, name: c.name, phone: c.phone }))
       .sort((a, b) => a.name.localeCompare(b.name));
-    return { contacts };
+    return { contacts } satisfies ContactsResponse;
   });
 
   app.get("/api/config", async (_req, reply) => {
     const config = deps.configStore.load();
     reply.header("ETag", revision(config));
     reply.header("Cache-Control", "no-store");
-    return redactSecrets(config);
+    return redactSecrets(config) satisfies BotConfig;
   });
 
   app.put("/api/config", async (req, reply) => {
@@ -184,17 +195,18 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     const saved = deps.configStore.save(merged);
     deps.onConfigChange();
     reply.header("ETag", revision(saved));
-    return { ok: true, config: redactSecrets(saved) };
+    return { ok: true, config: redactSecrets(saved) } satisfies ConfigSaveResponse;
   });
 
-  app.get("/api/chats", async () => ({ chats: deps.knownChats.list() }));
+  app.get("/api/chats", async () => ({ chats: deps.knownChats.list() } satisfies ChatsResponse));
 
   const petSnapshot = (pet: Pet | undefined) => pet ? {
     name: pet.name, species: pet.species, enabled: pet.enabled, paused: pet.paused,
     settings: petSettings(pet),
   } : null;
-  const petView = (pet: Pet | undefined) => pet ? {
-    ...petSnapshot(pet), stage: pet.stage, hunger: pet.hunger, happiness: pet.happiness,
+  const petView = (pet: Pet | undefined): GroupPet | null => pet ? {
+    name: pet.name, species: pet.species, enabled: pet.enabled, paused: pet.paused,
+    settings: petSettings(pet), stage: pet.stage, hunger: pet.hunger, happiness: pet.happiness,
     hydration: pet.hydration, cleanliness: pet.cleanliness,
     energy: pet.energy, hibernating: pet.hibernating, healthyDays: pet.healthyMs / 86_400_000,
     status: statusText(pet),
@@ -209,7 +221,14 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       .refine((name) => !/(?:^|\s)species=/i.test(name), "Choose species using the species selector, not the name."),
     species: z.string().refine((value) => value === "random" || isSpecies(value), "Unknown pet species."),
     settings: PetSettingsSchema,
-  }).strict();
+  }).strict() satisfies z.ZodType<PetUpdate, z.ZodTypeDef, unknown>;
+
+  const petActionView = (chatId: string): PetActionResponse => {
+    const pet = deps.pets.store.get(chatId);
+    const view = petView(pet);
+    if (!view) throw new Error("Pet action completed without a saved pet");
+    return { pet: view, revision: revision(petSnapshot(pet)) };
+  };
 
   app.get("/api/pets", async (_req, reply) => {
     reply.header("Cache-Control", "no-store");
@@ -220,7 +239,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       return { id, name: known.find((chat) => chat.id === id)?.name ?? id,
         pet: petView(pet), revision: revision(petSnapshot(pet)) };
     });
-    return { groups, species: SPECIES, defaults: DEFAULT_PET_SETTINGS };
+    return { groups, species: SPECIES, defaults: DEFAULT_PET_SETTINGS } satisfies PetsResponse;
   });
 
   app.post<{ Params: { chatId: string } }>("/api/pets/:chatId/request", async (req, reply) => {
@@ -228,14 +247,14 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     if (!chatId.endsWith("@g.us") || !deps.configStore.load().approvedSenders.includes(chatId)) {
       return reply.code(403).send({ error: "This group must be approved before requesting a challenge." });
     }
-    const parsed = z.object({
+    const requestSchema = z.object({
       kind: z.enum(["random", "feed", "water", "clean", "play", "silence"]).default("random"),
-    }).strict().safeParse(req.body ?? {});
+    }).strict() satisfies z.ZodType<PetRequest, z.ZodTypeDef, unknown>;
+    const parsed = requestSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: "Choose random, feed, water, clean, play or silence." });
     const result = deps.pets.requestNow(chatId, Date.now(), parsed.data.kind === "random" ? undefined : parsed.data.kind);
     if (!result.ok) return reply.code(409).send({ error: result.error });
-    const pet = deps.pets.store.get(chatId);
-    return reply.code(202).send({ pet: petView(pet), revision: revision(petSnapshot(pet)) });
+    return reply.code(202).send(petActionView(chatId));
   });
 
   app.post<{ Params: { chatId: string } }>("/api/pets/:chatId/evolve", async (req, reply) => {
@@ -243,12 +262,14 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     if (!chatId.endsWith("@g.us") || !deps.configStore.load().approvedSenders.includes(chatId)) {
       return reply.code(403).send({ error: "This group must be approved before evolving its pet." });
     }
-    const parsed = z.object({ expectedStage: z.number().int().min(0).max(4) }).strict().safeParse(req.body);
+    const evolutionSchema = z.object({
+      expectedStage: z.number().int().min(0).max(4),
+    }).strict() satisfies z.ZodType<PetEvolutionRequest, z.ZodTypeDef, unknown>;
+    const parsed = evolutionSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Provide the current pet stage (0-4). Reload pets and try again." });
     const result = deps.pets.evolveNow(chatId, parsed.data.expectedStage);
     if (!result.ok) return reply.code(409).send({ error: result.error });
-    const pet = deps.pets.store.get(chatId);
-    return { pet: petView(pet), revision: revision(petSnapshot(pet)) };
+    return petActionView(chatId);
   });
 
   app.put<{ Params: { chatId: string } }>("/api/pets/:chatId", async (req, reply) => {
@@ -275,8 +296,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       deps.pets.configure(chatId, settings, name);
       if (action !== "save" && action !== "enable") deps.pets.command(chatId, action, "");
     });
-    const saved = deps.pets.store.get(chatId);
-    return { pet: petView(saved), revision: revision(petSnapshot(saved)) };
+    return petActionView(chatId);
   });
 
   // Learned personality profiles (deep dossier + short briefing) per user.
@@ -285,7 +305,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       ...p,
       messageCount: deps.userMemory.countSince(p.sender_key, 0),
     }));
-    return { profiles };
+    return { profiles } satisfies ProfilesResponse;
   });
 
   app.get<{ Params: { key: string } }>("/api/profiles/:key", async (req, reply) => {
@@ -294,7 +314,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       reply.code(404);
       return { ok: false, error: "No profile for that user yet." };
     }
-    return { ...profile, messageCount: deps.userMemory.countSince(profile.sender_key, 0) };
+    return { ...profile, messageCount: deps.userMemory.countSince(profile.sender_key, 0) } satisfies ProfileDetail;
   });
 
   // Force an immediate rebuild (two LLM calls; the /api route allows long reads).
@@ -307,7 +327,7 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
         reply.code(422);
         return { ok: false, error: "Not enough messages to build a profile yet." };
       }
-      return { ok: true, profile: { ...profile, messageCount: deps.userMemory.countSince(key, 0) } };
+      return { ok: true, profile: { ...profile, messageCount: deps.userMemory.countSince(key, 0) } } satisfies ProfileRefreshResponse;
     } catch (err) {
       deps.logger.warn({ err, key }, "requested profile refresh failed");
       reply.code(err instanceof ProfileQueueError ? 503 : 502);

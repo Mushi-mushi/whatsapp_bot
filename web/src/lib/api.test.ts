@@ -1,0 +1,135 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api, ApiError, clearToken, setToken } from "./api";
+import type {
+  BotConfig, ConfigSaveResponse, ConfigSnapshot, PetSettings, PetUpdate,
+  PetActionResponse, ProfileDetail, ProfileRefreshResponse, DisciplineMutationResponse,
+} from "../../../shared/api.js";
+
+const config: BotConfig = {
+  transcriptionEnabled: true, transcriptionProvider: "auralis", auralisBaseUrl: "http://auralis:8000",
+  transcriptionTimeoutSeconds: 90, audioDownloadEnabled: true,
+  askEnabled: true, ollamaBaseUrl: "http://ollama:11434", ollamaModel: "test-model",
+  ollamaTimeoutSeconds: 120, ollamaKeepAlive: "5m", askSystemPrompt: "Be concise.",
+  userMemoryEnabled: true, userMemoryLimit: 50, userMemoryContext: 20,
+  profileRefreshEvery: 25, profileMaxAgeDays: 7, profileSampleSize: 50, profileShortMaxChars: 400,
+  redditClientId: "", redditClientSecret: "", redditUserAgent: "test", redditRefreshToken: "",
+  paintEnabled: false, paintBaseUrl: "http://comfyui:8188", paintCheckpoint: "test.safetensors",
+  paintFluxCheckpoint: "flux.safetensors", paintSampler: "euler", paintScheduler: "normal",
+  paintSteps: 24, paintWidth: 768, paintHeight: 768, paintCfgScale: 7,
+  paintNegativePrompt: "", paintDenoise: 0.5, paintGuidance: 3.5,
+  botReplyPrefix: "Bot:", acknowledgeMedia: false, deleteInstagramPosts: false,
+  instagramDeleteSenders: [], respondToOwnCommands: true, approvedSenders: [],
+  commands: { "bot.ask": "ask" }, keywordResponses: {},
+};
+const settings: PetSettings = {
+  wakeStart: 8, wakeEnd: 22, firstRequestMinutes: 15,
+  requestMinHours: 8, requestMaxHours: 12, maxRequestsPerDay: 3,
+  activityWindowHours: 6, responseMinutes: 30, silenceMinutes: 2,
+};
+const profile: ProfileDetail = {
+  sender_key: "123", name: "Alice", short: "A summary", updated_at: 100,
+  messageCount: 5, last_profiled_id: 12, deep: "A dossier",
+};
+const petAction: PetActionResponse = {
+  revision: '"pet-settings"',
+  pet: {
+    name: "Mochi", species: "bird", enabled: true, paused: false, settings,
+    stage: 0, hunger: 100, hydration: 100, cleanliness: 100, happiness: 100, energy: 100,
+    hibernating: false, healthyDays: 0, status: "Healthy",
+    evolution: { nextForm: "Cloud Chick", remainingHealthyMs: 86400000, sampledAt: 100, running: true, frozenReason: null, canForce: true },
+    nextRequestActiveMinutes: 15, request: null,
+  },
+};
+const fetcher = vi.fn<typeof fetch>();
+
+beforeEach(() => {
+  fetcher.mockReset();
+  vi.stubGlobal("fetch", fetcher);
+  setToken("contract-test");
+});
+afterEach(() => {
+  clearToken();
+  vi.unstubAllGlobals();
+});
+
+describe("shared API wire contracts", () => {
+  it("reads raw configuration and captures the revision from ETag", async () => {
+    fetcher.mockResolvedValue(Response.json(config, { headers: { ETag: '"first"' } }));
+    const result: ConfigSnapshot = await api.getConfig();
+    expect(result).toEqual({ config, revision: '"first"' });
+    expect(fetcher.mock.calls[0][0]).toBe("/api/config");
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).get("Authorization")).toBe("Bearer contract-test");
+  });
+
+  it("writes raw configuration with If-Match and reads the save envelope", async () => {
+    const response: ConfigSaveResponse = { ok: true, config: { ...config, botReplyPrefix: "Saved:" } };
+    fetcher.mockResolvedValue(Response.json(response, { headers: { ETag: '"second"' } }));
+    expect(await api.saveConfig({ config, revision: '"first"' })).toEqual({
+      config: response.config, revision: '"second"',
+    });
+    const init = fetcher.mock.calls[0][1]!;
+    expect(init.method).toBe("PUT");
+    expect(new Headers(init.headers).get("If-Match")).toBe('"first"');
+    expect(JSON.parse(init.body as string)).toEqual(config);
+  });
+
+  it("rejects stale configuration writes rather than returning a success contract", async () => {
+    fetcher.mockResolvedValue(Response.json({ ok: false, error: "Configuration changed elsewhere." }, { status: 412 }));
+    await expect(api.saveConfig({ config, revision: '"old"' })).rejects.toMatchObject({
+      status: 412, message: "Configuration changed elsewhere.",
+    });
+  });
+
+  it("preserves profile list/detail/refresh payloads including the stored watermark", async () => {
+    const { deep: _deep, last_profiled_id: _id, ...summary } = profile;
+    fetcher.mockResolvedValueOnce(Response.json({ profiles: [summary] }))
+      .mockResolvedValueOnce(Response.json(profile))
+      .mockResolvedValueOnce(Response.json({ ok: true, profile } satisfies ProfileRefreshResponse));
+    expect(await api.getProfiles()).toEqual({ profiles: [summary] });
+    expect(await api.getProfile("123")).toEqual(profile);
+    expect(await api.refreshProfile("123")).toEqual({ ok: true, profile });
+  });
+
+  it("preserves the pet action envelope and settings revision", async () => {
+    const update: PetUpdate = { action: "save", name: "Mochi", species: "bird", settings };
+    fetcher.mockResolvedValue(Response.json(petAction));
+    expect(await api.updatePet("group@g.us", '"pet-settings"', update)).toEqual(petAction);
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).get("If-Match")).toBe('"pet-settings"');
+    expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual(update);
+  });
+
+  it("encodes pet identifiers and serializes request and evolution payloads", async () => {
+    fetcher.mockImplementation(async () => Response.json(petAction));
+    const id = "group/with space@g.us";
+    expect(await api.requestPet(id)).toEqual(petAction);
+    expect(await api.requestPet(id, "feed")).toEqual(petAction);
+    expect(await api.evolvePet(id, 2)).toEqual(petAction);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      "/api/pets/group%2Fwith%20space%40g.us/request",
+      "/api/pets/group%2Fwith%20space%40g.us/request",
+      "/api/pets/group%2Fwith%20space%40g.us/evolve",
+    ]);
+    expect(fetcher.mock.calls.map(([, init]) => {
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
+      return JSON.parse(init!.body as string);
+    })).toEqual([{ kind: "random" }, { kind: "feed" }, { expectedStage: 2 }]);
+  });
+
+  it("reads discipline mutation envelopes without changing identifiers", async () => {
+    const result: DisciplineMutationResponse = {
+      ok: true,
+      players: [{ chatId: "group@g.us", chatName: "Group", senderId: "123@s.whatsapp.net", displayName: "Alice", sleepUntil: null, armed: true }],
+    };
+    fetcher.mockResolvedValue(Response.json(result));
+    expect(await api.armPlayer("group@g.us", "123@s.whatsapp.net")).toEqual(result);
+    expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual({
+      chatId: "group@g.us", senderId: "123@s.whatsapp.net",
+    });
+  });
+
+  it("keeps API failures out of typed success responses", async () => {
+    fetcher.mockResolvedValue(Response.json({ ok: false, error: "Profile refresh queue is busy." }, { status: 503 }));
+    await expect(api.refreshProfile("123")).rejects.toBeInstanceOf(ApiError);
+  });
+});

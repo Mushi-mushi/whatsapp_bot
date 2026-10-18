@@ -1,85 +1,15 @@
-export interface BotConfig {
-  transcriptionEnabled: boolean;
-  transcriptionProvider: string;
-  auralisBaseUrl: string;
-  transcriptionTimeoutSeconds: number;
-  audioDownloadEnabled: boolean;
-  askEnabled: boolean;
-  ollamaBaseUrl: string;
-  ollamaModel: string;
-  ollamaTimeoutSeconds: number;
-  ollamaKeepAlive: string;
-  askSystemPrompt: string;
-  userMemoryEnabled: boolean;
-  userMemoryLimit: number;
-  userMemoryContext: number;
-  profileRefreshEvery: number;
-  profileMaxAgeDays: number;
-  profileSampleSize: number;
-  profileShortMaxChars: number;
-  redditClientId: string;
-  redditClientSecret: string;
-  redditUserAgent: string;
-  redditRefreshToken: string;
-  paintEnabled: boolean;
-  paintBaseUrl: string;
-  paintCheckpoint: string;
-  paintFluxCheckpoint: string;
-  paintSampler: string;
-  paintScheduler: string;
-  paintSteps: number;
-  paintWidth: number;
-  paintHeight: number;
-  paintCfgScale: number;
-  paintNegativePrompt: string;
-  paintDenoise: number;
-  paintGuidance: number;
-  botReplyPrefix: string;
-  acknowledgeMedia: boolean;
-  deleteInstagramPosts: boolean;
-  instagramDeleteSenders: string[];
-  respondToOwnCommands: boolean;
-  approvedSenders: string[];
-  commands: Record<string, string>;
-  keywordResponses: Record<string, string>;
-}
-
-export type ConnectionState = "connecting" | "qr" | "pairing" | "open" | "close";
-export type ConnectionHealth = "online" | "stale" | "unknown";
-
-export interface ChatIdentity {
-  id: string;
-  name: string;
-}
-
-export interface Status {
-  state: ConnectionState;
-  health: ConnectionHealth;
-  qrDataUrl: string | null;
-  pairingCode: string | null;
-  me: string | null;
-  lastActivityAt: number | null;
-}
-
-export interface SiestaStatus {
-  sleeping: boolean;
-  until: number | null;
-}
-
-export interface DisciplinePlayer {
-  chatId: string;
-  chatName: string | null;
-  senderId: string;
-  displayName: string | null;
-  sleepUntil: number | null;
-  armed: boolean;
-}
-
-export interface Contact {
-  jid: string;
-  name: string;
-  phone: string | null;
-}
+import type {
+  BotConfig, ConfigSnapshot, ConfigSaveResponse, Status, SiestaStatus,
+  PetUpdate, PetRequestChoice, PetActionResponse, PetsResponse,
+  ProfileDetail, ProfileRefreshResponse, ProfilesResponse,
+  ChatsResponse, ContactsResponse, DisciplineResponse, DisciplineMutationResponse,
+  PetRequest, PetEvolutionRequest, DisciplineTarget, DisciplineSleepRequest,
+} from "../../../shared/api.js";
+export type {
+  BotConfig, ConfigSnapshot, Status, ConnectionState, ConnectionHealth,
+  ChatIdentity, SiestaStatus, DisciplinePlayer, Contact, ProfileSummary,
+  ProfileDetail, PetSettings, GroupPet, PetGroup, PetsResponse, PetUpdate, PetRequestChoice,
+} from "../../../shared/api.js";
 
 const TOKEN_KEY = "apiToken";
 let authToken = localStorage.getItem(TOKEN_KEY) ?? "";
@@ -129,80 +59,6 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export interface ConfigSnapshot {
-  config: BotConfig;
-  revision: string;
-}
-
-export interface ProfileSummary {
-  sender_key: string;
-  name: string;
-  short: string;
-  updated_at: number;
-  messageCount: number;
-}
-
-export interface ProfileDetail extends ProfileSummary {
-  deep: string;
-}
-
-export interface PetSettings {
-  wakeStart: number;
-  wakeEnd: number;
-  firstRequestMinutes: number;
-  requestMinHours: number;
-  requestMaxHours: number;
-  maxRequestsPerDay: number;
-  activityWindowHours: number;
-  responseMinutes: number;
-  silenceMinutes: number;
-}
-export interface GroupPet {
-  name: string;
-  species: string;
-  enabled: boolean;
-  paused: boolean;
-  settings: PetSettings;
-  stage: number;
-  hunger: number;
-  hydration: number;
-  cleanliness: number;
-  happiness: number;
-  energy: number;
-  hibernating: boolean;
-  healthyDays: number;
-  evolution: {
-    nextForm: string | null;
-    remainingHealthyMs: number;
-    sampledAt: number;
-    running: boolean;
-    frozenReason: string | null;
-    canForce: boolean;
-  };
-  status: string;
-  nextRequestActiveMinutes: number;
-  request: { kind: string; delivered: boolean } | null;
-}
-export interface PetGroup {
-  id: string;
-  name: string;
-  pet: GroupPet | null;
-  revision: string;
-}
-export interface PetsResponse {
-  groups: PetGroup[];
-  species: Record<string, { name: string; forms: string[]; emoji: string[] }>;
-  defaults: PetSettings;
-}
-export interface PetUpdate {
-  action: "save" | "enable" | "disable" | "pause" | "resume";
-  name: string;
-  species: string;
-  settings: PetSettings;
-}
-
-export type PetRequestChoice = "random" | "feed" | "water" | "clean" | "play" | "silence";
-
 export const api = {
   getSiesta: () =>
     fetch("/api/siesta", { headers: authHeaders(), cache: "no-store" }).then(json<SiestaStatus>),
@@ -213,21 +69,21 @@ export const api = {
   evolvePet: (id: string, expectedStage: number) =>
     fetch(`/api/pets/${encodeURIComponent(id)}/evolve`, {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ expectedStage }),
-    }).then(json<{ pet: GroupPet; revision: string }>),
+      body: JSON.stringify({ expectedStage } satisfies PetEvolutionRequest),
+    }).then(json<PetActionResponse>),
   requestPet: (id: string, kind: PetRequestChoice = "random") =>
     fetch(`/api/pets/${encodeURIComponent(id)}/request`, {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ kind }),
+      body: JSON.stringify({ kind } satisfies PetRequest),
     })
-      .then(json<{ pet: GroupPet; revision: string }>),
+      .then(json<PetActionResponse>),
   getPets: () => fetch("/api/pets", { headers: authHeaders(), cache: "no-store" }).then(json<PetsResponse>),
   updatePet: (id: string, revision: string, update: PetUpdate) =>
     fetch(`/api/pets/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: authHeaders({ "Content-Type": "application/json", "If-Match": revision }),
       body: JSON.stringify(update),
-    }).then(json<{ pet: GroupPet; revision: string }>),
+    }).then(json<PetActionResponse>),
   getConfig: async (): Promise<ConfigSnapshot> => {
     const response = await fetch("/api/config", { headers: authHeaders(), cache: "no-store" });
     return { config: await json<BotConfig>(response), revision: response.headers.get("etag") ?? "" };
@@ -238,14 +94,14 @@ export const api = {
       headers: authHeaders({ "Content-Type": "application/json", "If-Match": revision }),
       body: JSON.stringify(config),
     });
-    const result = await json<{ ok: boolean; config: BotConfig }>(response);
+    const result = await json<ConfigSaveResponse>(response);
     return { config: result.config, revision: response.headers.get("etag") ?? "" };
   },
   getStatus: (signal?: AbortSignal) => fetch("/api/status", {
     headers: authHeaders(),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
   }).then(json<Status>),
-  getChats: () => fetch("/api/chats", { headers: authHeaders() }).then(json<{ chats: ChatIdentity[] }>),
+  getChats: () => fetch("/api/chats", { headers: authHeaders() }).then(json<ChatsResponse>),
   getOllamaModels: () =>
     fetch("/api/ollama/models", { headers: authHeaders() }).then(
       json<{ ok: boolean; models: string[] }>,
@@ -267,7 +123,7 @@ export const api = {
     ),
   getProfiles: () =>
     fetch("/api/profiles", { headers: authHeaders() }).then(
-      json<{ profiles: ProfileSummary[] }>,
+      json<ProfilesResponse>,
     ),
   getProfile: (key: string) =>
     fetch(`/api/profiles/${encodeURIComponent(key)}`, { headers: authHeaders() }).then(
@@ -275,7 +131,7 @@ export const api = {
     ),
   refreshProfile: (key: string) =>
     fetch(`/api/profiles/${encodeURIComponent(key)}/refresh`, { method: "POST", headers: authHeaders() }).then(
-      json<{ ok: boolean; profile?: ProfileDetail; error?: string }>,
+      json<ProfileRefreshResponse>,
     ),
   deleteProfile: (key: string) =>
     fetch(`/api/profiles/${encodeURIComponent(key)}`, { method: "DELETE", headers: authHeaders() }).then(
@@ -293,28 +149,28 @@ export const api = {
     ),
   getDiscipline: () =>
     fetch("/api/discipline", { headers: authHeaders(), cache: "no-store" }).then(
-      json<{ players: DisciplinePlayer[] }>,
+      json<DisciplineResponse>,
     ),
   getContacts: () =>
     fetch("/api/contacts", { headers: authHeaders(), cache: "no-store" }).then(
-      json<{ contacts: Contact[] }>,
+      json<ContactsResponse>,
     ),
   sleepPlayer: (chatId: string, senderId: string, minutes: number) =>
     fetch("/api/discipline/sleep", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ chatId, senderId, minutes }),
-    }).then(json<{ ok: boolean; players: DisciplinePlayer[] }>),
+      body: JSON.stringify({ chatId, senderId, minutes } satisfies DisciplineSleepRequest),
+    }).then(json<DisciplineMutationResponse>),
   armPlayer: (chatId: string, senderId: string) =>
     fetch("/api/discipline/arm", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ chatId, senderId }),
-    }).then(json<{ ok: boolean; players: DisciplinePlayer[] }>),
+      body: JSON.stringify({ chatId, senderId } satisfies DisciplineTarget),
+    }).then(json<DisciplineMutationResponse>),
   wakePlayer: (chatId: string, senderId: string) =>
     fetch("/api/discipline/wake", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ chatId, senderId }),
-    }).then(json<{ ok: boolean; players: DisciplinePlayer[] }>),
+      body: JSON.stringify({ chatId, senderId } satisfies DisciplineTarget),
+    }).then(json<DisciplineMutationResponse>),
 };

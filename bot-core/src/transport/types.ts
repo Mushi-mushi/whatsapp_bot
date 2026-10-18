@@ -1,4 +1,8 @@
 import type { WAMessage, WAMessageKey } from "@whiskeysockets/baileys";
+import type { ChatIdentity, Status as ConnectionStatus } from "../../../shared/api.js";
+export type {
+  ChatIdentity, ConnectionState, ConnectionHealth, Status as ConnectionStatus,
+} from "../../../shared/api.js";
 
 export type MessageKind = "text" | "audio" | "image" | "video" | "sticker" | "other";
 
@@ -16,26 +20,6 @@ export interface IncomingMessage {
   kind: MessageKind;
   timestamp: number;
   raw: WAMessage;
-}
-
-export type ConnectionState = "connecting" | "qr" | "pairing" | "open" | "close";
-
-// Liveness of an "open" socket. WhatsApp can silently drop a linked device: the
-// socket stays "open" but queries hang and no messages arrive. "stale" marks that.
-export type ConnectionHealth = "online" | "stale" | "unknown";
-
-export interface ChatIdentity {
-  id: string;
-  name: string;
-}
-
-export interface ConnectionStatus {
-  state: ConnectionState;
-  health: ConnectionHealth;
-  qrDataUrl: string | null;
-  pairingCode: string | null;
-  me: string | null;
-  lastActivityAt: number | null;
 }
 
 export interface Transport {

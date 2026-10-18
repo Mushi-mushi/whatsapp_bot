@@ -29,7 +29,7 @@ describe("profile error states", () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Expand" }));
     expect((await screen.findByRole("alert")).textContent).toContain("dossier unavailable");
-    get.mockResolvedValue({ ...profile, deep: "Recovered dossier" });
+    get.mockResolvedValue({ ...profile, deep: "Recovered dossier", last_profiled_id: 5 });
     fireEvent.click(screen.getByRole("button", { name: "Retry dossier" }));
     expect(await screen.findByText("Recovered dossier")).toBeTruthy();
   });

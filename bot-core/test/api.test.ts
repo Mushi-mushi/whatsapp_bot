@@ -9,6 +9,9 @@ import { PetService } from "../src/pets/service.js";
 import { PetStore } from "../src/pets/store.js";
 import { DEFAULT_PET_SETTINGS } from "../src/pets/settings.js";
 import { RuntimeState } from "../src/state/runtime.js";
+import { DEFAULT_CONFIG } from "../src/config/schema.js";
+import { REDACTED } from "../src/config/secrets.js";
+import type { BotConfig, ConfigSaveResponse, ProfileDetail, ProfilesResponse } from "../../shared/api.js";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -209,6 +212,29 @@ describe("sleep discipline controls", () => {
 });
 
 describe("configuration revisions", () => {
+  it("preserves the raw config GET, save envelope, secrets and revision headers", async () => {
+    const { app, deps } = await setup();
+    const headers = { authorization: "Bearer test-token" };
+    deps.configStore.save({ ...DEFAULT_CONFIG, redditClientSecret: "stored-secret", redditRefreshToken: "stored-refresh" });
+    const loaded = await app.inject({ url: "/api/config", headers });
+    expect(loaded.statusCode).toBe(200);
+    const config = loaded.json<BotConfig>();
+    expect(Object.keys(config).sort()).toEqual(Object.keys(DEFAULT_CONFIG).sort());
+    expect(config.redditClientSecret).toBe(REDACTED);
+    expect(config.redditRefreshToken).toBe(REDACTED);
+    expect(config).not.toHaveProperty("revision");
+    expect(loaded.headers.etag).toMatch(/^".+"$/);
+    const saved = await app.inject({
+      method: "PUT", url: "/api/config", headers: { ...headers, "if-match": loaded.headers.etag! },
+      payload: { ...config, botReplyPrefix: "Updated:" },
+    });
+    expect(saved.statusCode).toBe(200);
+    const result = saved.json<ConfigSaveResponse>();
+    expect(result).toEqual({ ok: true, config: { ...config, botReplyPrefix: "Updated:" } });
+    expect(saved.headers.etag).not.toBe(loaded.headers.etag);
+    expect(deps.configStore.load().redditClientSecret).toBe("stored-secret");
+  });
+
   it("rejects missing and stale revisions without overwriting configuration", async () => {
     const { app } = await setup();
     const headers = { authorization: "Bearer test-token" };
@@ -220,6 +246,22 @@ describe("configuration revisions", () => {
     const stale = await app.inject({ method: "PUT", url: "/api/config", headers: { ...headers, "if-match": loaded.headers.etag! }, payload: config });
     expect(stale.statusCode).toBe(412);
     expect((await app.inject({ url: "/api/config", headers })).json().botReplyPrefix).toBe("changed");
+  });
+
+  describe("profile wire contracts", () => {
+    it("lists summaries and returns the full existing detail payload", async () => {
+      const { app, deps } = await setup();
+      const headers = { authorization: "Bearer test-token" };
+      deps.userMemory.record("123", "Alice", null, "Remember this message", 50);
+      deps.userProfiles.upsert({ sender_key: "123", name: "Alice", deep: "A dossier", short: "A summary", last_profiled_id: 1 });
+      const list = await app.inject({ url: "/api/profiles", headers });
+      const summary = list.json<ProfilesResponse>().profiles[0];
+      expect(summary).toMatchObject({ sender_key: "123", name: "Alice", short: "A summary", messageCount: 1 });
+      expect(summary).not.toHaveProperty("deep");
+      expect(summary).not.toHaveProperty("last_profiled_id");
+      const detail = await app.inject({ url: "/api/profiles/123", headers });
+      expect(detail.json<ProfileDetail>()).toEqual({ ...summary, deep: "A dossier", last_profiled_id: 1 });
+    });
   });
 
   describe("group pet dashboard", () => {

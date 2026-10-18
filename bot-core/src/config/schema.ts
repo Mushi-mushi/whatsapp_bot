@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { defaultCommands } from "../router/commands.js";
+import type { BotConfig } from "../../../shared/api.js";
+export type { BotConfig } from "../../../shared/api.js";
 
 // Single source of truth for the bot configuration schema.
 // Shared by the API (validation) and the runtime — no more dual-schema drift.
@@ -94,9 +96,7 @@ export const ConfigSchema = z.object({
 
   // Static keyword replies (lowercased key -> reply).
   keywordResponses: z.record(z.string(), z.string()).default({}),
-});
-
-export type BotConfig = z.infer<typeof ConfigSchema>;
+} satisfies Record<keyof BotConfig, z.ZodTypeAny>) satisfies z.ZodType<BotConfig, z.ZodTypeDef, unknown>;
 
 export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
   commands: defaultCommands(),

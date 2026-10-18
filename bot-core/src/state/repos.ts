@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.js";
 import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
+import type { Contact } from "../../../shared/api.js";
 
 const CONFIG_KEY = "config";
 const CONFIG_VERSION_KEY = "config_version";
@@ -181,11 +182,7 @@ export class ComplaintStore {
   }
 }
 
-export interface ContactRecord {
-  jid: string;
-  phone: string | null;
-  name: string;
-}
+export type ContactRecord = Contact;
 
 // Persisted contact directory (jid/lid -> saved name + phone). Populated from the
 // WhatsApp contacts sync so DM name resolution + name-based approval survive restarts.
