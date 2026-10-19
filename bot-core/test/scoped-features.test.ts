@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { openDatabase } from "../src/state/db.js";
+import { DATABASE_SCHEMA_VERSION, openDatabase } from "../src/state/db.js";
 import { ContactsStore, KarmaStore, SeenActivityStore, SentimentStore, SuggestionStore, TellStore,
   TriviaScoreStore, DuelWinStore, UserMemoryStore, UserProfileStore, SiestaDisciplineStore } from "../src/state/repos.js";
 import { RuntimeState } from "../src/state/runtime.js";
@@ -398,7 +398,7 @@ describe("legacy feature preservation", () => {
       const before = snapshot();
       db.close();
       db = openDatabase(path);
-      expect(db.pragma("user_version", { simple: true })).toBe(11);
+      expect(db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_VERSION);
       expect(snapshot()).toEqual(before);
       expect(new KarmaStore(db).top(CHAT)).toEqual([]);
       expect(new SeenActivityStore(db).resolve(CHAT, "Alex")).toEqual([]);

@@ -30,6 +30,22 @@ for the dashboard to be healthy.
 
 An active `bot.siesta` can be cancelled from the dashboard's **Connection** tab.
 
+### Just-for-fun billing
+
+`bot.billing` shows your lifetime interaction count across chats and a pretend
+bill at **EUR 0.10 per interaction**. Checking the bill is always free, including
+custom aliases mapped to billing. This is a joke: **no real charges or payment
+are involved**.
+
+Each recognized command reaching dispatch counts once, including custom aliases,
+queued AI/media commands, and attempts that fail or receive a busy/usage reply.
+Ordinary messages, game answers, automatic replies, unknown commands, duplicate
+deliveries, and messages blocked by access/moderation/sleep guards do not count.
+Counts start at zero on deployment, persist across restarts, and use WhatsApp
+identities (including verified phone/LID aliases), not display names.
+The additive database schema 12 migration preserves existing data and adds
+these counters; configuration migration 17 adds the default billing command.
+
 Each player may use `bot.siesta` a configurable number of times per UTC day within
 a given chat (default **1**). Set **General > Maximum bot.siesta calls** and click
 **Save changes**. An attempt after the allowance is exhausted — or a player an admin has armed — makes the bot rebel
@@ -248,7 +264,7 @@ Verified identity aliases share quota, including after an alias is learned;
 duplicate display names do not. Quotas survive restarts. The additive **schema 8**
 migration creates `ask_quota` without modifying existing bot data. Back up before
 deploying: older binaries cannot open a newer schema. The current application
-and backup verifier require schema 11 (older backups need a matching-version verifier).
+and backup verifier require schema 12 (older backups need a matching-version verifier).
 Schema 11 removes the fixed ten-call database constraint and adds persistent siesta
 usage counts, preserving previous ask usage and counting each recorded legacy
 siesta as one use on its recorded day.

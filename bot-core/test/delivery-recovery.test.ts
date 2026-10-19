@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { openDatabase } from "../src/state/db.js";
+import { DATABASE_SCHEMA_VERSION, openDatabase } from "../src/state/db.js";
 import { removeScopedSchema } from "./legacy-schema.js";
 import { OutboxStore } from "../src/state/outbox.js";
 import { DeliveryWorker } from "../src/state/deliveries.js";
@@ -177,7 +177,7 @@ describe("failed delivery recovery", () => {
     const before = db.prepare("SELECT * FROM outbox").get();
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(11);
+    expect(db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_VERSION);
     expect(db.prepare("SELECT * FROM outbox").get()).toEqual({ ...before as object, manual_retry_count: 0 });
     let store = new OutboxStore(db);
     expect(store.history(1)!.attempts).toEqual([]);

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "../src/state/db.js";
+import { DATABASE_SCHEMA_VERSION, openDatabase } from "../src/state/db.js";
 import { removeScopedSchema } from "./legacy-schema.js";
 import { UserMemoryStore, UserProfileStore } from "../src/state/repos.js";
 import { memoryKey } from "../src/state/identity.js";
@@ -54,7 +54,7 @@ describe("chat memory migration", () => {
     removeScopedSchema(db);
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(11);
+    expect(db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_VERSION);
     expect(db.prepare("SELECT * FROM user_messages").all()).toEqual([]);
     expect(db.prepare("SELECT * FROM user_profiles").all()).toEqual([]);
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before.map((rows, idx) =>
@@ -69,7 +69,7 @@ describe("chat memory migration", () => {
     removeScopedSchema(db);
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(11);
+    expect(db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_VERSION);
     expect(new UserMemoryStore(db).recentFor(key)[0].message).toBe("fresh scoped message");
     expect(new UserProfileStore(db).get(key)?.deep).toBe("fresh dossier");
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before.map((rows, idx) =>

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import pino from "pino";
 import { renameSync } from "node:fs";
-import { openDatabase } from "../src/state/db.js";
+import { DATABASE_SCHEMA_VERSION, openDatabase } from "../src/state/db.js";
 import { BackupWorker, backupOptions } from "../src/state/backups.js";
 import { AuditStore } from "../src/state/audit.js";
 import { AskQuotaStore } from "../src/state/ask-quota.js";
@@ -75,7 +75,7 @@ describe("verified database backups", () => {
     try {
       expect(restored.pragma("integrity_check", { simple: true })).toBe("ok");
       expect(restored.pragma("foreign_key_check")).toEqual([]);
-      expect(restored.pragma("user_version", { simple: true })).toBe(11);
+      expect(restored.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_VERSION);
       expect(restored.pragma("journal_mode", { simple: true })).toBe("delete");
       for (const table of ["reminders", "pets", "outbox", "admin_audit", "ask_quota"]) {
         expect(restored.prepare(`SELECT * FROM ${table}`).all()).toEqual(db.prepare(`SELECT * FROM ${table}`).all());

@@ -50,11 +50,14 @@ import type { PetService } from "../../pets/service.js";
 import { makePet } from "./pet.js";
 import { makeServices } from "./services.js";
 import type { AskQuotaStore } from "../../state/ask-quota.js";
+import type { InteractionStore } from "../../state/interactions.js";
+import { makeBilling } from "./billing.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
   discipline: SiestaDisciplineStore;
   askQuota: AskQuotaStore;
+  interactions: InteractionStore;
   sentiment: SentimentStore;
   complaints: ComplaintStore;
   suggestions: SuggestionStore;
@@ -108,5 +111,6 @@ export function buildCommandRegistry(deps: CommandDeps): CommandRegistry {
     instadelete: makeInstaDelete(deps.settings),
     services: makeServices(deps.settings),
     pet: makePet(deps.pets),
+    billing: makeBilling(deps.interactions),
   };
 }

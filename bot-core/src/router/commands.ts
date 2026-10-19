@@ -1,5 +1,6 @@
 import type { BackgroundJobs } from "./jobs.js";
 import type { Bot, Handler } from "./router.js";
+import type { InteractionStore } from "../state/interactions.js";
 
 interface CommandAlias {
   trigger: string;
@@ -59,6 +60,7 @@ export const COMMAND_CATALOGUE = {
   instadelete: { description: "(owner) manage Instagram auto-delete", usage: "[on|off|status|list|add <who>|remove <who>|clear]", aliases: [{ trigger: "bot.instadelete" }], execution: "inline" },
   pet: { description: "raise a shared group pet (admins enable per group)", usage: "help", aliases: [{ trigger: "bot.pet" }], execution: "inline" },
   services: { description: "(owner) enable, disable, or check Ollama and ComfyUI", usage: "[status|on|off] [ollama|comfyui|all]", aliases: [{ trigger: "bot.services" }], execution: "inline" },
+  billing: { description: "show your fake bill at EUR 0.10 per interaction (checking is free)", usage: "", aliases: [{ trigger: "bot.billing" }], execution: "inline" },
 } as const satisfies Record<string, CommandDefinition>;
 
 export type CommandId = keyof typeof COMMAND_CATALOGUE;
@@ -89,6 +91,7 @@ export function registerConfiguredCommands(
   registry: CommandRegistry,
   jobs: BackgroundJobs,
   warn: (trigger: string, name: string) => void,
+  interactions?: InteractionStore,
 ): void {
   bot.clearCommands();
   for (const [trigger, name] of Object.entries(commands)) {
@@ -98,6 +101,10 @@ export function registerConfiguredCommands(
       continue;
     }
     const handler = registry[name as CommandId];
-    bot.command(trigger, definition.execution === "background" ? jobs.wrap(handler) : handler);
+    const dispatch = definition.execution === "background" ? jobs.wrap(handler) : handler;
+    bot.command(trigger, (ctx) => {
+      if (name !== "billing") interactions?.increment(ctx.msg.senderId, ctx.msg.senderPhone);
+      return dispatch(ctx);
+    });
   }
 }

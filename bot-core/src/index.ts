@@ -22,6 +22,7 @@ import { RuntimeState } from "./state/runtime.js";
 import { OutboxStore } from "./state/outbox.js";
 import { AuditStore } from "./state/audit.js";
 import { AskQuotaStore } from "./state/ask-quota.js";
+import { InteractionStore } from "./state/interactions.js";
 import { DeliveryWorker } from "./state/deliveries.js";
 import { RetentionWorker } from "./state/retention.js";
 import { BackupWorker, backupOptions } from "./state/backups.js";
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
   const sentiment = new SentimentStore(db);
   const complaints = new ComplaintStore(db);
   const suggestions = new SuggestionStore(db);
+  const interactions = new InteractionStore(db);
   const contacts = new ContactsStore(db);
   const seenActivity = new SeenActivityStore(db);
   const tells = new TellStore(db);
@@ -143,6 +145,7 @@ async function main(): Promise<void> {
     runtime,
     discipline,
     askQuota: new AskQuotaStore(db),
+    interactions,
     sentiment,
     complaints,
     suggestions,
@@ -159,7 +162,7 @@ async function main(): Promise<void> {
   });
   const registerCommands = (cfg: BotConfig) => {
     registerConfiguredCommands(bot, cfg.commands, commandRegistry, jobs,
-      (trigger, name) => logger.warn({ trigger, name }, "No handler registered for command"));
+      (trigger, name) => logger.warn({ trigger, name }, "No handler registered for command"), interactions);
   };
   registerCommands(config);
 

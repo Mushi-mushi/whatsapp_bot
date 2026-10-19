@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "../src/state/db.js";
+import { DATABASE_SCHEMA_VERSION, openDatabase } from "../src/state/db.js";
 import { AskQuotaStore } from "../src/state/ask-quota.js";
 import { ContactsStore, SiestaDisciplineStore } from "../src/state/repos.js";
 import { removeScopedSchema } from "./legacy-schema.js";
@@ -143,7 +143,7 @@ describe("persistent ask quota", () => {
       const before = snapshot();
       db.close();
       db = openDatabase(path);
-      expect(db.pragma("user_version", { simple: true })).toBe(11);
+      expect(db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_VERSION);
       expect(snapshot()).toEqual(before);
       const quota = new AskQuotaStore(db);
       for (let i = 0; i < 10; i++) quota.consume("group@g.us", PN, null, NOW);

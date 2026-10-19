@@ -4,7 +4,7 @@ import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "../src/state/db.js";
+import { DATABASE_SCHEMA_VERSION, openDatabase } from "../src/state/db.js";
 import { OutboxStore } from "../src/state/outbox.js";
 import { DeliveryWorker } from "../src/state/deliveries.js";
 import { RemindersStore, TellStore } from "../src/state/repos.js";
@@ -30,7 +30,7 @@ describe("durable delivery", () => {
     let migrated: ReturnType<typeof openDatabase> | undefined;
     try {
       migrated = openDatabase(path);
-      expect(migrated.pragma("user_version", { simple: true })).toBe(11);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_VERSION);
       expect(new RemindersStore(migrated).due(100)[0].text).toBe("keep me");
     } finally {
       migrated?.close();
@@ -72,7 +72,7 @@ describe("durable delivery", () => {
       expect(store.claim(300001)).toMatchObject({
         id: 1, chat_id: "chat", body: "keep me", attempts: 2, pet_event_id: null,
       });
-      expect(migrated.pragma("user_version", { simple: true })).toBe(11);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_VERSION);
       expect(migrated.prepare("SELECT COUNT(*) AS count FROM pets").get()).toEqual({ count: 0 });
     } finally {
       migrated?.close();

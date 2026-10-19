@@ -5,7 +5,7 @@ import type { CommandRegistry } from "../src/router/commands.js";
 import { Context } from "../src/router/context.js";
 import { Bot } from "../src/router/router.js";
 import { BackgroundJobs } from "../src/router/jobs.js";
-import { DEFAULT_CONFIG } from "../src/config/schema.js";
+import { DEFAULT_CONFIG, type BotConfig } from "../src/config/schema.js";
 import { help } from "../src/handlers/commands/help.js";
 import { buildCommandRegistry } from "../src/handlers/commands/index.js";
 import { openDatabase } from "../src/state/db.js";
@@ -20,6 +20,9 @@ import { PetService } from "../src/pets/service.js";
 import { PetStore } from "../src/pets/store.js";
 import type { Transport } from "../src/transport/types.js";
 import { AskQuotaStore } from "../src/state/ask-quota.js";
+import { InteractionStore } from "../src/state/interactions.js";
+import { approvedSenderGuard, dedupe, ignoreOwn } from "../src/middleware/index.js";
+import { SeenStore } from "../src/state/repos.js";
 
 // Persisted aliases and IDs must remain compatible with pre-catalogue installs.
 const legacyCommands = {
@@ -36,6 +39,7 @@ const legacyCommands = {
   "bot.translate": "translate", "bot.tldr": "tldr", "bot.roll": "roll",
   "bot.trivia": "trivia", "bot.paint": "paint", "bot.film": "film",
   "bot.instadelete": "instadelete", "bot.pet": "pet", "bot.services": "services",
+  "bot.billing": "billing",
 };
 
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -52,11 +56,13 @@ function setup() {
   cleanup.push(async () => { await jobs.stop(); runtime.dispose(); });
   const configStore = new ConfigStore(db);
   const userMemory = new UserMemoryStore(db);
+  const interactions = new InteractionStore(db);
   const profiler = new ProfileService(userMemory, new UserProfileStore(db), jobs,
     () => configStore.load(), pino({ level: "silent" }));
   const registry = buildCommandRegistry({
     runtime, discipline: new SiestaDisciplineStore(db),
     askQuota: new AskQuotaStore(db),
+    interactions,
     sentiment: new SentimentStore(db), complaints: new ComplaintStore(db),
     suggestions: new SuggestionStore(db),
     seenActivity: new SeenActivityStore(db), tells: new TellStore(db),
@@ -71,10 +77,10 @@ function setup() {
   });
   const bot = new Bot();
   cleanup.push(() => bot.stop());
-  return { registry, jobs, configStore, bot };
+  return { registry, jobs, configStore, bot, interactions, db, runtime };
 }
 
-function context(text: string, commands: Record<string, string> = DEFAULT_CONFIG.commands) {
+function context(text: string, commands: Record<string, string> = DEFAULT_CONFIG.commands, config: Partial<BotConfig> = {}) {
   const sendText = vi.fn<Transport["sendText"]>().mockResolvedValue(undefined);
   const ctx = new Context({
     chatId: "chat@g.us", chatName: "Group", senderId: "alice", senderName: "Alice",
@@ -82,7 +88,7 @@ function context(text: string, commands: Record<string, string> = DEFAULT_CONFIG
     text, kind: "text", timestamp: Date.now(), raw: { key: {} },
   }, {
     transport: { sendText } as Transport,
-    getConfig: () => ({ ...DEFAULT_CONFIG, commands }),
+    getConfig: () => ({ ...DEFAULT_CONFIG, ...config, commands }),
   });
   return { ctx, sendText };
 }
@@ -140,6 +146,105 @@ describe("command catalogue", () => {
     db.prepare("INSERT INTO kv VALUES ('config_version', '1')").run();
     const migrated = new ConfigStore(db).load();
     expect(migrated.commands).toEqual({ ...legacyCommands, ...commands });
+  });
+
+  it.each([
+    { "bot.invoice": "billing" },
+    { "bot.invoice": "billing", "bot.billing": "roll" },
+  ])("adds billing to version 16 configurations without replacing custom aliases: %j", (commands) => {
+    const { db, configStore } = setup();
+    db.prepare("INSERT INTO kv VALUES ('config', ?)").run(JSON.stringify({ ...DEFAULT_CONFIG, commands }));
+    db.prepare("INSERT INTO kv VALUES ('config_version', '16')").run();
+    expect(configStore.load().commands).toMatchObject({ "bot.billing": "billing", ...commands });
+    expect(db.prepare("SELECT value FROM kv WHERE key = 'config_version'").get()).toEqual({ value: "17" });
+  });
+});
+
+describe("interaction billing", () => {
+  it("counts failed command attempts and uses command IDs rather than trigger text for exemptions", async () => {
+    const { bot, jobs, registry, interactions } = setup();
+    registry.roll = () => { throw new Error("Command failed"); };
+    registerConfiguredCommands(bot, { "bot.billing": "roll", "bot.invoice": "billing" },
+      registry, jobs, vi.fn(), interactions);
+    await expect(bot.handle(context("bot.billing").ctx)).rejects.toThrow("Command failed");
+    await bot.handle(context("bot.invoice").ctx);
+    expect(interactions.total("alice", "123456789")).toBe(1);
+  });
+
+  it("counts recognized aliases across chats, isolates users and keeps every billing alias free", async () => {
+    const { bot, jobs, registry, interactions } = setup();
+    registry.roll = vi.fn();
+    const commands = { "bot.dice": "roll", "bot.billing": "billing", "bot.invoice": "billing" };
+    registerConfiguredCommands(bot, commands, registry, jobs, vi.fn(), interactions);
+    await bot.handle(context("BOT.DICE 2d6", commands).ctx);
+    const elsewhere = context("bot.dice", commands).ctx;
+    elsewhere.msg.chatId = "other@g.us";
+    elsewhere.msg.senderName = "Renamed";
+    await bot.handle(elsewhere);
+    const otherUser = context("bot.dice", commands).ctx;
+    otherUser.msg.senderId = "bob";
+    otherUser.msg.senderPhone = "987654321";
+    await bot.handle(otherUser);
+    for (const text of ["hello", "bot.unknown", "bot.dice.extra", "bot.invoice", "bot.billing"]) {
+      await bot.handle(context(text, commands).ctx);
+    }
+    const { ctx, sendText } = context("bot.billing", commands);
+    await bot.handle(ctx);
+    const bill = sendText.mock.calls[0][1];
+    expect(bill).toContain("Lifetime interactions across chats: 2");
+    expect(bill).toContain("EUR 0.10 per interaction");
+    expect(bill).toContain("Pretend total: EUR 0.20");
+    expect(bill).toContain("no real charges, no payment due");
+    expect(interactions.total("alice", "123456789")).toBe(2);
+    expect(interactions.total("bob", "987654321")).toBe(1);
+  });
+
+  it.each([0, 1, 3, 10, 11, 123])("formats %i interactions exactly in cents", async (count) => {
+    const { registry, interactions } = setup();
+    for (let i = 0; i < count; i++) interactions.increment("alice", "123456789");
+    const { ctx, sendText } = context("bot.billing");
+    await registry.billing(ctx);
+    expect(sendText.mock.calls[0][1]).toContain(`Pretend total: EUR ${(count / 10).toFixed(2)}`);
+    expect(interactions.total("alice", "123456789")).toBe(count);
+  });
+
+  it("counts background commands at dispatch, not again when jobs run, and survives reloads", async () => {
+    const { bot, jobs, registry, interactions } = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    jobs.submit("busy", () => gate);
+    const ask = vi.fn();
+    registry.ask = ask;
+    const commands = { "bot.chat": "ask" };
+    registerConfiguredCommands(bot, commands, registry, jobs, vi.fn(), interactions);
+    try {
+      for (let i = 0; i < 4; i++) await bot.handle(context("bot.chat hi", commands).ctx);
+      expect(ask).not.toHaveBeenCalled();
+      expect(interactions.total("alice", "123456789")).toBe(4);
+      registerConfiguredCommands(bot, commands, registry, jobs, vi.fn(), interactions);
+    } finally {
+      release();
+      await jobs.stop();
+    }
+    expect(ask).toHaveBeenCalledTimes(3);
+    expect(interactions.total("alice", "123456789")).toBe(4);
+  });
+
+  it("does not count blocked, duplicate or bot-generated messages", async () => {
+    const { bot, jobs, registry, interactions, db, runtime } = setup();
+    registry.roll = vi.fn();
+    bot.use(approvedSenderGuard).use(dedupe(new SeenStore(db))).use(ignoreOwn(runtime));
+    registerConfiguredCommands(bot, DEFAULT_CONFIG.commands, registry, jobs, vi.fn(), interactions);
+    await bot.handle(context("bot.roll").ctx);
+    expect(interactions.total("alice", "123456789")).toBe(0);
+    const allowed = () => context("bot.roll", DEFAULT_CONFIG.commands, { approvedSenders: ["chat@g.us"] }).ctx;
+    await bot.handle(allowed());
+    await bot.handle(allowed());
+    const own = allowed();
+    own.msg.messageId = "bot-generated";
+    own.msg.isBot = true;
+    await bot.handle(own);
+    expect(interactions.total("alice", "123456789")).toBe(1);
   });
 });
 

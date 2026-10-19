@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import Fastify from "fastify";
-import { openDatabase } from "../src/state/db.js";
+import { DATABASE_SCHEMA_VERSION, openDatabase } from "../src/state/db.js";
 import { removeScopedSchema } from "./legacy-schema.js";
 import { AuditStore, AUDIT_MAX_ENTRIES, AUDIT_RETENTION_DAYS } from "../src/state/audit.js";
 import { RetentionWorker } from "../src/state/retention.js";
@@ -125,7 +125,7 @@ describe("administrative audit persistence", () => {
     const before = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
     db.close();
     db = openDatabase(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(11);
+    expect(db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_VERSION);
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before.map((rows, idx) =>
       tables[idx] === "reminders" ? rows.map((r) => ({ ...r as object, recurrence: "once" })) : rows));
     const audit = new AuditStore(db);

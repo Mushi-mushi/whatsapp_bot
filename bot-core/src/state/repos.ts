@@ -18,7 +18,8 @@ const CONFIG_VERSION_KEY = "config_version";
 // v13 adds models (list installed Ollama models).
 // v14 adds the opt-in, per-group pet. v15 adds owner-controlled AI service toggles.
 // v16 adds bot.suggest for logging feature suggestions.
-const CONFIG_VERSION = 16;
+// v17 adds the free bot.billing joke bill.
+const CONFIG_VERSION = 17;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {
