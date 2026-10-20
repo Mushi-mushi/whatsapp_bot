@@ -43,7 +43,8 @@ Billing and cost checks (including custom aliases) are free.
 | Action | Fake debt added to caller |
 | --- | --- |
 | `bot.ask` (including `.raw`) | EUR 0.10 |
-| `bot.torture` | EUR 1.00 |
+| `bot.torture` | EUR 5.00 |
+| `bot.siesta <minutes>` | EUR 0.10 per accepted minute, including forced sleep |
 | `bot.trivia skip` or `bot.trivia next` | EUR 0.20 per accepted skip, not an extra fee |
 | `bot.mute <name> <minutes>` | EUR 0.20 per accepted minute |
 | Other recognized commands | EUR 0.10 |
@@ -62,7 +63,9 @@ preventing sending, so messages may briefly appear. Successful deletions are
 silent; failures are logged and reported in chat. Mutes expire automatically and
 persist across restarts, including while the bot is on siesta. Time continues
 passing while the bot is offline; deletion requires the bot to be online.
-Rejected mutes and skips without an active question are free.
+Rejected mutes, skips without an active question, invalid siesta durations and
+already-sleeping siesta requests are free. Siesta durations must be whole minutes
+from 1 to 60. Price changes apply to new requests, not existing debt.
 
 Other commands count once at dispatch, including aliases, queued jobs, failed
 attempts and busy/usage replies. Ordinary messages, trivia answers, automatic
@@ -1086,7 +1089,7 @@ Update catalogue compatibility tests when intentionally changing defaults.
 
 `bot-core/src/router/pricing.ts` defines prices shared by command dispatch,
 `bot.help` and `bot.cost`. Prices follow command IDs, not alias text. Fixed-price
-commands add debt at dispatch. Accepted mute and trivia-skip handlers charge
+commands add debt at dispatch. Accepted mute, siesta and trivia-skip handlers charge
 transactionally/at acceptance instead; do not also charge them in the router.
 Use integer cents, preserve lifetime counts when reducing debt, and test price
 boundaries and alias remapping when changing these rules.

@@ -162,6 +162,32 @@ describe("command catalogue", () => {
 });
 
 describe("interaction billing", () => {
+  it.each([1, 5, 60])("charges exactly ten cents per accepted siesta minute through an alias: %i", async (minutes) => {
+    const { bot, registry, interactions, jobs, runtime } = setup();
+    const commands = { "bot.nap": "siesta" };
+    registerConfiguredCommands(bot, commands, registry, jobs, vi.fn(), interactions);
+    await bot.handle(context(`bot.nap ${minutes}`, commands).ctx);
+    expect(runtime.isSleeping()).toBe(true);
+    expect(interactions.debt("alice", "123456789")).toBe(minutes * 10);
+    expect(interactions.total("alice", "123456789")).toBe(1);
+    await bot.handle(context(`bot.nap ${minutes}`, commands).ctx);
+    expect(interactions.debt("alice", "123456789")).toBe(minutes * 10);
+    runtime.cancelSiesta();
+    await bot.handle(context(`bot.nap ${minutes}`, commands).ctx);
+    expect(runtime.isSleeping()).toBe(false);
+    expect(interactions.debt("alice", "123456789")).toBe(minutes * 20);
+    expect(interactions.total("alice", "123456789")).toBe(2);
+  });
+
+  it.each(["", "nope", "0", "-1", "61", "1.5", "5junk"])("does not charge invalid siesta requests: %s", async (args) => {
+    const { bot, registry, interactions, jobs, runtime } = setup();
+    registerConfiguredCommands(bot, DEFAULT_CONFIG.commands, registry, jobs, vi.fn(), interactions);
+    await bot.handle(context(`bot.siesta ${args}`).ctx);
+    expect(runtime.isSleeping()).toBe(false);
+    expect(interactions.debt("alice", "123456789")).toBe(0);
+    expect(interactions.total("alice", "123456789")).toBe(0);
+  });
+
   it("looks up another person's global bill by a multiword name in the current chat for free", async () => {
     const { bot, registry, interactions, jobs, db } = setup();
     const people = new SeenActivityStore(db);
@@ -223,17 +249,18 @@ describe("interaction billing", () => {
     await bot.handle(context("bot.punish", commands).ctx);
     await bot.handle(context("bot.chat hi", commands).ctx);
     await jobs.stop();
-    expect(interactions.debt("alice", "123456789")).toBe(110);
+    expect(interactions.debt("alice", "123456789")).toBe(510);
     expect(interactions.total("alice", "123456789")).toBe(2);
     const prices = context("bot.prices", commands);
     await bot.handle(prices.ctx);
-    expect(prices.sendText.mock.calls[0][1]).toContain("`bot.punish`: EUR 1.00");
+    expect(prices.sendText.mock.calls[0][1]).toContain("`bot.punish`: EUR 5.00");
     expect(prices.sendText.mock.calls[0][1]).toContain("`bot.chat`: EUR 0.10");
     expect(prices.sendText.mock.calls[0][1]).toContain("`bot.prices`: free");
-    expect(interactions.debt("alice", "123456789")).toBe(110);
+    expect(interactions.debt("alice", "123456789")).toBe(510);
     const helpCtx = context("bot.help", commands);
     await help(helpCtx.ctx);
-    expect(helpCtx.sendText.mock.calls[0][1]).toContain("[EUR 1.00]");
+    expect(helpCtx.sendText.mock.calls[0][1]).toContain("[EUR 5.00]");
+    expect(commandHelp("bot.nap", "siesta")).toContain("EUR 0.10/minute");
     expect(commandHelp("bot.mute", "mute")).toContain("EUR 0.20/minute");
     expect(commandHelp("bot.trivia", "trivia")).toContain("skip/next EUR 0.20");
   });

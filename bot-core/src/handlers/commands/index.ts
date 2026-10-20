@@ -87,7 +87,7 @@ export function buildCommandRegistry(deps: CommandDeps): CommandRegistry {
     fact,
     eightball,
     quote,
-    siesta: makeSiesta(deps.runtime, deps.discipline),
+    siesta: makeSiesta(deps.runtime, deps.discipline, deps.interactions),
     complain: makeComplain(deps.complaints),
     suggest: makeSuggest(deps.suggestions),
     score: makeScore(deps.sentiment, deps.seenActivity),
