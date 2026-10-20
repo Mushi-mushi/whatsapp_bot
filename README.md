@@ -34,6 +34,9 @@ An active `bot.siesta` can be cancelled from the dashboard's **Connection** tab.
 
 `bot.billing` shows your lifetime interaction count, outstanding fake debt across
 chats, and mute allowance. **No real charges or payment are involved.**
+Use `bot.billing Alice Smith` to view another person's global bill by their name
+in the current chat. Unknown or ambiguous names are rejected; omitting the name
+always shows your own bill. Looking up someone else's bill is free too.
 `bot.cost` lists prices for configured commands; `bot.help` includes prices too.
 Billing and cost checks (including custom aliases) are free.
 

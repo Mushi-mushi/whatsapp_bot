@@ -162,6 +162,58 @@ describe("command catalogue", () => {
 });
 
 describe("interaction billing", () => {
+  it("looks up another person's global bill by a multiword name in the current chat for free", async () => {
+    const { bot, registry, interactions, jobs, db } = setup();
+    const people = new SeenActivityStore(db);
+    people.record("chat@g.us", "987654321@s.whatsapp.net", "Bob Smith", Date.now(), "Group");
+    interactions.increment("987654321@s.whatsapp.net", null, 370);
+    interactions.increment("alice", "123456789", 20);
+    const commands = { "bot.invoice": "billing" };
+    registerConfiguredCommands(bot, commands, registry, jobs, vi.fn(), interactions);
+    const { ctx, sendText } = context("bot.invoice   bob smith  ", commands);
+    await bot.handle(ctx);
+    const bill = sendText.mock.calls[0][1];
+    expect(bill).toContain("Customer: Bob Smith");
+    expect(bill).toContain("Lifetime interactions across chats: 1");
+    expect(bill).toContain("Pretend total: EUR 3.70");
+    expect(bill).toContain("Mute allowance: 3 whole minute(s)");
+    expect(interactions.debt("alice", "123456789")).toBe(20);
+    expect(interactions.debt("987654321@s.whatsapp.net")).toBe(370);
+    expect(interactions.total("alice", "123456789")).toBe(1);
+    expect(commandHelp("bot.invoice", "billing")).toContain("bot.invoice [name]");
+  });
+
+  it("rejects unknown, other-chat-only and ambiguous billing targets instead of showing the caller's bill", async () => {
+    const { bot, registry, interactions, jobs, db } = setup();
+    const people = new SeenActivityStore(db);
+    people.record("other@g.us", "987654321@s.whatsapp.net", "Bob", Date.now(), "Other");
+    registerConfiguredCommands(bot, DEFAULT_CONFIG.commands, registry, jobs, vi.fn(), interactions);
+    const unknown = context("bot.billing Bob");
+    await bot.handle(unknown.ctx);
+    expect(unknown.sendText.mock.calls[0][1]).toContain("haven't seen anyone");
+    people.record("chat@g.us", "987654321@s.whatsapp.net", "Bob", Date.now(), "Group");
+    people.record("chat@g.us", "987654322@s.whatsapp.net", "Bob", Date.now(), "Group");
+    const ambiguous = context("bot.billing Bob");
+    await bot.handle(ambiguous.ctx);
+    expect(ambiguous.sendText.mock.calls[0][1]).toContain("won't guess");
+    expect(interactions.total("alice", "123456789")).toBe(0);
+  });
+
+  it("resolves billing targets through verified identity aliases", async () => {
+    const { bot, registry, interactions, jobs, db } = setup();
+    const people = new SeenActivityStore(db);
+    people.record("chat@g.us", "900@lid", "Bob", Date.now(), "Group");
+    interactions.increment("900@lid", null, 100);
+    interactions.increment("987654321@s.whatsapp.net", null, 50);
+    db.prepare("INSERT INTO contacts(jid, phone, name, updated_at) VALUES (?, ?, ?, ?)")
+      .run("900@lid", "987654321", "Bob", Date.now());
+    registerConfiguredCommands(bot, DEFAULT_CONFIG.commands, registry, jobs, vi.fn(), interactions);
+    const { ctx, sendText } = context("bot.billing Bob");
+    await bot.handle(ctx);
+    expect(sendText.mock.calls[0][1]).toContain("Pretend total: EUR 1.50");
+    expect(sendText.mock.calls[0][1]).toContain("Lifetime interactions across chats: 2");
+  });
+
   it("uses mapped command prices, keeps cost aliases free, and includes prices in help and cost output", async () => {
     const { bot, registry, interactions, jobs } = setup();
     registry.torture = vi.fn();

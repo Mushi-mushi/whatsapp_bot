@@ -61,7 +61,7 @@ export const COMMAND_CATALOGUE = {
   instadelete: { description: "(owner) manage Instagram auto-delete", usage: "[on|off|status|list|add <who>|remove <who>|clear]", aliases: [{ trigger: "bot.instadelete" }], execution: "inline" },
   pet: { description: "raise a shared group pet (admins enable per group)", usage: "help", aliases: [{ trigger: "bot.pet" }], execution: "inline" },
   services: { description: "(owner) enable, disable, or check Ollama and ComfyUI", usage: "[status|on|off] [ollama|comfyui|all]", aliases: [{ trigger: "bot.services" }], execution: "inline" },
-  billing: { description: "show your fake debt and mute allowance", usage: "", aliases: [{ trigger: "bot.billing" }], execution: "inline" },
+  billing: { description: "show your or another person's fake debt and mute allowance", usage: "[name]", aliases: [{ trigger: "bot.billing" }], execution: "inline" },
   cost: { description: "show command prices and mute rules", usage: "", aliases: [{ trigger: "bot.cost" }], execution: "inline" },
   mute: { description: "mute someone using their fake debt allowance", usage: "<name> <minutes>", aliases: [{ trigger: "bot.mute" }], execution: "inline" },
 } as const satisfies Record<string, CommandDefinition>;

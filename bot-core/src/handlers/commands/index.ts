@@ -113,7 +113,7 @@ export function buildCommandRegistry(deps: CommandDeps): CommandRegistry {
     instadelete: makeInstaDelete(deps.settings),
     services: makeServices(deps.settings),
     pet: makePet(deps.pets),
-    billing: makeBilling(deps.interactions),
+    billing: makeBilling(deps.interactions, deps.seenActivity),
     cost,
     mute: makeMute(deps.interactions, deps.seenActivity),
   };
