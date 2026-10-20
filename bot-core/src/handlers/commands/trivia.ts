@@ -6,6 +6,8 @@ import { chatKey } from "./user-context.js";
 import { messagePerson, playerLabel } from "./local-target.js";
 import { decodeEntities } from "../../util/net.js";
 import { ollamaChat } from "../../util/ollama.js";
+import type { InteractionStore } from "../../state/interactions.js";
+import { TRIVIA_SKIP_COST_CENTS } from "../../router/pricing.js";
 
 const LABELS = ["A", "B", "C", "D", "E", "F"];
 const TIMEOUT_MS = 90_000;
@@ -543,6 +545,7 @@ export function makeTrivia(
   runtime: RuntimeState,
   scores: TriviaScoreStore,
   duelScores: DuelWinStore,
+  interactions?: InteractionStore,
 ): Handler {
   return async (ctx) => {
     const chatId = triviaChat(runtime, chatKey(ctx.msg), scores);
@@ -556,7 +559,8 @@ export function makeTrivia(
           "• `bot.trivia` — start a quiz (everyone who answers right scores)\n" +
           "• `bot.trivia <category>` — e.g. `bot.trivia science` (`bot.trivia categories` to list)\n" +
           "• add `es` for Spanish, e.g. `bot.trivia film es`\n" +
-          "• `bot.trivia skip` / `bot.trivia stop`\n" +
+          "• `bot.trivia skip` / `bot.trivia next` — EUR 0.20 per accepted skip; other trivia commands EUR 0.10\n" +
+          "• `bot.trivia stop`\n" +
           `• \`bot.trivia duel [${DUEL_TARGET_MIN}-${DUEL_TARGET_MAX}]\` — race mode; others join with \`bot.trivia accept\`\n` +
           "• `bot.trivia scores` · `bot.trivia alltime` · `bot.trivia trophies` · `bot.trivia duels`",
       );
@@ -666,6 +670,7 @@ export function makeTrivia(
       const language = active.language;
       const session = runtime.triviaSessions.get(chatId);
       const duel = runtime.triviaDuels.get(chatId);
+      interactions?.increment(messagePerson(ctx.msg), null, TRIVIA_SKIP_COST_CENTS);
       clearTrivia(runtime, chatId, active);
       runtime.triviaGames.delete(chatId);
       await ctx.reply(`⏭️ Skipped — the answer was "${active.correct}". Next up…`);

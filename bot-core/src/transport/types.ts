@@ -42,6 +42,7 @@ export interface Transport {
   relink(): Promise<void>;
   getStatus(): ConnectionStatus;
   isGroupAdmin?(chatId: string, senderId: string): Promise<boolean>;
+  isBotGroupAdmin?(chatId: string): Promise<boolean>;
   onMessage(cb: (m: IncomingMessage) => void): () => void;
   onStatus(cb: (s: ConnectionStatus) => void): () => void;
   onChatsDiscovered(cb: (chats: ChatIdentity[]) => void): () => void;

@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 // Remove additive identity schema when a fixture simulates a pre-v9 database.
 export function removeScopedSchema(db: Database.Database): void {
   db.exec(`
+    DROP TABLE user_interactions; DROP TABLE user_mutes;
     DROP TABLE chat_people; DROP TABLE player_karma;
     DROP TABLE player_scores; DROP TABLE player_totals; DROP TABLE player_trophies;
     DROP TABLE suggestions;

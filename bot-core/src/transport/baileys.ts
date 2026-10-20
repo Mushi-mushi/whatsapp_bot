@@ -101,6 +101,12 @@ export class BaileysTransport implements Transport {
       (participant.admin === "admin" || participant.admin === "superadmin"));
   }
 
+  async isBotGroupAdmin(chatId: string): Promise<boolean> {
+    const me = this.sock?.user?.id;
+    if (!me) throw new Error("WhatsApp bot identity is unavailable");
+    return this.isGroupAdmin(chatId, me);
+  }
+
   private setStatus(patch: Partial<ConnectionStatus>): void {
     this.status = { ...this.status, ...patch };
     for (const cb of this.statusCbs) cb(this.status);

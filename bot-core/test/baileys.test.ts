@@ -201,6 +201,19 @@ describe("WhatsApp identity resolution", () => {
       .toBe("34600000002");
   });
 
+  it("verifies the bot's own admin rights using its linked identity", async () => {
+    const { transport, socket } = await setup();
+    socket.groupMetadata.mockResolvedValue({ subject: "Group", participants: [
+      { id: "900@lid", jid: "123456789@s.whatsapp.net", admin: "admin" },
+      { id: "901@lid", jid: "34600000002@s.whatsapp.net", admin: null },
+    ] });
+    expect(await transport.isBotGroupAdmin("group@g.us")).toBe(true);
+    socket.groupMetadata.mockResolvedValue({ subject: "Group", participants: [
+      { id: "900@lid", jid: "123456789@s.whatsapp.net", admin: null },
+    ] });
+    expect(await transport.isBotGroupAdmin("group@g.us")).toBe(false);
+  });
+
   it("recognizes verified participant aliases without granting another participant admin rights", async () => {
     const { transport, socket } = await setup();
     socket.groupMetadata.mockResolvedValue({ subject: "Group", participants: [

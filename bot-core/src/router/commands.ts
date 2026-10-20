@@ -1,6 +1,7 @@
 import type { BackgroundJobs } from "./jobs.js";
 import type { Bot, Handler } from "./router.js";
 import type { InteractionStore } from "../state/interactions.js";
+import { commandCost, costDescription } from "./pricing.js";
 
 interface CommandAlias {
   trigger: string;
@@ -60,7 +61,9 @@ export const COMMAND_CATALOGUE = {
   instadelete: { description: "(owner) manage Instagram auto-delete", usage: "[on|off|status|list|add <who>|remove <who>|clear]", aliases: [{ trigger: "bot.instadelete" }], execution: "inline" },
   pet: { description: "raise a shared group pet (admins enable per group)", usage: "help", aliases: [{ trigger: "bot.pet" }], execution: "inline" },
   services: { description: "(owner) enable, disable, or check Ollama and ComfyUI", usage: "[status|on|off] [ollama|comfyui|all]", aliases: [{ trigger: "bot.services" }], execution: "inline" },
-  billing: { description: "show your fake bill at EUR 0.10 per interaction (checking is free)", usage: "", aliases: [{ trigger: "bot.billing" }], execution: "inline" },
+  billing: { description: "show your fake debt and mute allowance", usage: "", aliases: [{ trigger: "bot.billing" }], execution: "inline" },
+  cost: { description: "show command prices and mute rules", usage: "", aliases: [{ trigger: "bot.cost" }], execution: "inline" },
+  mute: { description: "mute someone using their fake debt allowance", usage: "<name> <minutes>", aliases: [{ trigger: "bot.mute" }], execution: "inline" },
 } as const satisfies Record<string, CommandDefinition>;
 
 export type CommandId = keyof typeof COMMAND_CATALOGUE;
@@ -82,7 +85,7 @@ export function commandHelp(trigger: string, id: string): string | undefined {
   const alias = definition.aliases.find((entry) => entry.trigger.toLowerCase() === lower)
     ?? definition.aliases.find((entry) => entry.descriptionSuffix && lower.endsWith(entry.descriptionSuffix));
   const description = alias?.description ?? definition.description;
-  return `${description}${definition.usage ? ` — \`${trigger} ${definition.usage}\`` : ""}`;
+  return `${description}${definition.usage ? ` — \`${trigger} ${definition.usage}\`` : ""} [${costDescription(id)}]`;
 }
 
 export function registerConfiguredCommands(
@@ -103,7 +106,10 @@ export function registerConfiguredCommands(
     const handler = registry[name as CommandId];
     const dispatch = definition.execution === "background" ? jobs.wrap(handler) : handler;
     bot.command(trigger, (ctx) => {
-      if (name !== "billing") interactions?.increment(ctx.msg.senderId, ctx.msg.senderPhone);
+      const cents = commandCost(name, ctx.args);
+      if (cents != null && cents > 0) {
+        interactions?.increment(ctx.msg.senderIdentity ?? ctx.msg.senderId, ctx.msg.senderPhone, cents);
+      }
       return dispatch(ctx);
     });
   }

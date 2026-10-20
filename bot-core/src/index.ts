@@ -42,6 +42,7 @@ import {
   learnFromOwner,
   logging,
   mediaPolicy,
+  muteGuard,
   petObserver,
   participantTracker,
   siestaGuard,
@@ -126,6 +127,7 @@ async function main(): Promise<void> {
     .use(logging(logger))
     .use(approvedSenderGuard)
     .use(dedupe(seen))
+    .use(muteGuard(interactions, logger))
     .use(participantTracker(seenActivity))
     .use(learnFromOwner(userMemory, profiler))
     .use(petObserver(pets))

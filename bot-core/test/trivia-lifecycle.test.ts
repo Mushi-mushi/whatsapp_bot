@@ -6,6 +6,10 @@ import { openDatabase } from "../src/state/db.js";
 import { DuelWinStore, TriviaScoreStore } from "../src/state/repos.js";
 import { RuntimeState, type TriviaDuel } from "../src/state/runtime.js";
 import type { Transport } from "../src/transport/types.js";
+import { InteractionStore } from "../src/state/interactions.js";
+import { Bot } from "../src/router/router.js";
+import { BackgroundJobs } from "../src/router/jobs.js";
+import { registerConfiguredCommands, type CommandRegistry } from "../src/router/commands.js";
 
 const CHAT = "group@g.us";
 const question = { question: "Question?", correct: "Paris", options: ["Paris", "London"] };
@@ -28,7 +32,8 @@ function setup() {
   databases.push(db);
   const sendText = vi.fn<Transport["sendText"]>().mockResolvedValue(undefined);
   const transport = { sendText } as Transport;
-  const handler = makeTrivia(runtime, new TriviaScoreStore(db), new DuelWinStore(db));
+  const interactions = new InteractionStore(db);
+  const handler = makeTrivia(runtime, new TriviaScoreStore(db), new DuelWinStore(db), interactions);
   function command(args: string) {
     const ctx = new Context({
       chatId: CHAT, chatName: "Group", senderId: "alice", senderName: "Alice",
@@ -39,10 +44,32 @@ function setup() {
     return handler(ctx);
   }
   runtime.triviaSessions.set(CHAT, { token: "token", language: "en", queue: [{ ...question }] });
-  return { runtime, onError, sendText, command };
+  return { runtime, onError, sendText, command, interactions, handler };
 }
 
 describe("trivia lifecycle", () => {
+  it.each(["skip", "next", " SKIP "])("charges exactly EUR 0.20 only for accepted %s through the configured router", async (args) => {
+    const { runtime, sendText, handler, interactions } = setup();
+    const bot = new Bot();
+    const jobs = new BackgroundJobs(() => {});
+    const registry = { trivia: handler } as CommandRegistry;
+    registerConfiguredCommands(bot, { "bot.quiz": "trivia" }, registry, jobs, vi.fn(), interactions);
+    const ctx = () => new Context({
+      chatId: CHAT, chatName: "Group", senderId: "alice", senderName: "Alice",
+      senderPhone: "123456789", messageId: "m1", fromMe: false, isGroup: true,
+      text: `bot.quiz ${args}`, kind: "text", timestamp: Date.now(), raw: { key: {} },
+    }, { transport: { sendText } as Transport, getConfig: () => DEFAULT_CONFIG });
+    await bot.handle(ctx());
+    expect(interactions.debt("alice", "123456789")).toBe(0);
+    await startQuestion(runtime, CHAT, (text) => sendText(CHAT, text), DEFAULT_CONFIG);
+    await bot.handle(ctx());
+    await bot.handle(ctx());
+    expect(interactions.debt("alice", "123456789")).toBe(20);
+    expect(interactions.total("alice", "123456789")).toBe(1);
+    await bot.stop();
+    await jobs.stop();
+  });
+
   it("stops during the inter-question gap and cancels its continuation", async () => {
     const { runtime, sendText, command } = setup();
     await startQuestion(runtime, CHAT, (text) => sendText(CHAT, text), DEFAULT_CONFIG);

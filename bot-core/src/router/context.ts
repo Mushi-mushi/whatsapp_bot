@@ -41,6 +41,11 @@ export class Context {
     return this.services.transport.isGroupAdmin(this.msg.chatId, this.msg.senderId);
   }
 
+  async isBotGroupAdmin(): Promise<boolean> {
+    if (!this.services.transport.isBotGroupAdmin) throw new Error("Bot group admin lookup is unavailable");
+    return this.services.transport.isBotGroupAdmin(this.msg.chatId);
+  }
+
   async quote(text: string): Promise<void> {
     await this.services.transport.sendReply(this.msg.chatId, this.withPrefix(text), this.msg.raw);
   }

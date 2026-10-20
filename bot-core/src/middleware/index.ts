@@ -10,6 +10,7 @@ import { chatKey, rememberMessage } from "../handlers/commands/user-context.js";
 import { messagePerson } from "../handlers/commands/local-target.js";
 import { extractCommandToken, normalizeName } from "../router/normalize.js";
 import { normalizeJid } from "../state/identity.js";
+import type { InteractionStore } from "../state/interactions.js";
 
 // Passively learn from the owner's own messages so they build a profile like
 // everyone else. Activity is tracked independently of AI memory. Runs
@@ -206,6 +207,7 @@ export function sleepGuard(discipline: SiestaDisciplineStore, logger: Logger): M
       await next();
       return;
     }
+
     const senderId = disciplineKey(ctx.msg.senderIdentity ?? ctx.msg.senderId, ctx.msg.senderPhone);
     if (discipline.sleepUntil(ctx.msg.chatId, senderId) == null) {
       await next();
@@ -218,6 +220,22 @@ export function sleepGuard(discipline: SiestaDisciplineStore, logger: Logger): M
     }
     const line = SLEEP_SCOLDINGS[Math.floor(Math.random() * SLEEP_SCOLDINGS.length)];
     await ctx.reply(line);
+  };
+}
+
+export function muteGuard(interactions: InteractionStore, logger: Logger): Middleware {
+  return async (ctx, next) => {
+    if (!ctx.msg.isGroup || ctx.msg.fromMe || ctx.msg.isBot ||
+      interactions.muteUntil(chatKey(ctx.msg), messagePerson(ctx.msg)) <= Date.now()) {
+      await next();
+      return;
+    }
+    try {
+      await ctx.deleteMessage();
+    } catch (err) {
+      logger.warn({ err, chatId: ctx.msg.chatId }, "failed to delete muted user's message");
+      await ctx.reply("I couldn't delete a muted user's message. Check my group-admin permissions.");
+    }
   };
 }
 

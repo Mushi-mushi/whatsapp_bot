@@ -48,7 +48,7 @@ describe("persistent ask quota", () => {
       const discipline = new SiestaDisciplineStore(db);
       discipline.recordAllowedSiesta("g@g.us", PN, "2026-10-18");
       discipline.arm("g@g.us", PN);
-      db.exec("DROP TABLE siesta_usage; PRAGMA user_version = 10;");
+      db.exec("DROP TABLE siesta_usage; DROP TABLE user_interactions; DROP TABLE user_mutes; PRAGMA user_version = 10;");
       db.close();
       db = openDatabase(path);
       expect(new AskQuotaStore(db).consume("g@g.us", PN, null, NOW + 1))

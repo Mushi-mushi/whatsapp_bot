@@ -32,19 +32,45 @@ An active `bot.siesta` can be cancelled from the dashboard's **Connection** tab.
 
 ### Just-for-fun billing
 
-`bot.billing` shows your lifetime interaction count across chats and a pretend
-bill at **EUR 0.10 per interaction**. Checking the bill is always free, including
-custom aliases mapped to billing. This is a joke: **no real charges or payment
-are involved**.
+`bot.billing` shows your lifetime interaction count, outstanding fake debt across
+chats, and mute allowance. **No real charges or payment are involved.**
+`bot.cost` lists prices for configured commands; `bot.help` includes prices too.
+Billing and cost checks (including custom aliases) are free.
 
-Each recognized command reaching dispatch counts once, including custom aliases,
-queued AI/media commands, and attempts that fail or receive a busy/usage reply.
-Ordinary messages, game answers, automatic replies, unknown commands, duplicate
-deliveries, and messages blocked by access/moderation/sleep guards do not count.
-Counts start at zero on deployment, persist across restarts, and use WhatsApp
-identities (including verified phone/LID aliases), not display names.
-The additive database schema 12 migration preserves existing data and adds
-these counters; configuration migration 17 adds the default billing command.
+| Action | Fake debt added to caller |
+| --- | --- |
+| `bot.ask` (including `.raw`) | EUR 0.10 |
+| `bot.torture` | EUR 1.00 |
+| `bot.trivia skip` or `bot.trivia next` | EUR 0.20 per accepted skip, not an extra fee |
+| `bot.mute <name> <minutes>` | EUR 0.20 per accepted minute |
+| Other recognized commands | EUR 0.10 |
+
+Any participant in an approved group can use `bot.mute Alice 3`. Each whole
+EUR 1.00 of **Alice's** outstanding debt permits one minute of mute. A successful
+three-minute mute deducts EUR 3.00 from Alice and adds EUR 0.60 to the caller.
+Existing mutes are extended from their expiry, using the target's remaining debt.
+Debt is global, but each mute affects only the group where it was requested.
+There is no arbitrary duration cap beyond the target's allowance. Self-mutes
+and muting the bot's linked account are rejected; ambiguous names are not guessed.
+The target must have been seen in this chat.
+
+The bot must be a group admin. Muting auto-deletes incoming messages rather than
+preventing sending, so messages may briefly appear. Successful deletions are
+silent; failures are logged and reported in chat. Mutes expire automatically and
+persist across restarts, including while the bot is on siesta. Time continues
+passing while the bot is offline; deletion requires the bot to be online.
+Rejected mutes and skips without an active question are free.
+
+Other commands count once at dispatch, including aliases, queued jobs, failed
+attempts and busy/usage replies. Ordinary messages, trivia answers, automatic
+replies, unknown commands, duplicates, and messages blocked by guards do not count.
+Counters, debt and mutes use WhatsApp identities (including verified phone/LID
+aliases), not display names.
+
+Database schema 13 converts existing counts into debt at the old EUR 0.10 rate
+once, preserving counts and all other data; historical commands are not repriced.
+It also adds persistent group mutes. Configuration migration 18 adds `bot.cost`
+and `bot.mute` without overwriting custom mappings.
 
 Each player may use `bot.siesta` a configurable number of times per UTC day within
 a given chat (default **1**). Set **General > Maximum bot.siesta calls** and click
@@ -264,7 +290,7 @@ Verified identity aliases share quota, including after an alias is learned;
 duplicate display names do not. Quotas survive restarts. The additive **schema 8**
 migration creates `ask_quota` without modifying existing bot data. Back up before
 deploying: older binaries cannot open a newer schema. The current application
-and backup verifier require schema 12 (older backups need a matching-version verifier).
+and backup verifier require schema 13 (older backups need a matching-version verifier).
 Schema 11 removes the fixed ten-call database constraint and adds persistent siesta
 usage counts, preserving previous ask usage and counting each recorded legacy
 siesta as one use on its recorded day.
@@ -1054,6 +1080,13 @@ Saved mappings are not replaced by catalogue defaults. When adding default
 aliases for existing installations, bump `CONFIG_VERSION` in
 `bot-core/src/state/repos.ts` to trigger the existing additive backfill.
 Update catalogue compatibility tests when intentionally changing defaults.
+
+`bot-core/src/router/pricing.ts` defines prices shared by command dispatch,
+`bot.help` and `bot.cost`. Prices follow command IDs, not alias text. Fixed-price
+commands add debt at dispatch. Accepted mute and trivia-skip handlers charge
+transactionally/at acceptance instead; do not also charge them in the router.
+Use integer cents, preserve lifetime counts when reducing debt, and test price
+boundaries and alias remapping when changing these rules.
 
 ### Running Checks
 

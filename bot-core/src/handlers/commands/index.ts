@@ -52,6 +52,8 @@ import { makeServices } from "./services.js";
 import type { AskQuotaStore } from "../../state/ask-quota.js";
 import type { InteractionStore } from "../../state/interactions.js";
 import { makeBilling } from "./billing.js";
+import { cost } from "./cost.js";
+import { makeMute } from "./mute.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
@@ -107,10 +109,12 @@ export function buildCommandRegistry(deps: CommandDeps): CommandRegistry {
     roll,
     paint,
     film,
-    trivia: makeTrivia(deps.runtime, deps.triviaScores, deps.duelScores),
+    trivia: makeTrivia(deps.runtime, deps.triviaScores, deps.duelScores, deps.interactions),
     instadelete: makeInstaDelete(deps.settings),
     services: makeServices(deps.settings),
     pet: makePet(deps.pets),
     billing: makeBilling(deps.interactions),
+    cost,
+    mute: makeMute(deps.interactions, deps.seenActivity),
   };
 }

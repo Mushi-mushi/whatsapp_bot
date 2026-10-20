@@ -40,6 +40,7 @@ const legacyCommands = {
   "bot.trivia": "trivia", "bot.paint": "paint", "bot.film": "film",
   "bot.instadelete": "instadelete", "bot.pet": "pet", "bot.services": "services",
   "bot.billing": "billing",
+  "bot.cost": "cost", "bot.mute": "mute",
 };
 
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -156,11 +157,35 @@ describe("command catalogue", () => {
     db.prepare("INSERT INTO kv VALUES ('config', ?)").run(JSON.stringify({ ...DEFAULT_CONFIG, commands }));
     db.prepare("INSERT INTO kv VALUES ('config_version', '16')").run();
     expect(configStore.load().commands).toMatchObject({ "bot.billing": "billing", ...commands });
-    expect(db.prepare("SELECT value FROM kv WHERE key = 'config_version'").get()).toEqual({ value: "17" });
+    expect(db.prepare("SELECT value FROM kv WHERE key = 'config_version'").get()).toEqual({ value: "18" });
   });
 });
 
 describe("interaction billing", () => {
+  it("uses mapped command prices, keeps cost aliases free, and includes prices in help and cost output", async () => {
+    const { bot, registry, interactions, jobs } = setup();
+    registry.torture = vi.fn();
+    registry.ask = vi.fn();
+    const commands = { "bot.punish": "torture", "bot.chat": "ask", "bot.prices": "cost", "bot.invoice": "billing" };
+    registerConfiguredCommands(bot, commands, registry, jobs, vi.fn(), interactions);
+    await bot.handle(context("bot.punish", commands).ctx);
+    await bot.handle(context("bot.chat hi", commands).ctx);
+    await jobs.stop();
+    expect(interactions.debt("alice", "123456789")).toBe(110);
+    expect(interactions.total("alice", "123456789")).toBe(2);
+    const prices = context("bot.prices", commands);
+    await bot.handle(prices.ctx);
+    expect(prices.sendText.mock.calls[0][1]).toContain("`bot.punish`: EUR 1.00");
+    expect(prices.sendText.mock.calls[0][1]).toContain("`bot.chat`: EUR 0.10");
+    expect(prices.sendText.mock.calls[0][1]).toContain("`bot.prices`: free");
+    expect(interactions.debt("alice", "123456789")).toBe(110);
+    const helpCtx = context("bot.help", commands);
+    await help(helpCtx.ctx);
+    expect(helpCtx.sendText.mock.calls[0][1]).toContain("[EUR 1.00]");
+    expect(commandHelp("bot.mute", "mute")).toContain("EUR 0.20/minute");
+    expect(commandHelp("bot.trivia", "trivia")).toContain("skip/next EUR 0.20");
+  });
+
   it("counts failed command attempts and uses command IDs rather than trigger text for exemptions", async () => {
     const { bot, jobs, registry, interactions } = setup();
     registry.roll = () => { throw new Error("Command failed"); };
@@ -192,7 +217,7 @@ describe("interaction billing", () => {
     await bot.handle(ctx);
     const bill = sendText.mock.calls[0][1];
     expect(bill).toContain("Lifetime interactions across chats: 2");
-    expect(bill).toContain("EUR 0.10 per interaction");
+    expect(bill).toContain("Prices vary by command");
     expect(bill).toContain("Pretend total: EUR 0.20");
     expect(bill).toContain("no real charges, no payment due");
     expect(interactions.total("alice", "123456789")).toBe(2);

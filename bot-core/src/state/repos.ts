@@ -19,7 +19,8 @@ const CONFIG_VERSION_KEY = "config_version";
 // v14 adds the opt-in, per-group pet. v15 adds owner-controlled AI service toggles.
 // v16 adds bot.suggest for logging feature suggestions.
 // v17 adds the free bot.billing joke bill.
-const CONFIG_VERSION = 17;
+// v18 adds bot.cost and debt-powered bot.mute.
+const CONFIG_VERSION = 18;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {
