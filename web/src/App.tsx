@@ -18,13 +18,14 @@ import { RemindersCard } from "@/components/RemindersCard";
 import { PendingTellsCard } from "@/components/PendingTellsCard";
 import { LeaderboardsCard } from "@/components/LeaderboardsCard";
 import { SuggestionsCard } from "@/components/SuggestionsCard";
+import { BillingCard } from "@/components/BillingCard";
 import { FieldValidationProvider, useFieldErrors } from "@/components/fields";
 import { LoadingState, QueryError } from "@/components/QueryFeedback";
-import { AlarmClock, Bot, Brain, Check, Image, Lightbulb, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles, Trophy } from "lucide-react";
+import { AlarmClock, Bot, Brain, Check, DollarSign, Image, Lightbulb, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles, Trophy } from "lucide-react";
 
 const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;
 
-type Tab = "connection" | "general" | "access" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations" | "reminders" | "tells" | "leaderboards" | "suggestions";
+type Tab = "connection" | "general" | "access" | "billing" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations" | "reminders" | "tells" | "leaderboards" | "suggestions";
 
 // Which config fields live on which tab — drives the per-tab "unsaved" dot.
 const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
@@ -43,6 +44,7 @@ const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
     "retentionEnabled", "analyticsRetentionDays", "deliveryRetentionDays",
   ],
   access: ["approvedSenders"],
+  billing: [],
   ai: [
     "askEnabled", "askMaxCalls", "ollamaModel", "ollamaBaseUrl", "ollamaTimeoutSeconds", "ollamaKeepAlive",
     "askSystemPrompt", "redditClientId", "redditClientSecret", "redditUserAgent", "redditRefreshToken",
@@ -216,6 +218,9 @@ function Dashboard() {
         <TabButton active={tab === "access"} onClick={() => selectTab("access")} dirty={dirtyTabs.has("access")}>
           <ShieldCheck className="h-4 w-4" /> Access
         </TabButton>
+        <TabButton active={tab === "billing"} onClick={() => selectTab("billing")}>
+          <DollarSign className="h-4 w-4" /> Billing
+        </TabButton>
         <TabButton active={tab === "ai"} onClick={() => selectTab("ai")} enabled={draft.askEnabled} dirty={dirtyTabs.has("ai")}>
           <Sparkles className="h-4 w-4" /> AI
         </TabButton>
@@ -254,6 +259,7 @@ function Dashboard() {
       {tab === "tells" && <PendingTellsCard />}
       {tab === "leaderboards" && <LeaderboardsCard />}
       {tab === "suggestions" && <SuggestionsCard />}
+      {tab === "billing" && <BillingCard />}
 
       {tab === "discipline" && (
         <div className="grid min-w-0 gap-4">

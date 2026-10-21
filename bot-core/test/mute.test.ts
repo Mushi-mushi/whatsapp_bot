@@ -126,6 +126,8 @@ describe("debt-powered mutes", () => {
     }
     expect(next).not.toHaveBeenCalled();
     expect(transport.deleteMessage).toHaveBeenCalledTimes(6);
+    expect(interactions.debt(ALICE)).toBe(670);
+    expect(interactions.total(ALICE)).toBe(2);
     expect(transport.sendText).toHaveBeenCalledTimes(1);
     await guard(context("", { senderId: ALICE, senderPhone: "", chatId: "other@g.us" }), next);
     expect(next).toHaveBeenCalledOnce();
@@ -146,6 +148,7 @@ describe("debt-powered mutes", () => {
     expect(warn).toHaveBeenCalledOnce();
     expect(transport.sendText.mock.calls.at(-1)?.[1]).toContain("couldn't delete");
     expect(next).not.toHaveBeenCalled();
+    expect(interactions.debt(ALICE)).toBe(0);
   });
 
   it("reserves debt atomically across different groups and rolls back both balances if mute persistence fails", () => {

@@ -24,6 +24,7 @@ export function makeBilling(interactions: InteractionStore, people: SeenActivity
       `*Pretend total: ${euros(cents)}*`,
       `Mute allowance: ${Math.floor(cents / MUTE_DEBT_CENTS_PER_MINUTE)} whole minute(s).`,
       "Each mute minute removes EUR 1.00 of the customer's debt. Prices vary by command; use bot.cost.",
+      "Each successfully deleted message during a mute adds EUR 1.00 to the customer's fake debt; it does not extend the mute.",
       "",
       "Checking bills is always free.",
       "Just for fun - no real charges, no payment due!",

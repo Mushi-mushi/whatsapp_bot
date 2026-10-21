@@ -6,6 +6,19 @@ import { DEFAULT_COST_CENTS, MUTE_COST_CENTS_PER_MINUTE, MUTE_DEBT_CENTS_PER_MIN
 export class InteractionStore {
   constructor(private readonly db: Database.Database) {}
 
+  addDebt(senderId: string, cents: number): boolean {
+    if (!Number.isSafeInteger(cents) || cents < 1) throw new Error("Invalid billing amount");
+    return this.db.transaction(() => {
+      const sender = identitiesFor(this.db).canonical(disciplineKey(senderId));
+      if (!Number.isSafeInteger(this.debt(sender) + cents)) return false;
+      this.db.prepare(`
+        INSERT INTO user_interactions (sender_id, count, debt_cents) VALUES (?, 0, ?)
+        ON CONFLICT(sender_id) DO UPDATE SET debt_cents = debt_cents + excluded.debt_cents
+      `).run(sender, cents);
+      return true;
+    }).immediate();
+  }
+
   increment(senderId: string, phone?: string | null, cents = DEFAULT_COST_CENTS): void {
     if (!Number.isSafeInteger(cents) || cents < 0) throw new Error("Invalid interaction cost");
     const sender = identitiesFor(this.db).canonical(disciplineKey(senderId, phone));

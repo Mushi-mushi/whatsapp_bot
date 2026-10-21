@@ -13,6 +13,7 @@ const actions: Record<AuditEntry["action"], string> = {
   "pet.request": "Request pet challenge", "pet.evolve": "Evolve pet",
   "profile.refresh": "Refresh profile", "profile.forget": "Forget profile", "job.cancel": "Cancel background job",
   "usage.reset": "Reset user command usage",
+  "billing.charge": "Add fake billing charge",
   "siesta.cancel": "Cancel siesta", "discipline.sleep": "Put player to sleep", "discipline.arm": "Arm player sleep",
   "discipline.wake": "Wake player", "trivia.reset": "Reset trivia", "trivia.close-month": "Close trivia month",
   "connection.pair": "Request pairing code", "connection.resync": "Resync contacts", "connection.relink": "Relink WhatsApp",

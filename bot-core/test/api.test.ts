@@ -19,6 +19,7 @@ import { BackupWorker } from "../src/state/backups.js";
 import { DeliveryWorker } from "../src/state/deliveries.js";
 import { AuditStore } from "../src/state/audit.js";
 import { AskQuotaStore } from "../src/state/ask-quota.js";
+import { InteractionStore } from "../src/state/interactions.js";
 
 const ALICE = memoryKey("group@g.us", "alice");
 const ALICE_PATH = `/api/profiles/${encodeURIComponent(ALICE)}`;
@@ -35,6 +36,7 @@ async function setup(apiToken: string | undefined = "test-token", allowInsecureA
   const userProfiles = new UserProfileStore(db);
   const configStore = new ConfigStore(db);
   const discipline = new SiestaDisciplineStore(db);
+  const interactions = new InteractionStore(db);
   const jobs = new BackgroundJobs(() => {});
   const profiler = new ProfileService(userMemory, userProfiles, jobs, () => configStore.load(), logger);
   const deps: ApiDeps = {
@@ -56,6 +58,7 @@ async function setup(apiToken: string | undefined = "test-token", allowInsecureA
     runtime,
     discipline,
     askQuota: new AskQuotaStore(db),
+    interactions,
     contacts: new ContactsStore(db),
     onConfigChange: vi.fn(),
     transport: {
@@ -68,8 +71,50 @@ async function setup(apiToken: string | undefined = "test-token", allowInsecureA
   };
   const app = await createApi(deps);
   cleanup.push(async () => { await jobs.stop(); runtime.dispose(); await app.close(); db.close(); });
-  return { app, deps, listeners, runtime, discipline, jobs, db };
+  return { app, deps, listeners, runtime, discipline, interactions, jobs, db };
 }
+
+describe("billing API", () => {
+  it("adds positive fake debt through canonical contact identities and audits without exposing the JID", async () => {
+    const { app, deps, interactions } = await setup();
+    const headers = { authorization: "Bearer test-token" };
+    const phoneJid = "34600000002@s.whatsapp.net";
+    const lid = "987654321@lid";
+    deps.contacts.upsertMany([
+      { jid: phoneJid, phone: phoneJid, name: "Si Ying" },
+      { jid: lid, phone: phoneJid, name: "Si Ying" },
+    ]);
+
+    expect((await app.inject({ method: "GET", url: "/api/billing" })).statusCode).toBe(401);
+    for (const payload of [
+      { senderId: lid, amountCents: 0 },
+      { senderId: lid, amountCents: 100.5 },
+      { senderId: "not-a-jid", amountCents: 100 },
+      { senderId: lid, amountCents: 1_000_001 },
+    ]) {
+      expect((await app.inject({ method: "POST", url: "/api/billing/charges", headers, payload })).statusCode).toBe(400);
+    }
+
+    const response = await app.inject({
+      method: "POST", url: "/api/billing/charges", headers,
+      payload: { senderId: lid, amountCents: 144_000 },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      customer: { senderId: phoneJid, name: "Si Ying", debtCents: 144_000, muteAllowanceMinutes: 1440 },
+    });
+    expect(interactions.debt(phoneJid)).toBe(144_000);
+    expect(interactions.total(phoneJid)).toBe(0);
+    const list = await app.inject({ method: "GET", url: "/api/billing", headers });
+    expect(list.json().customers).toHaveLength(1);
+    const audit = deps.audit.list(1).entries[0];
+    expect(audit).toMatchObject({ action: "billing.charge", outcome: "succeeded" });
+    expect(audit.targetId).toMatch(/^billing:/);
+    expect(JSON.stringify(audit)).not.toContain(phoneJid);
+    expect(JSON.stringify(audit)).not.toContain(lid);
+  });
+});
 
 describe("user usage reset API", () => {
   it("authenticates, validates, resets only the chosen quota globally and audits safely", async () => {

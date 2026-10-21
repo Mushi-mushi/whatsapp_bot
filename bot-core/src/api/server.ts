@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import { ConfigSchema } from "../config/schema.js";
 import { redactSecrets, restoreSecrets } from "../config/secrets.js";
 import type { ConfigStore, ContactsStore, DuelWinStore, KarmaStore, KnownChatsStore, RemindersStore, SeenActivityStore, SiestaDisciplineStore, SuggestionStore, TellStore, TriviaScoreStore, UserMemoryStore, UserProfileStore } from "../state/repos.js";
+import type { InteractionStore } from "../state/interactions.js";
 import { ContactResolver } from "../transport/contacts.js";
 import type { ProfileService } from "../handlers/profiles/service.js";
 import { ProfileQueueError } from "../handlers/profiles/service.js";
@@ -23,6 +24,7 @@ import type { OutboxStore } from "../state/outbox.js";
 import type { BackupWorker } from "../state/backups.js";
 import type { AuditStore } from "../state/audit.js";
 import { registerAudit } from "./audit.js";
+import { MUTE_DEBT_CENTS_PER_MINUTE } from "../router/pricing.js";
 import type {
   BotConfig, ChatsResponse, ContactsResponse, DisciplinePlayer, DisciplineResponse,
   DisciplineMutationResponse, SiestaStatus, GroupPet, PetsResponse, PetActionResponse,
@@ -32,7 +34,7 @@ import type {
   OperationsResponse,
   ReminderCreateRequest, ReminderUpdateRequest, ReminderMutationResponse, ReminderCancelResponse,
   TellCancelResponse, SuggestionDeleteResponse, DeliveryRetryResponse,
-  LeaderboardsResponse,
+  LeaderboardsResponse, BillingResponse, BillingChargeResponse,
 } from "../../../shared/api.js";
 
 export interface ApiDeps {
@@ -51,6 +53,7 @@ export interface ApiDeps {
   runtime: RuntimeState;
   discipline: SiestaDisciplineStore;
   askQuota: AskQuotaStore;
+  interactions: InteractionStore;
   contacts: ContactsStore;
   jobs: BackgroundJobs;
   outbox: OutboxStore;
@@ -362,6 +365,46 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
       .map((c) => ({ jid: c.jid, name: c.name, phone: c.phone }))
       .sort((a, b) => a.name.localeCompare(b.name));
     return { contacts } satisfies ContactsResponse;
+  });
+  const billingView = (): BillingResponse["customers"] => {
+    const customers = new Map<string, BillingResponse["customers"][number]>();
+    for (const contact of deps.contacts.all()) {
+      if (!contact.name.trim()) continue;
+      const senderId = canonicalTarget(contact.jid);
+      if (customers.has(senderId)) continue;
+      const debtCents = deps.interactions.debt(senderId);
+      customers.set(senderId, {
+        senderId,
+        name: resolveName(senderId) ?? contact.name,
+        phone: contact.phone,
+        debtCents,
+        interactionCount: deps.interactions.total(senderId),
+        muteAllowanceMinutes: Math.floor(debtCents / MUTE_DEBT_CENTS_PER_MINUTE),
+      });
+    }
+    return [...customers.values()].sort((a, b) => a.name.localeCompare(b.name));
+  };
+  app.get("/api/billing", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return { customers: billingView(), sampledAt: Date.now() } satisfies BillingResponse;
+  });
+  app.post("/api/billing/charges", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = z.object({
+      senderId: z.string().trim().regex(/^\d+(?::\d+)?@(s\.whatsapp\.net|lid)$/),
+      amountCents: z.number().int().min(1).max(1_000_000),
+    }).strict().safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "Select a contact and enter a positive amount up to EUR 10,000." });
+    }
+    const senderId = canonicalTarget(parsed.data.senderId);
+    const customer = billingView().find((entry) => entry.senderId === senderId);
+    if (!customer) return reply.code(404).send({ ok: false, error: "That contact is not in the saved contact directory." });
+    if (!deps.interactions.addDebt(senderId, parsed.data.amountCents)) {
+      return reply.code(409).send({ ok: false, error: "The resulting billing balance exceeds the supported range." });
+    }
+    const updated = billingView().find((entry) => entry.senderId === senderId)!;
+    return { ok: true, customer: updated } satisfies BillingChargeResponse;
   });
 
   app.get("/api/config", async (_req, reply) => {

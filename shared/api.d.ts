@@ -187,7 +187,8 @@ export type AuditAction = "reminder.create" | "reminder.update" | "reminder.canc
   | "pet.update" | "pet.save" | "pet.enable" | "pet.disable" | "pet.pause" | "pet.resume"
   | "pet.request" | "pet.evolve" | "profile.refresh" | "profile.forget" | "job.cancel" | "usage.reset"
   | "siesta.cancel" | "discipline.sleep" | "discipline.arm" | "discipline.wake"
-  | "trivia.reset" | "trivia.close-month" | "connection.pair" | "connection.resync" | "connection.relink";
+  | "trivia.reset" | "trivia.close-month" | "connection.pair" | "connection.resync" | "connection.relink"
+  | "billing.charge";
 
 export type SuggestionKind = "explicit" | "unknown_command";
 
@@ -438,6 +439,30 @@ export interface ChatsResponse {
 
 export interface ContactsResponse {
   contacts: Contact[];
+}
+
+export interface BillingCustomer {
+  senderId: string;
+  name: string;
+  phone: string | null;
+  debtCents: number;
+  interactionCount: number;
+  muteAllowanceMinutes: number;
+}
+
+export interface BillingResponse {
+  customers: BillingCustomer[];
+  sampledAt: number;
+}
+
+export interface BillingChargeRequest {
+  senderId: string;
+  amountCents: number;
+}
+
+export interface BillingChargeResponse {
+  ok: true;
+  customer: BillingCustomer;
 }
 
 export interface DisciplineResponse {

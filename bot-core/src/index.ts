@@ -204,6 +204,7 @@ async function main(): Promise<void> {
       runtime,
       discipline,
       askQuota: new AskQuotaStore(db),
+      interactions,
       contacts,
       logger,
       apiToken: API_TOKEN,

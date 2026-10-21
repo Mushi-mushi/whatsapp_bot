@@ -12,6 +12,7 @@ const ACTIONS: Record<string, AuditAction> = {
   "POST /api/operations/deliveries/:id/retry": "delivery.retry",
   "DELETE /api/operations/jobs/:id": "job.cancel",
   "POST /api/usage/reset": "usage.reset",
+  "POST /api/billing/charges": "billing.charge",
   "PUT /api/config": "config.save",
   "PUT /api/pets/:chatId": "pet.update",
   "POST /api/pets/:chatId/request": "pet.request",
@@ -56,6 +57,10 @@ export function registerAudit(app: FastifyInstance, store: AuditStore, apiToken?
       if (typeof body.senderId === "string" && typeof body.command === "string") {
         return opaque("usage", JSON.stringify([body.command, body.senderId]));
       }
+    }
+    if (action === "billing.charge") {
+      const body = object(req.body);
+      if (typeof body.senderId === "string") return opaque("billing", body.senderId);
     }
     if (action.startsWith("discipline.")) {
       const body = object(req.body);

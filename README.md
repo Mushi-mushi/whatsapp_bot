@@ -39,6 +39,9 @@ in the current chat. Unknown or ambiguous names are rejected; omitting the name
 always shows your own bill. Looking up someone else's bill is free too.
 `bot.cost` lists prices for configured commands; `bot.help` includes prices too.
 Billing and cost checks (including custom aliases) are free.
+The authenticated dashboard's **Billing** tab lists saved contacts' global balances
+and lets the owner add manual fake-debt charges. Each added EUR 1.00 grants one
+minute of mute allowance; additions are recorded in the administrative audit log.
 
 | Action | Fake debt added to caller |
 | --- | --- |
@@ -54,6 +57,8 @@ EUR 1.00 of **Alice's** outstanding debt permits one minute of mute. A successfu
 three-minute mute deducts EUR 3.00 from Alice and adds EUR 0.60 to the caller.
 Existing mutes are extended from their expiry, using the target's remaining debt.
 Debt is global, but each mute affects only the group where it was requested.
+Each successfully deleted message sent during a mute adds EUR 1.00 to the target's
+fake debt; this does not extend the active mute. Failed deletions are not charged.
 There is no arbitrary duration cap beyond the target's allowance. Self-mutes
 and muting the bot's linked account are rejected; ambiguous names are not guessed.
 The target must have been seen in this chat.

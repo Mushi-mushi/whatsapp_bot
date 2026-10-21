@@ -9,6 +9,7 @@ import type {
   TellsResponse, TellCancelResponse, SuggestionsResponse, SuggestionDeleteResponse,
   FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest, DeliveryRetryResponse,
   AuditResponse, LeaderboardsResponse,
+  BillingResponse, BillingChargeRequest, BillingChargeResponse,
 } from "../../../shared/api.js";
 export type {
   BotConfig, ConfigSnapshot, Status, ConnectionState, ConnectionHealth,
@@ -19,6 +20,7 @@ export type {
   PendingTell, TellsResponse, SuggestionKind, SuggestionEntry, SuggestionsResponse, SuggestionDeleteResponse,
   FailedDelivery, FailedDeliveriesResponse, DeliveryHistoryResponse, DeliveryRetryRequest,
   AuditEntry, AuditResponse,
+  BillingCustomer, BillingResponse,
   LeaderboardEntry, TrophyEntry, TrophyHistoryEntry, ChatParticipantEntry, ChatLeaderboards, LeaderboardsResponse,
 } from "../../../shared/api.js";
 
@@ -71,6 +73,11 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  getBilling: () => fetch("/api/billing", { headers: authHeaders(), cache: "no-store" }).then(json<BillingResponse>),
+  addBillingCharge: (request: BillingChargeRequest) =>
+    fetch("/api/billing/charges", {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request),
+    }).then(json<BillingChargeResponse>),
   resetUsage: (request: UsageResetRequest) =>
     fetch("/api/usage/reset", {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request),

@@ -11,6 +11,7 @@ import { messagePerson } from "../handlers/commands/local-target.js";
 import { extractCommandToken, normalizeName } from "../router/normalize.js";
 import { normalizeJid } from "../state/identity.js";
 import type { InteractionStore } from "../state/interactions.js";
+import { MUTE_DEBT_CENTS_PER_MINUTE } from "../router/pricing.js";
 
 // Passively learn from the owner's own messages so they build a profile like
 // everyone else. Activity is tracked independently of AI memory. Runs
@@ -235,6 +236,14 @@ export function muteGuard(interactions: InteractionStore, logger: Logger): Middl
     } catch (err) {
       logger.warn({ err, chatId: ctx.msg.chatId }, "failed to delete muted user's message");
       await ctx.reply("I couldn't delete a muted user's message. Check my group-admin permissions.");
+      return;
+    }
+    try {
+      if (!interactions.addDebt(messagePerson(ctx.msg), MUTE_DEBT_CENTS_PER_MINUTE)) {
+        logger.error({ chatId: ctx.msg.chatId }, "deleted muted message but billing balance overflowed");
+      }
+    } catch (err) {
+      logger.error({ err, chatId: ctx.msg.chatId }, "deleted muted message but billing charge failed");
     }
   };
 }
