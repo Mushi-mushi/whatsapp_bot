@@ -112,13 +112,24 @@ export class AchievementStore {
   private secret(chatId: string, senderId: string, name: string, id: SecretId, value: number, now: number): string | null {
     const badge = SECRET_ACHIEVEMENTS.find((entry) => entry.id === id)!;
     if (value < badge.target) return null;
-    const scope = this.scope(chatId, senderId);
-    const earned = this.db.prepare(`SELECT 1 FROM achievement_unlocks WHERE ${scope.where} AND badge_id = ?`)
-      .get(...scope.params, id);
-    if (earned) return null;
-    this.db.prepare("INSERT INTO achievement_unlocks(chat_id,sender_id,badge_id,unlocked_at) VALUES (?,?,?,?)")
-      .run(scope.chat_id, scope.sender_id, id, now);
-    return `Secret achievement unlocked for ${name || "Player"}!\n${badge.name} - ${badge.requirement}`;
+    return this.db.transaction(() => {
+      const scope = this.scope(chatId, senderId);
+      const earned = this.db.prepare(`SELECT 1 FROM achievement_unlocks WHERE ${scope.where} AND badge_id = ?`)
+        .get(...scope.params, id);
+      if (earned) return null;
+      this.db.prepare("INSERT INTO achievement_unlocks(chat_id,sender_id,badge_id,unlocked_at) VALUES (?,?,?,?)")
+        .run(scope.chat_id, scope.sender_id, id, now);
+      const notice = `Secret achievement unlocked for ${name || "Player"}!\n${badge.name} - ${badge.requirement}`;
+      this.queueBadge(scope.chat_id, id, notice, now);
+      return notice;
+    }).immediate();
+  }
+
+  private queueBadge(chatId: string, badgeId: string, caption: string, now: number): void {
+    const queued = this.db.prepare("INSERT INTO outbox(chat_id,body,available_at,created_at) VALUES (?,?,?,?)")
+      .run(chatId, caption, now, now);
+    this.db.prepare("INSERT INTO achievement_badge_deliveries(outbox_id,badge_id) VALUES (?,?)")
+      .run(queued.lastInsertRowid, badgeId);
   }
 
   private day(now: number) {
@@ -220,10 +231,9 @@ export class AchievementStore {
         const peak = Math.max(before, after, ...this.facts(chat, senderId, "debt-peak").map((row) => row.value));
         this.fact(chat, senderId, "debt-peak", "", peak, now);
         const name = this.facts(chat, senderId, "name")[0]?.fact_key || "Player";
-        const notice = after === 0 && before > 0 && peak >= 1_000
-          ? this.secret(chat, senderId, name, "debt-free", 1, now) : null;
-        if (notice) this.db.prepare("INSERT INTO outbox(chat_id,body,available_at,created_at) VALUES (?,?,?,?)")
-          .run(scope.chat_id, notice, now, now);
+        if (after === 0 && before > 0 && peak >= 1_000) {
+          this.secret(chat, senderId, name, "debt-free", 1, now);
+        }
       }
     }).immediate();
   }
@@ -309,7 +319,11 @@ export class AchievementStore {
       const fresh = ACHIEVEMENTS.filter((badge) =>
         changed.has(badge.metric) && counts[badge.metric] >= badge.target && !earned.has(badge.id));
       const insert = this.db.prepare("INSERT INTO achievement_unlocks(chat_id,sender_id,badge_id,unlocked_at) VALUES (?,?,?,?)");
-      for (const badge of fresh) insert.run(scope.chat_id, scope.sender_id, badge.id, now);
+      for (const badge of fresh) {
+        insert.run(scope.chat_id, scope.sender_id, badge.id, now);
+        this.queueBadge(scope.chat_id, badge.id, `Achievement unlocked for ${name || "Player"}!\n` +
+          `${badge.name} - ${badge.target} ${METRIC_LABELS[badge.metric].toLowerCase()}`, now);
+      }
       const notice = fresh.length
         ? `Achievement unlocked for ${name || "Player"}!\n${fresh.map((badge) =>
           `${badge.name} - ${badge.target} ${METRIC_LABELS[badge.metric].toLowerCase()}`).join("\n")}`

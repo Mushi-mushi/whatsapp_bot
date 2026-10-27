@@ -60,6 +60,7 @@ import { paintImage } from "./handlers/commands/paint.js";
 import { PetStore } from "./pets/store.js";
 import { PetService } from "./pets/service.js";
 import { petPortrait } from "./pets/art.js";
+import { achievementBadge } from "./achievements/art.js";
 
 const AUTH_DIR = process.env.AUTH_DIR ?? "auth";
 const DB_PATH = process.env.DB_PATH ?? "data/bot.db";
@@ -235,11 +236,17 @@ async function main(): Promise<void> {
       // Artwork generation may yield while the group disables or pauses its pet.
       if (pets.deliveryDecision(delivery) !== true) throw new Error("Pet delivery state changed before sending");
       await transport.sendImage(chatId, image, text);
+    } else if (delivery.achievement_badge_id) {
+      const image = await achievementBadge(delivery.achievement_badge_id);
+      if (!achievements.enabled(chatId)) throw new Error("Achievement tracking was disabled before sending the badge");
+      await transport.sendImage(chatId, image, text);
     } else {
       await transport.sendText(chatId, text);
     }
   }, logger, () => transport.getStatus().state === "open", {
-    canSend: (delivery) => pets.deliveryDecision(delivery),
+    canSend: (delivery) => delivery.achievement_badge_id
+      ? achievements.enabled(delivery.chat_id)
+      : pets.deliveryDecision(delivery),
     onSent: (delivery) => pets.delivered(delivery),
   });
   deliveries.start();

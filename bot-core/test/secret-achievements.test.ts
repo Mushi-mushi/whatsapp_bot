@@ -138,6 +138,10 @@ describe("surprise achievement rules", () => {
   it("queues debt-free unlocks for participants only, including dashboard payments and mute deductions", () => {
     const { db, store, interactions } = setup();
     store.record(CHAT, PN, "Alice", ["messages"], NOW);
+    const outbox = new OutboxStore(db);
+    const firstWords = outbox.claim(Date.now())!;
+    expect(firstWords.achievement_badge_id).toBe("messages-1");
+    outbox.sent(firstWords);
     interactions.addDebt(PN, 999);
     interactions.removeDebt(PN, 999);
     expect(new OutboxStore(db).claim(Date.now())).toBeUndefined();
@@ -145,8 +149,8 @@ describe("surprise achievement rules", () => {
     interactions.removeDebt(PN, 999);
     expect(new OutboxStore(db).claim(Date.now())).toBeUndefined();
     interactions.removeDebt(PN, 1);
-    const outbox = new OutboxStore(db);
     const announcement = outbox.claim(Date.now())!;
+    expect(announcement.achievement_badge_id).toBe("debt-free");
     expect(announcement.chat_id).toBe(CHAT);
     expect(announcement.body).toContain("Debt-Free, Briefly");
     expect(announcement.body).toContain("Alice");
@@ -155,6 +159,7 @@ describe("surprise achievement rules", () => {
     interactions.removeDebt(PN, 1_000);
     expect(outbox.claim(Date.now())).toBeUndefined();
     store.record(CHAT, BOB, "Bob", ["messages"], NOW);
+    outbox.sent(outbox.claim(Date.now())!);
     interactions.addDebt(BOB, 1_000);
     interactions.mute(CHAT, PN, BOB, 10, NOW);
     expect(outbox.claim(Date.now())?.body).toContain("Debt-Free, Briefly");

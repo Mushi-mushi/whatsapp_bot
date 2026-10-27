@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const DATABASE_SCHEMA_VERSION = 16;
+export const DATABASE_SCHEMA_VERSION = 17;
 
 // Single SQLite database (WAL) for config, dedup, and analytics.
 export function openDatabase(path: string): Database.Database {
@@ -487,6 +487,17 @@ function migrate(db: Database.Database): void {
           PRIMARY KEY(chat_id, sender_id, kind, fact_key)
         );
         PRAGMA user_version = 16;
+      `);
+    })();
+  }
+  if (version < 17) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS achievement_badge_deliveries (
+          outbox_id INTEGER PRIMARY KEY REFERENCES outbox(id) ON DELETE CASCADE,
+          badge_id TEXT NOT NULL
+        );
+        PRAGMA user_version = 17;
       `);
     })();
   }

@@ -10,6 +10,7 @@ export interface Delivery {
   claim_token: string;
   attempts: number;
   pet_event_id?: string | null;
+  achievement_badge_id?: string | null;
 }
 
 function failureKind(error: string | null): DeliveryFailureKind {
@@ -54,7 +55,9 @@ export class OutboxStore {
         WHERE outcome = 'sending' AND claim_token IN (SELECT claim_token FROM outbox WHERE status = 'sending' AND lease_until <= ?)`)
         .run(now, now);
       this.db.prepare("UPDATE outbox SET status = 'failed', last_error = 'Delivery lease expired', last_failure_at = ? WHERE status = 'sending' AND lease_until <= ? AND attempts >= 5").run(now, now);
-      const row = this.db.prepare(`SELECT * FROM outbox WHERE attempts < 5 AND
+      const row = this.db.prepare(`SELECT outbox.*, badges.badge_id AS achievement_badge_id
+        FROM outbox LEFT JOIN achievement_badge_deliveries badges ON badges.outbox_id = outbox.id
+        WHERE attempts < 5 AND
         ((status = 'pending' AND available_at <= ?) OR (status = 'sending' AND lease_until <= ?))
         ORDER BY id LIMIT 1`).get(now, now) as Delivery | undefined;
       if (!row) return undefined;

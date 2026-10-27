@@ -91,6 +91,15 @@ streak. These records persist across restarts and respect verified identities.
 
 Unlocks are announced in the same chat once per badge. `bot.achievements`
 shows your unlocked badges and progress towards the rest in the current chat.
+Each newly earned badge also sends its own original illustrated shield image:
+384 x 384 PNG artwork with a themed emblem, bronze/silver/gold tiers for regular
+badges, and purple accents for secrets. The player's name and badge details
+appear in its caption, using the configured bot prefix. Images are rendered
+locally without an external image-generation service or system fonts.
+Badge images use the persistent outbox: disconnected/failed sends retry, and
+disabling achievements or removing chat approval cancels unsent badge images.
+Unlocking and queuing artwork are atomic. Existing earned badges are not resent
+after upgrading, and looking up achievements does not send badge pictures.
 This command is free and does not count towards command-use badges (it still
 counts as a message). Unknown commands do not count as command use; duplicate
 deliveries, bot/protocol messages, wrong answers and stale answers do not earn
@@ -154,6 +163,9 @@ previously recorded dates.
 
 Database schema 16 adds secret-achievement facts without resetting existing
 progress or badges. Mute timings and billing use the existing persisted records.
+Schema 17 adds badge-image delivery metadata, preserving pending text deliveries,
+existing badges, and progress. Pruning delivery history removes its image metadata
+without deleting the earned badges.
 
 ### Trivia category bans
 
