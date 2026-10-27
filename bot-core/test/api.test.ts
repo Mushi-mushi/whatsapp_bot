@@ -15,6 +15,7 @@ import type { BotConfig, ConfigSaveResponse, ProfileDetail, ProfilesResponse } f
 import type { OperationsResponse, RemindersResponse, ReminderCancelResponse, TellsResponse, FailedDeliveriesResponse, DeliveryHistoryResponse, AuditResponse } from "../../shared/api.js";
 import { memoryKey } from "../src/state/identity.js";
 import { OutboxStore } from "../src/state/outbox.js";
+import { TriviaBanStore } from "../src/state/trivia-bans.js";
 import { BackupWorker } from "../src/state/backups.js";
 import { DeliveryWorker } from "../src/state/deliveries.js";
 import { AuditStore } from "../src/state/audit.js";
@@ -49,6 +50,7 @@ async function setup(apiToken: string | undefined = "test-token", allowInsecureA
     backups: new BackupWorker(db, { retentionDays: 14 }, logger),
     configStore, knownChats: new KnownChatsStore(db),
     triviaScores: new TriviaScoreStore(db),
+    triviaBans: new TriviaBanStore(db),
     duelScores: new DuelWinStore(db),
     karma: new KarmaStore(db),
     seenActivity: new SeenActivityStore(db),
@@ -73,6 +75,58 @@ async function setup(apiToken: string | undefined = "test-token", allowInsecureA
   cleanup.push(async () => { await jobs.stop(); runtime.dispose(); await app.close(); db.close(); });
   return { app, deps, listeners, runtime, discipline, interactions, jobs, db };
 }
+
+describe("trivia category bans API", () => {
+  it("enforces and removes a ban across verified phone/LID aliases", async () => {
+    const { deps } = await setup();
+    const phone = "34600000001@s.whatsapp.net";
+    const lid = "987654321@lid";
+    deps.contacts.upsertMany([{ jid: lid, phone, name: "Alice" }]);
+    deps.triviaBans.set(lid, 21, "Sports", 2);
+    expect(deps.triviaBans.until(phone, 21)).toBeGreaterThan(Date.now());
+    deps.triviaBans.remove(phone, 21);
+    expect(deps.triviaBans.until(lid, 21)).toBeNull();
+  });
+
+  it("ends an affected session and expires bans without a restart", async () => {
+    const { app, deps, runtime } = await setup();
+    deps.knownChats.upsert([{ id: "group@g.us", name: "Friends" }]);
+    runtime.triviaSessions.set("group@g.us", { token: null, category: { id: 21, name: "Sports" }, language: "en", queue: [] });
+    const response = await app.inject({ method: "POST", url: "/api/trivia/bans", headers: { authorization: "Bearer test-token" },
+      payload: { chatId: "group@g.us", categoryId: 21, days: 1 } });
+    expect(response.statusCode).toBe(200);
+    expect(runtime.triviaSessions.has("group@g.us")).toBe(false);
+    const until = response.json().ban.until;
+    expect(deps.triviaBans.until("group@g.us", 21, until - 1)).toBe(until);
+    expect(deps.triviaBans.until("group@g.us", 21, until)).toBeNull();
+    expect(deps.triviaBans.list(until)).toEqual([]);
+  });
+
+  it("persists scoped bans, queues one announcement, validates inputs and allows early removal", async () => {
+    const { app, deps, db, runtime } = await setup();
+    const headers = { authorization: "Bearer test-token" };
+    deps.knownChats.upsert([{ id: "group@g.us", name: "Friends" }]);
+    const payload = { chatId: "group@g.us", categoryId: 21, days: 3 };
+    expect((await app.inject({ method: "POST", url: "/api/trivia/bans", payload })).statusCode).toBe(401);
+    for (const invalid of [{ ...payload, days: 0 }, { ...payload, days: 1.5 }, { ...payload, categoryId: 100 }, { ...payload, chatId: "unknown" }]) {
+      expect((await app.inject({ method: "POST", url: "/api/trivia/bans", headers, payload: invalid })).statusCode).toBe(400);
+    }
+    const result = await app.inject({ method: "POST", url: "/api/trivia/bans", headers, payload });
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toMatchObject({ announcementQueued: true, ban: { chatId: "group@g.us", categoryId: 21 } });
+    expect(new TriviaBanStore(db).until("group@g.us", 21)).toBeGreaterThan(Date.now());
+    expect(runtime.triviaBanUntil("other@g.us", 21)).toBeNull();
+    const delivery = deps.outbox.claim(Date.now())!;
+    expect(delivery.chat_id).toBe("group@g.us");
+    expect(delivery.body).toContain("Sports is unavailable for 3 days");
+    expect(deps.outbox.claim(Date.now())).toBeUndefined();
+    const settings = await app.inject({ method: "GET", url: "/api/trivia/settings", headers });
+    expect(settings.json().bans).toHaveLength(1);
+    expect(deps.audit.list(1).entries[0].action).toBe("trivia.ban");
+    expect((await app.inject({ method: "DELETE", url: "/api/trivia/bans", headers, payload: { chatId: payload.chatId, categoryId: 21 } })).statusCode).toBe(200);
+    expect(runtime.triviaBanUntil(payload.chatId, 21)).toBeNull();
+  });
+});
 
 describe("billing API", () => {
   it("adds positive fake debt through canonical contact identities and audits without exposing the JID", async () => {
@@ -113,6 +167,36 @@ describe("billing API", () => {
     expect(audit.targetId).toMatch(/^billing:/);
     expect(JSON.stringify(audit)).not.toContain(phoneJid);
     expect(JSON.stringify(audit)).not.toContain(lid);
+  });
+
+  it("removes fake debt without reducing lifetime counts and rejects overpayment", async () => {
+    const { app, deps, interactions } = await setup();
+    const headers = { authorization: "Bearer test-token" };
+    const phoneJid = "34600000003@s.whatsapp.net";
+    const lid = "987654322@lid";
+    deps.contacts.upsertMany([{ jid: lid, phone: phoneJid, name: "Si Ying" }]);
+    interactions.increment(lid, null, 5_000);
+
+    expect((await app.inject({ method: "POST", url: "/api/billing/payments", payload: { senderId: lid, amountCents: 100 } })).statusCode).toBe(401);
+    const paid = await app.inject({
+      method: "POST", url: "/api/billing/payments", headers,
+      payload: { senderId: lid, amountCents: 1_500 },
+    });
+    expect(paid.statusCode).toBe(200);
+    expect(paid.json()).toMatchObject({
+      ok: true,
+      customer: { senderId: phoneJid, debtCents: 3_500, interactionCount: 1, muteAllowanceMinutes: 35 },
+    });
+    expect(interactions.total(phoneJid)).toBe(1);
+    expect(interactions.debt(phoneJid)).toBe(3_500);
+
+    const overpaid = await app.inject({
+      method: "POST", url: "/api/billing/payments", headers,
+      payload: { senderId: lid, amountCents: 3_501 },
+    });
+    expect(overpaid.statusCode).toBe(409);
+    expect(interactions.debt(phoneJid)).toBe(3_500);
+    expect(deps.audit.list(1).entries[0]).toMatchObject({ action: "billing.payment", outcome: "rejected" });
   });
 });
 
@@ -959,6 +1043,28 @@ describe("sleep discipline controls", () => {
 });
 
 describe("configuration revisions", () => {
+  it("only enables achievements for approved chats through the revision-protected config API", async () => {
+    const { app, deps } = await setup();
+    const headers = { authorization: `Bearer ${"test-token"}` };
+    const loaded = await app.inject({ url: "/api/config", headers });
+    const original = loaded.json<BotConfig>();
+    const updateHeaders = { ...headers, "if-match": loaded.headers.etag! };
+    const rejected = await app.inject({
+      method: "PUT", url: "/api/config", headers: updateHeaders,
+      payload: { ...original, achievementChats: ["group@g.us"] },
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json().error.fieldErrors.achievementChats).toBeTruthy();
+    expect(deps.configStore.load().achievementChats).toEqual([]);
+    const saved = await app.inject({
+      method: "PUT", url: "/api/config", headers: updateHeaders,
+      payload: { ...original, approvedSenders: ["group@g.us"], achievementChats: ["group@g.us"] },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(deps.configStore.load().achievementChats).toEqual(["group@g.us"]);
+    expect(deps.onConfigChange).toHaveBeenCalledOnce();
+  });
+
   it("validates and persists retention settings through the revision-protected config API", async () => {
     const { app, deps } = await setup();
     const headers = { authorization: "Bearer test-token" };

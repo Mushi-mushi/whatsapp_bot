@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const DATABASE_SCHEMA_VERSION = 13;
+export const DATABASE_SCHEMA_VERSION = 15;
 
 // Single SQLite database (WAL) for config, dedup, and analytics.
 export function openDatabase(path: string): Database.Database {
@@ -441,6 +441,39 @@ function migrate(db: Database.Database): void {
           PRIMARY KEY(chat_id, sender_id)
         );
         PRAGMA user_version = 13;
+      `);
+    })();
+  }
+  if (version < 14) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS achievement_progress (
+          chat_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+          metric TEXT NOT NULL, count INTEGER NOT NULL CHECK(count >= 0),
+          PRIMARY KEY(chat_id, sender_id, metric)
+        );
+        CREATE TABLE IF NOT EXISTS achievement_unlocks (
+          chat_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+          badge_id TEXT NOT NULL, unlocked_at INTEGER NOT NULL,
+          PRIMARY KEY(chat_id, sender_id, badge_id)
+        );
+        PRAGMA user_version = 14;
+      `);
+    })();
+  }
+  if (version < 15) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS achievement_activity (
+          chat_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+          last_at INTEGER NOT NULL,
+          PRIMARY KEY(chat_id, sender_id)
+        );
+        CREATE TABLE IF NOT EXISTS achievement_streaks (
+          chat_id TEXT PRIMARY KEY, sender_id TEXT NOT NULL,
+          count INTEGER NOT NULL CHECK(count >= 1), updated_at INTEGER NOT NULL
+        );
+        PRAGMA user_version = 15;
       `);
     })();
   }

@@ -1,5 +1,6 @@
 import type { IncomingMessage } from "../../transport/types.js";
-import { disciplineKey, type SeenActivityStore, type SeenRecord } from "../../state/repos.js";
+import type { SeenActivityStore, SeenRecord } from "../../state/repos.js";
+import { disciplineKey } from "../../state/identity.js";
 import { normalizeName } from "../../router/normalize.js";
 import { chatKey } from "./user-context.js";
 

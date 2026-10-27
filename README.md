@@ -30,6 +30,72 @@ for the dashboard to be healthy.
 
 An active `bot.siesta` can be cancelled from the dashboard's **Connection** tab.
 
+### Per-chat achievements
+
+Under **Access > Achievements**, enable individual approved chats and click
+**Save changes**. Achievements are off by default, including in newly approved
+chats. Removing a chat's approval also removes its achievement opt-in.
+The API rejects achievement opt-ins that are not in `approvedSenders`.
+Saving an enable or re-enable queues an announcement in that chat. Ordinary
+saves and disabling do not announce anything. Announcements use the persistent
+outbox and retry if WhatsApp is disconnected; enabling and queuing are atomic.
+
+Progress starts at zero when first enabled; existing activity and game scores
+are not imported. Disabling achievements pauses counting and announcements
+without deleting progress or earned badges. Re-enabling resumes where players
+left off. Progress is persistent and separate per chat and WhatsApp identity,
+including verified phone/LID aliases; display-name changes do not reset it.
+
+| Activity | Badge thresholds |
+| --- | --- |
+| Messages accepted by the bot's normal guards, including commands and media | 1, 100, 1,000 |
+| Recognized command dispatches, including configured aliases | 1, 25, 100 |
+| Correct trivia answers (classic or fastest correct duel answers) | 1, 10, 100 |
+| Trivia duel wins | 1, 5, 25 |
+| Returning after being quiet in this chat | 1, 7, 30 whole days |
+| Consecutive human messages in this chat | 5, 10, 25 |
+| Total minutes someone has been muted in this chat | 60, 360, 1,440 |
+| Times someone was muted in this chat | 1, 5, 25 |
+| Total fake debt charged in this chat | 1,000, 5,000, 25,000 cents |
+
+Silence badges unlock on the next tracked message, never on a first-ever
+message. Elapsed time is measured by the bot between tracked messages, including
+time offline or with achievements disabled. Messages sent while disabled are
+not tracked. Consecutive-message streaks reset when another tracked person
+speaks; bot replies do not interrupt them. Commands and media count for both.
+Streaks pause while tracking is disabled. The command displays your best
+completed quiet period and longest streak, not a live silence timer or current
+streak. These records persist across restarts and respect verified identities.
+
+Unlocks are announced in the same chat once per badge. `bot.achievements`
+shows your unlocked badges and progress towards the rest in the current chat.
+This command is free and does not count towards command-use badges (it still
+counts as a message). Unknown commands do not count as command use; duplicate
+deliveries, bot/protocol messages, wrong answers and stale answers do not earn
+extra progress. Normal sleep, siesta and own-message guards still apply.
+An unlock remains saved if its announcement cannot be delivered; send failures
+are logged through the normal handler error path.
+
+Database schema 14 adds achievement counters and unlocks without importing
+historical data. Configuration migration 19 adds `bot.achievements`, preserving
+custom command mappings.
+Database schema 15 adds last-message times and current chat streaks. These
+start fresh after upgrading; existing badges and counters are preserved.
+
+### Trivia category bans
+
+In the dashboard's **Trivia** tab, choose a chat, category and duration (1-365
+whole days), then select **Ban & announce**. The bot queues an announcement in
+that chat naming the category, duration and exact expiry. Delivery retries use
+the existing outbox if WhatsApp is disconnected.
+
+Bans affect classic trivia, duels and random question batches in the selected
+chat only. An affected active session stops; unrelated sessions continue with
+banned questions excluded. Bans persist across restarts and expire automatically
+after the chosen number of 24-hour days. The tab lists active bans and their
+expiry times, with an early-unban control. Actions are applied immediately and
+recorded in the administrative audit log, independently of **Save changes**.
+
 ### Just-for-fun billing
 
 `bot.billing` shows your lifetime interaction count, outstanding fake debt across
@@ -38,10 +104,10 @@ Use `bot.billing Alice Smith` to view another person's global bill by their name
 in the current chat. Unknown or ambiguous names are rejected; omitting the name
 always shows your own bill. Looking up someone else's bill is free too.
 `bot.cost` lists prices for configured commands; `bot.help` includes prices too.
-Billing and cost checks (including custom aliases) are free.
+Billing, cost and achievement checks (including custom aliases) are free.
 The authenticated dashboard's **Billing** tab lists saved contacts' global balances
-and lets the owner add manual fake-debt charges. Each added EUR 1.00 grants one
-minute of mute allowance; additions are recorded in the administrative audit log.
+and lets the owner add charges or remove fake debt. Each outstanding EUR 1.00 grants
+one minute of mute allowance; adjustments are recorded in the administrative audit log.
 
 | Action | Fake debt added to caller |
 | --- | --- |
@@ -50,7 +116,7 @@ minute of mute allowance; additions are recorded in the administrative audit log
 | `bot.siesta <minutes>` | EUR 0.10 per accepted minute, including forced sleep |
 | `bot.trivia skip` or `bot.trivia next` | EUR 0.20 per accepted skip, not an extra fee |
 | `bot.mute <name> <minutes>` | EUR 0.20 per accepted minute |
-| Other recognized commands | EUR 0.10 |
+| Other recognized commands (except free checks) | EUR 0.10 |
 
 Any participant in an approved group can use `bot.mute Alice 3`. Each whole
 EUR 1.00 of **Alice's** outstanding debt permits one minute of mute. A successful

@@ -36,7 +36,7 @@ describe("billing adjustments", () => {
     mount();
 
     await screen.findByText(/Outstanding fake debt:/);
-    fireEvent.change(screen.getByLabelText("Charge (EUR)"), { target: { value: "1440.00" } });
+    fireEvent.change(screen.getByLabelText("Amount (EUR)"), { target: { value: "1440.00" } });
     fireEvent.click(screen.getByRole("button", { name: "Add charge" }));
 
     await waitFor(() => expect(add).toHaveBeenCalledWith({ senderId: initial.senderId, amountCents: 144_000 }));
@@ -48,10 +48,33 @@ describe("billing adjustments", () => {
     const add = vi.spyOn(api, "addBillingCharge");
     mount();
     await screen.findByText(/Outstanding fake debt:/);
-    const amount = screen.getByLabelText("Charge (EUR)");
+    const amount = screen.getByLabelText("Amount (EUR)");
     fireEvent.change(amount, { target: { value: "10000.01" } });
     expect((screen.getByRole("button", { name: "Add charge" }) as HTMLButtonElement).disabled).toBe(true);
     expect(amount.getAttribute("aria-invalid")).toBe("true");
     expect(add).not.toHaveBeenCalled();
+  });
+
+  it("removes part of the balance and blocks removing more than is owed", async () => {
+    const owing = { ...initial, debtCents: 5_000, muteAllowanceMinutes: 50 };
+    vi.mocked(api.getBilling).mockResolvedValue({ customers: [owing], sampledAt: Date.now() });
+    const remove = vi.spyOn(api, "removeBillingDebt").mockResolvedValue({
+      ok: true,
+      customer: { ...owing, debtCents: 3_500, muteAllowanceMinutes: 35 },
+    });
+    mount();
+    await screen.findByText(/Outstanding fake debt:/);
+    const amount = screen.getByLabelText("Amount (EUR)");
+    const button = screen.getByRole("button", { name: "Remove from bill" }) as HTMLButtonElement;
+    fireEvent.change(amount, { target: { value: "15.00" } });
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => expect(remove).toHaveBeenCalledWith({ senderId: owing.senderId, amountCents: 1_500 }));
+    expect((await screen.findByRole("status")).textContent).toContain("Removed €15.00 from Si Ying's fake bill.");
+    expect(await screen.findByText(/35 min/)).toBeTruthy();
+    fireEvent.change(amount, { target: { value: "36.00" } });
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText("The amount to remove exceeds the outstanding fake debt.")).toBeTruthy();
+    expect(remove).toHaveBeenCalledTimes(1);
   });
 });

@@ -95,13 +95,24 @@ export const ConfigSchema = z.object({
   respondToOwnCommands: z.boolean().default(true),
 
   approvedSenders: z.array(z.string()).default([]),
+  achievementChats: z.array(z.string().trim().min(1)).default([]),
 
   // trigger -> command name (e.g. "bot.roast" -> "roast", "bot.roast.neg" -> "roast").
   commands: z.record(z.string(), z.string()).default({}),
 
   // Static keyword replies (lowercased key -> reply).
   keywordResponses: z.record(z.string(), z.string()).default({}),
-} satisfies Record<keyof BotConfig, z.ZodTypeAny>) satisfies z.ZodType<BotConfig, z.ZodTypeDef, unknown>;
+} satisfies Record<keyof BotConfig, z.ZodTypeAny>).superRefine((config, ctx) => {
+  config.achievementChats.forEach((chat, index) => {
+    if (!config.approvedSenders.includes(chat) || (!chat.includes("@") && !/^\+?[\d ()-]+$/.test(chat))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["achievementChats", index],
+        message: "Achievements can only be enabled for an approved chat identity.",
+      });
+    }
+  });
+}) satisfies z.ZodType<BotConfig, z.ZodTypeDef, unknown>;
 
 export const DEFAULT_CONFIG: BotConfig = ConfigSchema.parse({
   commands: defaultCommands(),

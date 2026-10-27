@@ -21,6 +21,7 @@ import { PetStore } from "../src/pets/store.js";
 import type { Transport } from "../src/transport/types.js";
 import { AskQuotaStore } from "../src/state/ask-quota.js";
 import { InteractionStore } from "../src/state/interactions.js";
+import { AchievementStore } from "../src/state/achievements.js";
 import { approvedSenderGuard, dedupe, ignoreOwn } from "../src/middleware/index.js";
 import { SeenStore } from "../src/state/repos.js";
 
@@ -41,6 +42,7 @@ const legacyCommands = {
   "bot.instadelete": "instadelete", "bot.pet": "pet", "bot.services": "services",
   "bot.billing": "billing",
   "bot.cost": "cost", "bot.mute": "mute",
+  "bot.achievements": "achievements",
 };
 
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -64,6 +66,7 @@ function setup() {
     runtime, discipline: new SiestaDisciplineStore(db),
     askQuota: new AskQuotaStore(db),
     interactions,
+    achievements: new AchievementStore(db, () => configStore.load()),
     sentiment: new SentimentStore(db), complaints: new ComplaintStore(db),
     suggestions: new SuggestionStore(db),
     seenActivity: new SeenActivityStore(db), tells: new TellStore(db),
@@ -157,7 +160,7 @@ describe("command catalogue", () => {
     db.prepare("INSERT INTO kv VALUES ('config', ?)").run(JSON.stringify({ ...DEFAULT_CONFIG, commands }));
     db.prepare("INSERT INTO kv VALUES ('config_version', '16')").run();
     expect(configStore.load().commands).toMatchObject({ "bot.billing": "billing", ...commands });
-    expect(db.prepare("SELECT value FROM kv WHERE key = 'config_version'").get()).toEqual({ value: "18" });
+    expect(db.prepare("SELECT value FROM kv WHERE key = 'config_version'").get()).toEqual({ value: "19" });
   });
 });
 

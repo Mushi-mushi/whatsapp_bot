@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusCard } from "@/components/StatusCard";
 import { ApprovedSenders } from "@/components/ApprovedSenders";
+import { AchievementsCard } from "@/components/AchievementsCard";
 import { GeneralCard } from "@/components/GeneralCard";
 import { AiCard } from "@/components/AiCard";
 import { PaintCard } from "@/components/PaintCard";
@@ -19,17 +20,19 @@ import { PendingTellsCard } from "@/components/PendingTellsCard";
 import { LeaderboardsCard } from "@/components/LeaderboardsCard";
 import { SuggestionsCard } from "@/components/SuggestionsCard";
 import { BillingCard } from "@/components/BillingCard";
+import { TriviaSettings } from "@/components/TriviaSettings";
 import { FieldValidationProvider, useFieldErrors } from "@/components/fields";
 import { LoadingState, QueryError } from "@/components/QueryFeedback";
 import { AlarmClock, Bot, Brain, Check, DollarSign, Image, Lightbulb, Loader2, Moon, RotateCw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles, Trophy } from "lucide-react";
 
 const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;
 
-type Tab = "connection" | "general" | "access" | "billing" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations" | "reminders" | "tells" | "leaderboards" | "suggestions";
+type Tab = "connection" | "general" | "access" | "billing" | "ai" | "paint" | "memory" | "pets" | "discipline" | "operations" | "reminders" | "tells" | "leaderboards" | "suggestions" | "trivia";
 
 // Which config fields live on which tab — drives the per-tab "unsaved" dot.
 const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
   connection: [],
+  trivia: [],
   pets: [],
   discipline: [],
   operations: [],
@@ -43,7 +46,7 @@ const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
     "transcriptionTimeoutSeconds", "siestaMaxCalls",
     "retentionEnabled", "analyticsRetentionDays", "deliveryRetentionDays",
   ],
-  access: ["approvedSenders"],
+  access: ["approvedSenders", "achievementChats"],
   billing: [],
   ai: [
     "askEnabled", "askMaxCalls", "ollamaModel", "ollamaBaseUrl", "ollamaTimeoutSeconds", "ollamaKeepAlive",
@@ -248,6 +251,9 @@ function Dashboard() {
         <TabButton active={tab === "leaderboards"} onClick={() => selectTab("leaderboards")}>
           <Trophy className="h-4 w-4" /> Leaderboards
         </TabButton>
+        <TabButton active={tab === "trivia"} onClick={() => selectTab("trivia")}>
+          <Trophy className="h-4 w-4" /> Trivia
+        </TabButton>
         <TabButton active={tab === "suggestions"} onClick={() => selectTab("suggestions")}>
           <Lightbulb className="h-4 w-4" /> Suggestions
         </TabButton>
@@ -260,6 +266,7 @@ function Dashboard() {
       {tab === "leaderboards" && <LeaderboardsCard />}
       {tab === "suggestions" && <SuggestionsCard />}
       {tab === "billing" && <BillingCard />}
+      {tab === "trivia" && <TriviaSettings />}
 
       {tab === "discipline" && (
         <div className="grid min-w-0 gap-4">
@@ -289,12 +296,16 @@ function Dashboard() {
           <ApprovedSenders
             senders={draft.approvedSenders}
             chats={chatsQuery.data?.chats ?? []}
-            onChange={(approvedSenders) => patch({ approvedSenders })}
+            onChange={(approvedSenders) => patch({
+              approvedSenders,
+              achievementChats: draft.achievementChats.filter((chat) => approvedSenders.includes(chat)),
+            })}
             onRefreshChats={() => chatsQuery.refetch()}
             loading={chatsQuery.isPending}
             refreshing={chatsQuery.isFetching}
             error={chatsQuery.error?.message}
           />
+          <AchievementsCard config={draft} chats={chatsQuery.data?.chats ?? []} onChange={patch} />
         </fieldset>
       )}
 

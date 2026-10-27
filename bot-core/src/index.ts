@@ -20,9 +20,11 @@ import {
 } from "./state/repos.js";
 import { RuntimeState } from "./state/runtime.js";
 import { OutboxStore } from "./state/outbox.js";
+import { TriviaBanStore } from "./state/trivia-bans.js";
 import { AuditStore } from "./state/audit.js";
 import { AskQuotaStore } from "./state/ask-quota.js";
 import { InteractionStore } from "./state/interactions.js";
+import { AchievementStore } from "./state/achievements.js";
 import { DeliveryWorker } from "./state/deliveries.js";
 import { RetentionWorker } from "./state/retention.js";
 import { BackupWorker, backupOptions } from "./state/backups.js";
@@ -35,6 +37,7 @@ import { registerConfiguredCommands } from "./router/commands.js";
 import { Context, type Services } from "./router/context.js";
 import {
   activityTracker,
+  achievementObserver,
   approvedSenderGuard,
   dedupe,
   ignoreOwn,
@@ -86,10 +89,13 @@ async function main(): Promise<void> {
   const userProfiles = new UserProfileStore(db);
   const discipline = new SiestaDisciplineStore(db);
   const runtime = new RuntimeState((err, chatId) => logger.error({ err, chatId }, "trivia scheduled work failed"));
+  const triviaBans = new TriviaBanStore(db);
+  runtime.triviaBanUntil = (chatId, categoryId) => triviaBans.until(chatId, categoryId);
 
   // Cached config, refreshed when the API saves changes.
   let config: BotConfig = configStore.load();
   const getConfig = () => config;
+  const achievements = new AchievementStore(db, getConfig);
 
   // Reload cached config and re-apply command registration after a config change.
   const reloadConfig = () => {
@@ -134,6 +140,7 @@ async function main(): Promise<void> {
     .use(ignoreOwn(runtime, seenActivity))
     .use(sleepGuard(discipline, logger))
     .use(siestaGuard(runtime))
+    .use(achievementObserver(achievements))
     .use(instagramGuard(logger))
     .use(activityTracker(tells))
     .use(mediaPolicy);
@@ -141,7 +148,7 @@ async function main(): Promise<void> {
   bot.on("audio", jobs.wrap(makeAudioHandler(logger)));
   bot.on("image", jobs.wrap(paintImage));
   bot.hears(KARMA_PATTERN, makeKarmaHears(karma, seenActivity));
-  bot.fallback(makeFallback({ runtime, sentiment, suggestions, triviaScores, duelScores, userMemory, profiler }));
+  bot.fallback(makeFallback({ runtime, sentiment, suggestions, triviaScores, duelScores, userMemory, profiler, achievements }));
 
   const commandRegistry = buildCommandRegistry({
     runtime,
@@ -161,10 +168,11 @@ async function main(): Promise<void> {
     profiler,
     settings,
     pets,
+    achievements,
   });
   const registerCommands = (cfg: BotConfig) => {
     registerConfiguredCommands(bot, cfg.commands, commandRegistry, jobs,
-      (trigger, name) => logger.warn({ trigger, name }, "No handler registered for command"), interactions);
+      (trigger, name) => logger.warn({ trigger, name }, "No handler registered for command"), interactions, achievements);
   };
   registerCommands(config);
 
@@ -186,7 +194,7 @@ async function main(): Promise<void> {
       transport,
       configStore,
       jobs,
-      outbox,
+      outbox, triviaBans,
       backups,
       reminders,
       tells,

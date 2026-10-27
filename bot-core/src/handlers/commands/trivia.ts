@@ -1,6 +1,6 @@
 import type { Handler } from "../../router/router.js";
 import type { BotConfig } from "../../config/schema.js";
-import type { RuntimeState, TriviaGame, TriviaSession, TriviaDuel } from "../../state/runtime.js";
+import type { RuntimeState, TriviaGame, TriviaSession, TriviaDuel, TriviaQuestion } from "../../state/runtime.js";
 import type { TriviaScoreStore, DuelWinStore } from "../../state/repos.js";
 import { chatKey } from "./user-context.js";
 import { messagePerson, playerLabel } from "./local-target.js";
@@ -8,6 +8,7 @@ import { decodeEntities } from "../../util/net.js";
 import { ollamaChat } from "../../util/ollama.js";
 import type { InteractionStore } from "../../state/interactions.js";
 import { TRIVIA_SKIP_COST_CENTS } from "../../router/pricing.js";
+import type { AchievementStore } from "../../state/achievements.js";
 
 const LABELS = ["A", "B", "C", "D", "E", "F"];
 const TIMEOUT_MS = 90_000;
@@ -82,6 +83,21 @@ export function categoryKeywordList(): string {
   return [...new Set(Object.keys(CATEGORIES))].sort().join(", ");
 }
 
+export function triviaCategories(): (Category & { sourceName: string })[] {
+  const sourceNames: Record<number, string> = {
+    10: "Entertainment: Books", 11: "Entertainment: Film", 12: "Entertainment: Music",
+    13: "Entertainment: Musicals & Theatres", 14: "Entertainment: Television", 15: "Entertainment: Video Games",
+    16: "Entertainment: Board Games", 17: "Science & Nature", 18: "Science: Computers", 19: "Science: Mathematics",
+    26: "Celebrities", 29: "Entertainment: Comics", 30: "Science: Gadgets",
+    31: "Entertainment: Japanese Anime & Manga", 32: "Entertainment: Cartoon & Animations",
+  };
+  const categories = new Map(Object.values(CATEGORIES).map((category) => [category.id, category]));
+  for (const [id, name] of Object.entries(sourceNames)) {
+    if (!categories.has(Number(id))) categories.set(Number(id), { id: Number(id), name: name.replace(/^(Entertainment|Science): /, "") });
+  }
+  return [...categories.values()].map((category) => ({ ...category, sourceName: sourceNames[category.id] ?? category.name }));
+}
+
 function resolveLanguage(keyword: string): TriviaLanguage | undefined {
   return LANGUAGES[keyword.trim().toLowerCase()];
 }
@@ -92,6 +108,7 @@ function languageLabel(language: TriviaLanguage): string {
 
 interface OpenTdbResult {
   question: string;
+  category?: string;
   correct_answer: string;
   incorrect_answers: string[];
 }
@@ -201,6 +218,7 @@ async function refillQueue(session: TriviaSession): Promise<boolean> {
       const correct = decodeEntities(q.correct_answer);
       session.queue.push({
         question: decodeEntities(q.question),
+        categoryId: session.category?.id ?? triviaCategories().find((category) => category.sourceName === decodeEntities(q.category ?? ""))?.id,
         correct,
         options: shuffle([correct, ...q.incorrect_answers.map(decodeEntities)]),
       });
@@ -227,17 +245,24 @@ function clearTrivia(runtime: RuntimeState, chatId: string, game: TriviaGame): v
 async function nextPrepared(
   session: TriviaSession,
   cfg: BotConfig,
-): Promise<{ question: string; options: string[]; correct: string } | null> {
+  runtime: RuntimeState,
+  chatId: string,
+): Promise<TriviaQuestion | null> {
+  if (session.category && runtime.triviaBanUntil(chatId, session.category.id)) return null;
+  session.queue = session.queue.filter((question) => question.categoryId === undefined || !runtime.triviaBanUntil(chatId, question.categoryId));
   if (session.queue.length === 0) {
     // One retry covers a token reset (exhausted) or a transient hiccup.
     if (!(await refillQueue(session)) && !(await refillQueue(session))) return null;
   }
-  const q = session.queue.shift()!;
+  session.queue = session.queue.filter((question) => question.categoryId === undefined || !runtime.triviaBanUntil(chatId, question.categoryId));
+  const q = session.queue.shift();
+  if (!q) return null;
   if (session.language === "es" && cfg.askEnabled) {
     const translated = await translateQuestionToSpanish(cfg, q.question, q.options, q.correct);
-    if (translated) return translated;
+    if (q.categoryId !== undefined && runtime.triviaBanUntil(chatId, q.categoryId)) return null;
+    if (translated) return { ...translated, categoryId: q.categoryId };
   }
-  return { question: q.question, options: q.options, correct: q.correct };
+  return q;
 }
 
 // Take the next prefetched question (refilling from opentdb as needed), arm its
@@ -260,7 +285,7 @@ export async function startQuestion(
     if (runtime.triviaSessions.get(chatId) !== session) return false;
   }
 
-  const prepared = await nextPrepared(session, cfg);
+  const prepared = await nextPrepared(session, cfg, runtime, chatId);
   if (runtime.triviaSessions.get(chatId) !== session) return false;
   if (!prepared) {
     runtime.triviaSessions.delete(chatId);
@@ -272,7 +297,7 @@ export async function startQuestion(
     ...prepared,
     askedAt: Date.now(),
     language: session.language,
-    categoryId: session.category?.id,
+    categoryId: session.category?.id ?? prepared.categoryId,
     categoryName: session.category?.name,
     mode: "classic",
     answered: new Set(),
@@ -351,7 +376,7 @@ export async function startDuelQuestion(
   cfg: BotConfig,
   duel: TriviaDuel,
 ): Promise<boolean> {
-  const prepared = await nextPrepared(duel.session, cfg);
+  const prepared = await nextPrepared(duel.session, cfg, runtime, chatId);
   if (runtime.isDisposed || runtime.triviaDuels.get(chatId) !== duel) return false;
   if (!prepared) {
     endDuel(runtime, chatId);
@@ -362,7 +387,7 @@ export async function startDuelQuestion(
     ...prepared,
     askedAt: Date.now(),
     language: duel.language,
-    categoryId: duel.category?.id,
+    categoryId: duel.category?.id ?? prepared.categoryId,
     categoryName: duel.category?.name,
     mode: "duel",
     answered: new Set(),
@@ -446,6 +471,7 @@ export interface TriviaAnswerCtx {
   runtime: RuntimeState;
   scores: TriviaScoreStore;
   duelScores: DuelWinStore;
+  achievements?: AchievementStore;
   chatId: string;
   senderId: string;
   senderName: string;
@@ -476,7 +502,8 @@ export async function handleTriviaAnswer(c: TriviaAnswerCtx): Promise<boolean> {
   if (result.correct) {
     game.answered.add(playerId);
     const points = c.scores.add(chatId, playerId, c.senderName, 1);
-    await c.reply(`✅ Correct, ${c.senderName}! (+1 → ${points})`);
+    const notice = c.achievements?.record(chatId, playerId, c.senderName, ["trivia"]);
+    await c.reply(`✅ Correct, ${c.senderName}! (+1 → ${points})${notice ? `\n\n${notice}` : ""}`);
     if (runtime.triviaGames.get(chatId) !== game) return true;
     // First correct answer opens a short window so stragglers can still score.
     if (!game.closeTimer) {
@@ -518,6 +545,8 @@ async function handleDuelAttempt(
 
   // Fastest correct answer takes the question.
   player.score += 1;
+  const notice = c.achievements?.record(c.chatId, playerId, player.name,
+    player.score >= duel.target ? ["trivia", "duels"] : ["trivia"]);
   c.runtime.cancelTriviaTimer(c.chatId, game.timer);
   c.runtime.triviaGames.delete(c.chatId);
   if (player.score >= duel.target) {
@@ -525,12 +554,12 @@ async function handleDuelAttempt(
     await c.reply(
       `🏆 ${player.name} wins the duel! (${player.score}/${duel.target})\n` +
         `Final: ${duelStandings(duel)}\n` +
-        `${player.name} now has ${wins} duel win${wins === 1 ? "" : "s"} this month.`,
+        `${player.name} now has ${wins} duel win${wins === 1 ? "" : "s"} this month.${notice ? `\n\n${notice}` : ""}`,
     );
     endDuel(c.runtime, c.chatId);
     return true;
   }
-  await c.reply(`✅ ${player.name} takes it — ${player.score}/${duel.target}. Next up…\n${duelStandings(duel)}`);
+  await c.reply(`✅ ${player.name} takes it — ${player.score}/${duel.target}. Next up…\n${duelStandings(duel)}${notice ? `\n\n${notice}` : ""}`);
   scheduleNextDuelQuestion(c.runtime, c.chatId, c.reply, c.cfg);
   return true;
 }
@@ -723,6 +752,11 @@ export function makeTrivia(
         await ctx.reply("Spanish trivia needs AI features enabled in Settings (used to translate questions).");
         return;
       }
+      const bannedUntil = category && runtime.triviaBanUntil(chatId, category.id);
+      if (bannedUntil) {
+        await ctx.reply(`${category!.name} is unavailable until ${new Date(bannedUntil).toISOString()}. Choose another category.`);
+        return;
+      }
       const hostName = ctx.msg.senderName;
       const duel: TriviaDuel = {
         target,
@@ -785,6 +819,11 @@ export function makeTrivia(
       return;
     }
 
+    const bannedUntil = category && runtime.triviaBanUntil(chatId, category.id);
+    if (bannedUntil) {
+      await ctx.reply(`${category!.name} is unavailable until ${new Date(bannedUntil).toISOString()}. Choose another category.`);
+      return;
+    }
     await ctx.reply(
       `🧩 Trivia time${category ? ` — ${category.name}` : ""} (${languageLabel(language)})! Reply with the letter or the answer. Every correct answer scores a point. \`bot.trivia stop\` to end, \`bot.trivia skip\` to skip, \`bot.trivia duel [${DUEL_TARGET_MIN}-${DUEL_TARGET_MAX}]\` for a race.`,
     );

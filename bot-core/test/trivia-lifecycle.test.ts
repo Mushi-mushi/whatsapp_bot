@@ -48,6 +48,44 @@ function setup() {
 }
 
 describe("trivia lifecycle", () => {
+  it.each(["sports", "duel sports", "movies", "duel film"])("rejects explicitly banned categories and aliases: %s", async (args) => {
+    const { runtime, sendText, command } = setup();
+    const until = Date.now() + 3 * 86_400_000;
+    runtime.triviaBanUntil = () => until;
+    await command(args);
+    expect(sendText.mock.calls[0][1]).toContain(`unavailable until ${new Date(until).toISOString()}`);
+    expect(runtime.triviaDuels.size).toBe(0);
+    expect(runtime.triviaGames.size).toBe(0);
+  });
+
+  it("filters newly fetched random questions by their OpenTDB category", async () => {
+    const { runtime, sendText } = setup();
+    runtime.triviaSessions.get(CHAT)!.queue = [];
+    runtime.triviaBanUntil = (_chat, categoryId) => categoryId === 21 ? Date.now() + 86_400_000 : null;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ response_code: 0, results: [
+      { category: "Sports", question: "Banned sports", correct_answer: "A", incorrect_answers: ["B"] },
+      { category: "History", question: "Allowed history", correct_answer: "A", incorrect_answers: ["B"] },
+    ] })));
+    await startQuestion(runtime, CHAT, (text) => sendText(CHAT, text), DEFAULT_CONFIG);
+    expect(runtime.triviaGames.get(CHAT)).toMatchObject({ question: "Allowed history", categoryId: 23 });
+  });
+
+  it("filters banned categories from prefetched random questions and allows them after expiry", async () => {
+    const { runtime, sendText } = setup();
+    const until = Date.now() + 86_400_000;
+    runtime.triviaBanUntil = (_chat, categoryId) => categoryId === 21 && Date.now() < until ? until : null;
+    runtime.triviaSessions.get(CHAT)!.queue = [
+      { ...question, question: "Banned sports", categoryId: 21 },
+      { ...question, question: "Allowed history", categoryId: 23 },
+    ];
+    await startQuestion(runtime, CHAT, (text) => sendText(CHAT, text), DEFAULT_CONFIG);
+    expect(runtime.triviaGames.get(CHAT)?.question).toBe("Allowed history");
+    runtime.cancelTrivia(CHAT);
+    vi.setSystemTime(until);
+    runtime.triviaSessions.set(CHAT, { token: "token", language: "en", queue: [{ ...question, categoryId: 21 }] });
+    expect(await startQuestion(runtime, CHAT, (text) => sendText(CHAT, text), DEFAULT_CONFIG)).toBe(true);
+  });
+
   it.each(["skip", "next", " SKIP "])("charges exactly EUR 0.20 only for accepted %s through the configured router", async (args) => {
     const { runtime, sendText, handler, interactions } = setup();
     const bot = new Bot();

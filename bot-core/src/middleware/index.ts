@@ -12,6 +12,21 @@ import { extractCommandToken, normalizeName } from "../router/normalize.js";
 import { normalizeJid } from "../state/identity.js";
 import type { InteractionStore } from "../state/interactions.js";
 import { MUTE_DEBT_CENTS_PER_MINUTE } from "../router/pricing.js";
+import type { AchievementStore } from "../state/achievements.js";
+
+export function achievementObserver(achievements: AchievementStore): Middleware {
+  return async (ctx, next) => {
+    const prefix = ctx.config.botReplyPrefix.trim();
+    const human = !ctx.msg.isBot && ctx.msg.kind !== "other" && !ctx.msg.raw.message?.protocolMessage &&
+      !(ctx.msg.fromMe && prefix && ctx.text.trimStart().startsWith(prefix));
+    const chat = chatKey(ctx.msg);
+    const notice = human
+      ? achievements.record(chat, messagePerson(ctx.msg), ctx.msg.senderName, ["messages"])
+      : null;
+    await next();
+    if (notice && achievements.enabled(chat)) await ctx.reply(notice);
+  };
+}
 
 // Passively learn from the owner's own messages so they build a profile like
 // everyone else. Activity is tracked independently of AI memory. Runs
@@ -278,6 +293,9 @@ export function logging(logger: Logger): Middleware {
         chat: ctx.msg.senderName,
         kind: ctx.msg.kind,
         id: ctx.msg.messageId,
+        fromMe: ctx.msg.fromMe,
+        isBot: ctx.msg.isBot,
+        command: extractCommandToken(ctx.text)?.split(/\s/, 1)[0] ?? null,
       },
       "incoming",
     );

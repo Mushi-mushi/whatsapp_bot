@@ -14,7 +14,7 @@ export function isTriviaSkip(args: string): boolean {
 
 // null means the handler charges only after accepting the action.
 export function commandCost(id: string, args = ""): number | null {
-  if (id === "billing" || id === "cost") return 0;
+  if (id === "billing" || id === "cost" || id === "achievements") return 0;
   if (id === "mute" || id === "siesta" || (id === "trivia" && isTriviaSkip(args))) return null;
   return id === "torture" ? 500 : DEFAULT_COST_CENTS;
 }

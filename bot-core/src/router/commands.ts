@@ -2,6 +2,9 @@ import type { BackgroundJobs } from "./jobs.js";
 import type { Bot, Handler } from "./router.js";
 import type { InteractionStore } from "../state/interactions.js";
 import { commandCost, costDescription } from "./pricing.js";
+import type { AchievementStore } from "../state/achievements.js";
+import { chatKey } from "../handlers/commands/user-context.js";
+import { messagePerson } from "../handlers/commands/local-target.js";
 
 interface CommandAlias {
   trigger: string;
@@ -64,6 +67,7 @@ export const COMMAND_CATALOGUE = {
   billing: { description: "show your or another person's fake debt and mute allowance", usage: "[name]", aliases: [{ trigger: "bot.billing" }], execution: "inline" },
   cost: { description: "show command prices and mute rules", usage: "", aliases: [{ trigger: "bot.cost" }], execution: "inline" },
   mute: { description: "mute someone using their fake debt allowance", usage: "<name> <minutes>", aliases: [{ trigger: "bot.mute" }], execution: "inline" },
+  achievements: { description: "show your badges and progress in this chat", usage: "", aliases: [{ trigger: "bot.achievements" }], execution: "inline" },
 } as const satisfies Record<string, CommandDefinition>;
 
 export type CommandId = keyof typeof COMMAND_CATALOGUE;
@@ -95,6 +99,7 @@ export function registerConfiguredCommands(
   jobs: BackgroundJobs,
   warn: (trigger: string, name: string) => void,
   interactions?: InteractionStore,
+  achievements?: AchievementStore,
 ): void {
   bot.clearCommands();
   for (const [trigger, name] of Object.entries(commands)) {
@@ -105,12 +110,22 @@ export function registerConfiguredCommands(
     }
     const handler = registry[name as CommandId];
     const dispatch = definition.execution === "background" ? jobs.wrap(handler) : handler;
-    bot.command(trigger, (ctx) => {
+    bot.command(trigger, async (ctx) => {
+      const chat = chatKey(ctx.msg);
+      const sender = messagePerson(ctx.msg);
       const cents = commandCost(name, ctx.args);
+      const notices: string[] = [];
       if (cents != null && cents > 0) {
         interactions?.increment(ctx.msg.senderIdentity ?? ctx.msg.senderId, ctx.msg.senderPhone, cents);
+        const billNotice = achievements?.record(chat, sender, ctx.msg.senderName, [{ metric: "billCents", value: cents }]);
+        if (billNotice) notices.push(billNotice);
       }
-      return dispatch(ctx);
+      const commandNotice = name !== "achievements"
+        ? achievements?.record(chat, sender, ctx.msg.senderName, ["commands"])
+        : null;
+      if (commandNotice) notices.push(commandNotice);
+      await dispatch(ctx);
+      if (notices.length && achievements?.enabled(chat)) await ctx.reply(notices.join("\n\n"));
     });
   }
 }

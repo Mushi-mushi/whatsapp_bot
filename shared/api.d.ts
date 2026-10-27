@@ -1,3 +1,21 @@
+export interface TriviaBan {
+  chatId: string;
+  categoryId: number;
+  until: number;
+}
+
+export interface TriviaSettingsResponse {
+  categories: { id: number; name: string }[];
+  bans: TriviaBan[];
+  sampledAt: number;
+}
+
+export interface TriviaBanRequest {
+  chatId: string;
+  categoryId: number;
+  days: number;
+}
+
 export interface BotConfig {
   transcriptionEnabled: boolean;
   transcriptionProvider: string;
@@ -45,6 +63,7 @@ export interface BotConfig {
   instagramDeleteSenders: string[];
   respondToOwnCommands: boolean;
   approvedSenders: string[];
+  achievementChats: string[];
   commands: Record<string, string>;
   keywordResponses: Record<string, string>;
 }
@@ -187,8 +206,8 @@ export type AuditAction = "reminder.create" | "reminder.update" | "reminder.canc
   | "pet.update" | "pet.save" | "pet.enable" | "pet.disable" | "pet.pause" | "pet.resume"
   | "pet.request" | "pet.evolve" | "profile.refresh" | "profile.forget" | "job.cancel" | "usage.reset"
   | "siesta.cancel" | "discipline.sleep" | "discipline.arm" | "discipline.wake"
-  | "trivia.reset" | "trivia.close-month" | "connection.pair" | "connection.resync" | "connection.relink"
-  | "billing.charge";
+  | "trivia.reset" | "trivia.close-month" | "trivia.ban" | "trivia.unban" | "connection.pair" | "connection.resync" | "connection.relink"
+  | "billing.charge" | "billing.payment";
 
 export type SuggestionKind = "explicit" | "unknown_command";
 

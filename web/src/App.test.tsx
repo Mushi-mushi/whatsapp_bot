@@ -61,6 +61,27 @@ async function openPrefix() {
 }
 
 describe("configuration editor", () => {
+  it("saves per-chat achievements under Access and removes the opt-in when approval is removed", async () => {
+    const approved = { ...config, approvedSenders: ["group@g.us", "other@g.us"] };
+    vi.mocked(api.getConfig).mockResolvedValue({ config: approved, revision: "first" });
+    vi.mocked(api.saveConfig).mockImplementation(async (snapshot) => ({ config: snapshot.config, revision: "second" }));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Access" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Achievements for group@g.us" }));
+    expect(within(screen.getByRole("button", { name: "Access" })).getByTitle("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.saveConfig).toHaveBeenCalledWith({
+      config: { ...approved, achievementChats: ["group@g.us"] }, revision: "first",
+    }));
+    await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Remove group@g.us" }));
+    expect(screen.queryByRole("switch", { name: "Achievements for group@g.us" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.saveConfig).toHaveBeenLastCalledWith({
+      config: { ...config, approvedSenders: ["other@g.us"], achievementChats: [] }, revision: "second",
+    }));
+  });
+
   it("tracks retention edits on General, blocks invalid drafts and saves with the existing revision", async () => {
     mount();
     await openPrefix();
@@ -113,7 +134,7 @@ describe("configuration editor", () => {
     mount();
     await screen.findByRole("button", { name: "Connection" });
     expect(within(screen.getByRole("navigation")).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
-      "Connection", "General", "Access", "Billing", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep", "Operations", "Reminders", "Pending tells", "Leaderboards", "Suggestions",
+      "Connection", "General", "Access", "Billing", "AI", "Paint & Film", "Memory & profiles", "Pets", "Sleep", "Operations", "Reminders", "Pending tells", "Leaderboards", "Trivia", "Suggestions",
     ]);
     expect(screen.queryByLabelText("Prefix")).toBeNull();
   });

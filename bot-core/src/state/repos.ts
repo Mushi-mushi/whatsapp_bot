@@ -3,7 +3,8 @@ import { ConfigSchema, DEFAULT_CONFIG, type BotConfig } from "../config/schema.j
 import type { ChatIdentity } from "../transport/types.js";
 import { normalizeName } from "../router/normalize.js";
 import type { Contact, PendingTell, ReminderRecurrence, RemindersResponse, ScheduledReminder, SuggestionEntry, SuggestionKind, SuggestionsResponse, TellsResponse } from "../../../shared/api.js";
-import { type IdentityResolver, memoryChat, normalizeJid, phoneDigits, phoneFromJid } from "./identity.js";
+import { type IdentityResolver, memoryChat, normalizeJid, phoneDigits } from "./identity.js";
+export { disciplineKey } from "./identity.js";
 import { canonicalMemoryKey, canonicalScope, forPerson, identitiesFor, inChat, memoryKeyAliases, type PersonScope } from "./scoped.js";
 import { PlayerScores } from "./player-scores.js";
 
@@ -20,7 +21,8 @@ const CONFIG_VERSION_KEY = "config_version";
 // v16 adds bot.suggest for logging feature suggestions.
 // v17 adds the free bot.billing joke bill.
 // v18 adds bot.cost and debt-powered bot.mute.
-const CONFIG_VERSION = 18;
+// v19 adds per-chat achievements.
+const CONFIG_VERSION = 19;
 
 // Config persisted as a single JSON row, validated through the zod schema on read/write.
 export class ConfigStore {
@@ -46,12 +48,31 @@ export class ConfigStore {
 
   save(config: BotConfig): BotConfig {
     const parsed = ConfigSchema.parse(config);
-    this.db
-      .prepare(
+    return this.db.transaction(() => {
+      const previous = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(CONFIG_KEY) as { value: string } | undefined;
+      const old = previous ? ConfigSchema.parse(JSON.parse(previous.value)) : DEFAULT_CONFIG;
+      const identities = identitiesFor(this.db);
+      const chatIdentity = (chat: string) => identities.canonical(
+        chat.includes("@") ? chat : `${phoneDigits(chat)}@s.whatsapp.net`,
+      );
+      const enabledBefore = new Set(old.achievementChats.map(chatIdentity));
+      const enabledAfter = new Set(parsed.achievementChats.map(chatIdentity));
+      this.db.prepare(
         "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
       )
-      .run(CONFIG_KEY, JSON.stringify(parsed));
-    return parsed;
+        .run(CONFIG_KEY, JSON.stringify(parsed));
+      const now = Date.now();
+      const enqueue = this.db.prepare("INSERT INTO outbox(chat_id,body,available_at,created_at) VALUES (?,?,?,?)");
+      for (const chat of enabledAfter) if (!enabledBefore.has(chat)) {
+        enqueue.run(chat, [
+          "Achievements are now enabled in this chat!",
+          "Earn badges for messages, bot commands, trivia answers, duel wins, returning after a quiet spell, and messages in a row.",
+          "Progress is separate for each person in this chat. Existing progress resumes if achievements were enabled before.",
+          "Use bot.achievements to see your badges and progress for free.",
+        ].join("\n"), now, now);
+      }
+      return parsed;
+    })();
   }
 
   private getVersion(): number {
@@ -726,12 +747,6 @@ export function utcDay(ts: number): string {
 // JID from contacts, so both sides must collapse to the same identity. Prefer the
 // phone number when known, falling back to the
 // phone JID, then the raw id (LID) when no phone is known.
-export function disciplineKey(senderId: string, phone?: string | null): string {
-  const digits = phoneDigits(phone) || phoneFromJid(senderId);
-  if (digits) return `${digits}@s.whatsapp.net`;
-  return normalizeJid(senderId);
-}
-
 export interface DisciplineEntry {
   chatId: string;
   senderId: string;

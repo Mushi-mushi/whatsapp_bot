@@ -54,6 +54,8 @@ import type { InteractionStore } from "../../state/interactions.js";
 import { makeBilling } from "./billing.js";
 import { cost } from "./cost.js";
 import { makeMute } from "./mute.js";
+import type { AchievementStore } from "../../state/achievements.js";
+import { makeAchievements } from "./achievements.js";
 
 export interface CommandDeps {
   runtime: RuntimeState;
@@ -73,6 +75,7 @@ export interface CommandDeps {
   profiler: ProfileService;
   settings: ConfigController;
   pets: PetService;
+  achievements: AchievementStore;
 }
 
 // The registry must implement every catalogue command.
@@ -115,6 +118,7 @@ export function buildCommandRegistry(deps: CommandDeps): CommandRegistry {
     pet: makePet(deps.pets),
     billing: makeBilling(deps.interactions, deps.seenActivity),
     cost,
-    mute: makeMute(deps.interactions, deps.seenActivity),
+    mute: makeMute(deps.interactions, deps.seenActivity, deps.achievements),
+    achievements: makeAchievements(deps.achievements),
   };
 }

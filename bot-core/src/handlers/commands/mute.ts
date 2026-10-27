@@ -1,11 +1,16 @@
 import type { Handler } from "../../router/router.js";
+import type { AchievementStore } from "../../state/achievements.js";
 import type { InteractionStore } from "../../state/interactions.js";
 import type { SeenActivityStore } from "../../state/repos.js";
 import { localTarget, messagePerson } from "./local-target.js";
 import { chatKey } from "./user-context.js";
 import { euros, MUTE_COST_CENTS_PER_MINUTE, MUTE_DEBT_CENTS_PER_MINUTE } from "../../router/pricing.js";
 
-export function makeMute(interactions: InteractionStore, people: SeenActivityStore): Handler {
+export function makeMute(
+  interactions: InteractionStore,
+  people: SeenActivityStore,
+  achievements?: AchievementStore,
+): Handler {
   return async (ctx) => {
     if (!ctx.msg.isGroup) return ctx.reply("Mute only works in approved groups.");
     const match = /^(.+?)\s+([1-9]\d*)$/.exec(ctx.args.trim());
@@ -34,8 +39,15 @@ export function makeMute(interactions: InteractionStore, people: SeenActivitySto
     if (!result.ok) {
       return ctx.reply(`${target.name} has only ${result.allowance} whole minute(s) of mute allowance. No charge applied.`);
     }
-    return ctx.reply(`${target.name} is muted until ${new Date(result.until).toISOString()}. ` +
+    const notice = achievements?.record(
+      chatKey(ctx.msg),
+      targetId,
+      target.name,
+      [{ metric: "muteMinutes", value: minutes }, { metric: "muteCount", value: 1 }],
+    );
+    const reply = `${target.name} is muted until ${new Date(result.until).toISOString()}. ` +
       `${minutes} minute(s) added; ${euros(minutes * MUTE_DEBT_CENTS_PER_MINUTE)} removed from their fake debt, ` +
-      `${euros(minutes * MUTE_COST_CENTS_PER_MINUTE)} added to yours. Messages will be auto-deleted; they may briefly appear.`);
+      `${euros(minutes * MUTE_COST_CENTS_PER_MINUTE)} added to yours. Messages will be auto-deleted; they may briefly appear.`;
+    return ctx.reply(notice ? `${reply}\n\n${notice}` : reply);
   };
 }

@@ -19,6 +19,23 @@ export class InteractionStore {
     }).immediate();
   }
 
+  removeDebt(senderId: string, cents: number): boolean {
+    if (!Number.isSafeInteger(cents) || cents < 1) throw new Error("Invalid billing amount");
+    return this.db.transaction(() => {
+      const identities = identitiesFor(this.db);
+      const sender = identities.canonical(disciplineKey(senderId));
+      const debt = this.debt(sender);
+      if (cents > debt) return false;
+      const count = this.total(sender);
+      const aliases = identities.aliasesFor(sender);
+      this.db.prepare(`DELETE FROM user_interactions WHERE sender_id IN (${aliases.map(() => "?").join(",")})`)
+        .run(...aliases);
+      this.db.prepare("INSERT INTO user_interactions(sender_id, count, debt_cents) VALUES (?, ?, ?)")
+        .run(sender, count, debt - cents);
+      return true;
+    }).immediate();
+  }
+
   increment(senderId: string, phone?: string | null, cents = DEFAULT_COST_CENTS): void {
     if (!Number.isSafeInteger(cents) || cents < 0) throw new Error("Invalid interaction cost");
     const sender = identitiesFor(this.db).canonical(disciplineKey(senderId, phone));

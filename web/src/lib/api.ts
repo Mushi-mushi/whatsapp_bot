@@ -1,4 +1,5 @@
 import type {
+  TriviaBan, TriviaBanRequest, TriviaSettingsResponse,
   BotConfig, ConfigSnapshot, ConfigSaveResponse, Status, SiestaStatus,
   PetUpdate, PetRequestChoice, PetActionResponse, PetsResponse,
   ProfileDetail, ProfileRefreshResponse, ProfilesResponse,
@@ -73,9 +74,20 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  getTriviaSettings: () => fetch("/api/trivia/settings", { headers: authHeaders(), cache: "no-store" }).then(json<TriviaSettingsResponse>),
+  banTriviaCategory: (request: TriviaBanRequest) =>
+    fetch("/api/trivia/bans", { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request) })
+      .then(json<{ ok: true; ban: TriviaBan; announcementQueued: true }>),
+  unbanTriviaCategory: (request: Pick<TriviaBanRequest, "chatId" | "categoryId">) =>
+    fetch("/api/trivia/bans", { method: "DELETE", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request) })
+      .then(json<{ ok: true }>),
   getBilling: () => fetch("/api/billing", { headers: authHeaders(), cache: "no-store" }).then(json<BillingResponse>),
   addBillingCharge: (request: BillingChargeRequest) =>
     fetch("/api/billing/charges", {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request),
+    }).then(json<BillingChargeResponse>),
+  removeBillingDebt: (request: BillingChargeRequest) =>
+    fetch("/api/billing/payments", {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(request),
     }).then(json<BillingChargeResponse>),
   resetUsage: (request: UsageResetRequest) =>

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, LoadingState, QueryError } from "@/components/QueryFeedback";
-import { CircleDollarSign, Loader2, Plus } from "lucide-react";
+import { CircleDollarSign, Loader2, Minus, Plus } from "lucide-react";
 
 const MAX_CHARGE_CENTS = 1_000_000;
 const euro = new Intl.NumberFormat(undefined, { style: "currency", currency: "EUR" });
@@ -39,24 +39,36 @@ export function BillingCard() {
     }
   }, [customers, senderId]);
 
-  const charge = useMutation({
-    mutationFn: () => api.addBillingCharge({ senderId, amountCents: cents! }),
-    onSuccess: ({ customer }) => {
-      queryClient.setQueryData<BillingResponse>(["billing"], (current) => current && ({
+  const updateCustomer = (customer: BillingCustomer) => {
+    queryClient.setQueryData<BillingResponse>(["billing"], (current) => current && ({
         ...current,
         sampledAt: Date.now(),
         customers: current.customers.map((entry) => entry.senderId === customer.senderId ? customer : entry),
-      }));
+    }));
+  };
+  const charge = useMutation({
+    mutationFn: () => api.addBillingCharge({ senderId, amountCents: cents! }),
+    onSuccess: ({ customer }) => {
+      updateCustomer(customer);
       setNotice(`Added ${euro.format(cents! / 100)} to ${customer.name}'s fake bill.`);
       setAmount("");
     },
   });
+  const payment = useMutation({
+    mutationFn: () => api.removeBillingDebt({ senderId, amountCents: cents! }),
+    onSuccess: ({ customer }) => {
+      updateCustomer(customer);
+      setNotice(`Removed ${euro.format(cents! / 100)} from ${customer.name}'s fake bill.`);
+      setAmount("");
+    },
+  });
+  const busy = charge.isPending || payment.isPending;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><CircleDollarSign className="h-4 w-4" /> Billing</CardTitle>
-        <CardDescription>Review a contact's global fake debt and add a manual charge. No real payment is involved.</CardDescription>
+        <CardDescription>Review a contact's global fake debt, add a charge, or remove debt. No real payment is involved.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {billing.isPending && <LoadingState>Loading billing records...</LoadingState>}
@@ -74,10 +86,10 @@ export function BillingCard() {
                 </select>
               </div>
               <div className="space-y-1 text-sm">
-                <label htmlFor={`${id}-amount`} className="text-muted-foreground">Charge (EUR)</label>
+                <label htmlFor={`${id}-amount`} className="text-muted-foreground">Amount (EUR)</label>
                 <Input id={`${id}-amount`} type="number" inputMode="decimal" min="0.01" max="10000" step="0.01"
                   value={amount} aria-invalid={amount !== "" && cents === null}
-                  onChange={(event) => { setAmount(event.target.value); setNotice(""); charge.reset(); }} />
+                  onChange={(event) => { setAmount(event.target.value); setNotice(""); charge.reset(); payment.reset(); }} />
               </div>
             </div>
             {selected && (
@@ -86,13 +98,22 @@ export function BillingCard() {
                 <p><span className="text-muted-foreground">Mute allowance:</span> <strong>{selected.muteAllowanceMinutes.toLocaleString()} min</strong></p>
               </div>
             )}
-            <p className="text-xs text-muted-foreground">Every EUR 1.00 of outstanding debt grants one minute of mute allowance. Manual charges are added to the global balance.</p>
-            <Button type="button" disabled={!selected || cents === null || charge.isPending}
+            <p className="text-xs text-muted-foreground">Every EUR 1.00 of outstanding debt grants one minute of mute allowance. A removal cannot exceed the current balance.</p>
+            {selected && cents !== null && cents > selected.debtCents && <p role="alert" className="text-sm text-destructive">The amount to remove exceeds the outstanding fake debt.</p>}
+            <div className="flex flex-wrap gap-2">
+            <Button type="button" disabled={!selected || cents === null || busy}
               onClick={() => { setNotice(""); charge.mutate(); }}>
               {charge.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               Add charge
             </Button>
+            <Button type="button" variant="outline" disabled={!selected || cents === null || cents > (selected?.debtCents ?? 0) || busy}
+              onClick={() => { setNotice(""); payment.mutate(); }}>
+              {payment.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Minus className="h-4 w-4" />}
+              Remove from bill
+            </Button>
+            </div>
             {charge.error && <p role="alert" className="text-sm text-destructive">Charge failed: {charge.error.message}</p>}
+            {payment.error && <p role="alert" className="text-sm text-destructive">Could not remove debt: {payment.error.message}</p>}
             {notice && <p role="status" className="text-sm">{notice}</p>}
           </>
         )}

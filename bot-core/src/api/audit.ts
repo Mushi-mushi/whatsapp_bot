@@ -13,6 +13,7 @@ const ACTIONS: Record<string, AuditAction> = {
   "DELETE /api/operations/jobs/:id": "job.cancel",
   "POST /api/usage/reset": "usage.reset",
   "POST /api/billing/charges": "billing.charge",
+  "POST /api/billing/payments": "billing.payment",
   "PUT /api/config": "config.save",
   "PUT /api/pets/:chatId": "pet.update",
   "POST /api/pets/:chatId/request": "pet.request",
@@ -24,6 +25,8 @@ const ACTIONS: Record<string, AuditAction> = {
   "POST /api/discipline/arm": "discipline.arm",
   "POST /api/discipline/wake": "discipline.wake",
   "POST /api/trivia/reset": "trivia.reset",
+  "POST /api/trivia/bans": "trivia.ban",
+  "DELETE /api/trivia/bans": "trivia.unban",
   "POST /api/trivia/close-month": "trivia.close-month",
   "POST /api/pair": "connection.pair",
   "POST /api/resync": "connection.resync",
@@ -46,7 +49,7 @@ export function registerAudit(app: FastifyInstance, store: AuditStore, apiToken?
       const id = Number(params.id);
       return /^[1-9]\d*$/.test(params.id) && Number.isSafeInteger(id) ? String(id) : null;
     }
-    if (action === "reminder.create") {
+    if (action === "reminder.create" || action === "trivia.ban" || action === "trivia.unban") {
       const body = object(req.body);
       if (typeof body.chatId === "string" && body.chatId.trim()) return opaque("chat", body.chatId.trim());
     }
@@ -58,7 +61,7 @@ export function registerAudit(app: FastifyInstance, store: AuditStore, apiToken?
         return opaque("usage", JSON.stringify([body.command, body.senderId]));
       }
     }
-    if (action === "billing.charge") {
+    if (action.startsWith("billing.")) {
       const body = object(req.body);
       if (typeof body.senderId === "string") return opaque("billing", body.senderId);
     }

@@ -34,6 +34,7 @@ export interface TriviaQuestion {
   question: string;
   correct: string;
   options: string[];
+  categoryId?: number;
 }
 
 // A running trivia session: an opentdb token (guarantees no repeats until
@@ -68,6 +69,7 @@ export interface TriviaDuel {
 export class RuntimeState {
   private triviaTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
   private disposed = false;
+  triviaBanUntil: (chatId: string, categoryId: number) => number | null = () => null;
 
   constructor(private readonly onError: (error: unknown, chatId: string) => void =
     (error, chatId) => console.error("Trivia scheduled work failed", { error, chatId })) {}

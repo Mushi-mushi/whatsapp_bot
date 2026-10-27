@@ -24,6 +24,9 @@ import type { OutboxStore } from "../state/outbox.js";
 import type { BackupWorker } from "../state/backups.js";
 import type { AuditStore } from "../state/audit.js";
 import { registerAudit } from "./audit.js";
+import type { TriviaBanStore } from "../state/trivia-bans.js";
+import { triviaCategories } from "../handlers/commands/trivia.js";
+import type { TriviaSettingsResponse } from "../../../shared/api.js";
 import { MUTE_DEBT_CENTS_PER_MINUTE } from "../router/pricing.js";
 import type {
   BotConfig, ChatsResponse, ContactsResponse, DisciplinePlayer, DisciplineResponse,
@@ -42,6 +45,7 @@ export interface ApiDeps {
   configStore: ConfigStore;
   knownChats: KnownChatsStore;
   triviaScores: TriviaScoreStore;
+  triviaBans: TriviaBanStore;
   duelScores?: DuelWinStore;
   karma?: KarmaStore;
   seenActivity?: SeenActivityStore;
@@ -106,6 +110,33 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     deps.logger.warn("API_TOKEN not set — the API and dashboard are UNAUTHENTICATED.");
   }
   registerAudit(app, deps.audit, deps.apiToken);
+
+  deps.runtime.triviaBanUntil = (chatId, categoryId) => deps.triviaBans.until(chatId, categoryId);
+  const triviaBanTarget = z.object({ chatId: z.string().trim().min(1), categoryId: z.number().int() });
+  app.get("/api/trivia/settings", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return { categories: triviaCategories().map(({ id, name }) => ({ id, name })), bans: deps.triviaBans.list(), sampledAt: Date.now() } satisfies TriviaSettingsResponse;
+  });
+  app.post("/api/trivia/bans", async (req, reply) => {
+    const parsed = triviaBanTarget.extend({ days: z.number().int().min(1).max(365) }).strict().safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Choose a chat, category and whole number of days (1-365)." });
+    const { chatId, categoryId, days } = parsed.data;
+    const category = triviaCategories().find((entry) => entry.id === categoryId);
+    if (!category || !deps.knownChats.list().some((chat) => chat.id === chatId)) {
+      return reply.code(400).send({ ok: false, error: "Unknown chat or trivia category." });
+    }
+    const ban = deps.triviaBans.set(chatId, categoryId, category.name, days);
+    if (deps.runtime.triviaGames.get(chatId)?.categoryId === categoryId ||
+        deps.runtime.triviaSessions.get(chatId)?.category?.id === categoryId ||
+        deps.runtime.triviaDuels.get(chatId)?.category?.id === categoryId) deps.runtime.cancelTrivia(chatId);
+    return { ok: true, ban, announcementQueued: true };
+  });
+  app.delete("/api/trivia/bans", async (req, reply) => {
+    const parsed = triviaBanTarget.strict().safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Choose a chat and category." });
+    deps.triviaBans.remove(parsed.data.chatId, parsed.data.categoryId);
+    return { ok: true };
+  });
 
   app.get("/api/status", async () => deps.transport.getStatus());
   const listPage = z.object({
@@ -402,6 +433,24 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     if (!customer) return reply.code(404).send({ ok: false, error: "That contact is not in the saved contact directory." });
     if (!deps.interactions.addDebt(senderId, parsed.data.amountCents)) {
       return reply.code(409).send({ ok: false, error: "The resulting billing balance exceeds the supported range." });
+    }
+    const updated = billingView().find((entry) => entry.senderId === senderId)!;
+    return { ok: true, customer: updated } satisfies BillingChargeResponse;
+  });
+  app.post("/api/billing/payments", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const parsed = z.object({
+      senderId: z.string().trim().regex(/^\d+(?::\d+)?@(s\.whatsapp\.net|lid)$/),
+      amountCents: z.number().int().min(1).max(1_000_000),
+    }).strict().safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "Select a contact and enter a positive amount up to EUR 10,000." });
+    }
+    const senderId = canonicalTarget(parsed.data.senderId);
+    const customer = billingView().find((entry) => entry.senderId === senderId);
+    if (!customer) return reply.code(404).send({ ok: false, error: "That contact is not in the saved contact directory." });
+    if (!deps.interactions.removeDebt(senderId, parsed.data.amountCents)) {
+      return reply.code(409).send({ ok: false, error: "The amount cannot exceed the outstanding fake debt." });
     }
     const updated = billingView().find((entry) => entry.senderId === senderId)!;
     return { ok: true, customer: updated } satisfies BillingChargeResponse;

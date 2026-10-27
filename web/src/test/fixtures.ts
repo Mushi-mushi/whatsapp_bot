@@ -15,6 +15,7 @@ export const config: BotConfig = {
   paintNegativePrompt: "", paintDenoise: 0.5, paintGuidance: 3.5,
   botReplyPrefix: "original", acknowledgeMedia: false, deleteInstagramPosts: false,
   instagramDeleteSenders: [], respondToOwnCommands: true, approvedSenders: [],
+  achievementChats: [],
   commands: { "bot.ask": "ask" }, keywordResponses: {},
 };
 

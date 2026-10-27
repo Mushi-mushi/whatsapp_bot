@@ -16,7 +16,7 @@ export const cost: Handler = (ctx) => {
     "A successful mute removes EUR 1.00/minute from the target and adds EUR 0.20/minute to the caller.",
     "Each successfully deleted message during a mute adds EUR 1.00 to the target's fake debt; this does not extend the mute.",
     "Existing mutes are extended; allowance comes from remaining debt across all chats.",
-    "Billing and cost checks are free. Ordinary commands count at dispatch, even on failure/busy replies.",
+    "Billing, cost and achievement checks are free. Ordinary commands count at dispatch, even on failure/busy replies.",
     "Mute, siesta (including forced sleep) and trivia skips charge only when accepted; skips cost EUR 0.20 total, not an extra fee.",
   ].join("\n"));
 };

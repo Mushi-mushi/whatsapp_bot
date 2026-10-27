@@ -12,6 +12,12 @@ export function phoneDigits(phone?: string | null): string {
   return phoneFromJid(phone) ?? (/^\+?[\d ()-]+$/.test(phone) ? phone.replace(/\D/g, "") : "");
 }
 
+export function disciplineKey(senderId: string, phone?: string | null): string {
+  const digits = phoneDigits(phone) || phoneFromJid(senderId);
+  if (digits) return `${digits}@s.whatsapp.net`;
+  return normalizeJid(senderId);
+}
+
 // Only protocol-provided PN/LID pairs belong here, never names or LID digits.
 export class IdentityResolver {
   private readonly phones = new Map<string, string>();
