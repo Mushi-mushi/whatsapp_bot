@@ -77,7 +77,6 @@ async function main(): Promise<void> {
   const sentiment = new SentimentStore(db);
   const complaints = new ComplaintStore(db);
   const suggestions = new SuggestionStore(db);
-  const interactions = new InteractionStore(db);
   const contacts = new ContactsStore(db);
   const seenActivity = new SeenActivityStore(db);
   const tells = new TellStore(db);
@@ -96,6 +95,7 @@ async function main(): Promise<void> {
   let config: BotConfig = configStore.load();
   const getConfig = () => config;
   const achievements = new AchievementStore(db, getConfig);
+  const interactions = new InteractionStore(db, achievements);
 
   // Reload cached config and re-apply command registration after a config change.
   const reloadConfig = () => {
@@ -137,10 +137,10 @@ async function main(): Promise<void> {
     .use(participantTracker(seenActivity))
     .use(learnFromOwner(userMemory, profiler))
     .use(petObserver(pets))
-    .use(ignoreOwn(runtime, seenActivity))
     .use(sleepGuard(discipline, logger))
     .use(siestaGuard(runtime))
-    .use(achievementObserver(achievements))
+    .use(achievementObserver(achievements, interactions))
+    .use(ignoreOwn(runtime, seenActivity))
     .use(instagramGuard(logger))
     .use(activityTracker(tells))
     .use(mediaPolicy);
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
   bot.on("audio", jobs.wrap(makeAudioHandler(logger)));
   bot.on("image", jobs.wrap(paintImage));
   bot.hears(KARMA_PATTERN, makeKarmaHears(karma, seenActivity));
-  bot.fallback(makeFallback({ runtime, sentiment, suggestions, triviaScores, duelScores, userMemory, profiler, achievements }));
+  bot.fallback(makeFallback({ runtime, sentiment, suggestions, triviaScores, duelScores, userMemory, profiler, achievements, interactions }));
 
   const commandRegistry = buildCommandRegistry({
     runtime,

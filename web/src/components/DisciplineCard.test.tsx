@@ -29,11 +29,13 @@ describe("discipline query and form states", () => {
     const button = screen.getByRole("button", { name: `Reset bot.${command} count` }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("Player"), { target: { value: "34600000001@s.whatsapp.net" } });
+    expect(button.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Reset across all chats instead" }));
     expect(button.disabled).toBe(false);
     fireEvent.click(button);
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("ALL chats"));
     await waitFor(() => expect(reset).toHaveBeenCalledWith({ senderId: "34600000001@s.whatsapp.net", command }));
-    expect(await screen.findByText(`Reset bot.${command} usage for 34600000001@s.whatsapp.net across all chats.`)).toBeTruthy();
+    expect(await screen.findByText(`Reset bot.${command} usage for 34600000001@s.whatsapp.net across all chats. Root override announcement queued in affected approved chats.`)).toBeTruthy();
   });
 
   it("does not reset when confirmation is declined and surfaces API errors", async () => {
@@ -42,11 +44,31 @@ describe("discipline query and form states", () => {
     mount();
     await screen.findByText("No players are sleeping or armed.");
     fireEvent.change(screen.getByLabelText("Player"), { target: { value: "34600000001@s.whatsapp.net" } });
+    fireEvent.change(screen.getByLabelText("Chat"), { target: { value: "group@g.us" } });
     fireEvent.click(screen.getByRole("button", { name: "Reset bot.ask count" }));
     expect(reset).not.toHaveBeenCalled();
     confirm.mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "Reset bot.ask count" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Reset unavailable");
+  });
+
+  it.each(["ask", "siesta"] as const)("defaults the %s request reset to the selected person and chat", async (command) => {
+    const reset = vi.spyOn(api, "resetUsage").mockResolvedValue({ ok: true, command });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    mount();
+    await screen.findByText("No players are sleeping or armed.");
+    fireEvent.change(screen.getByLabelText("Player"), { target: { value: "34600000001@s.whatsapp.net" } });
+    const button = screen.getByRole("button", { name: `Reset bot.${command} count` }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Chat"), { target: { value: "group@g.us" } });
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("in group@g.us"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Root override"));
+    await waitFor(() => expect(reset).toHaveBeenCalledWith({
+      senderId: "34600000001@s.whatsapp.net", command, chatId: "group@g.us",
+    }));
+    expect(await screen.findByText(new RegExp(`Reset bot\\.${command} usage for .* in group@g.us\\.`))).toBeTruthy();
   });
 
   it("resolves device phone addresses but never treats opaque LID digits as a phone number", async () => {

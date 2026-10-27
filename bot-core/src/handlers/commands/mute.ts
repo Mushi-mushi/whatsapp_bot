@@ -35,16 +35,18 @@ export function makeMute(
     if (owner && targetId === people.canonical(owner)) {
       return ctx.reply("The bot's linked account cannot be muted.");
     }
-    const result = interactions.mute(chatKey(ctx.msg), caller, targetId, minutes);
+    const previousUntil = interactions.muteUntil(chatKey(ctx.msg), targetId);
+    const now = Date.now();
+    const result = interactions.mute(chatKey(ctx.msg), caller, targetId, minutes, now);
     if (!result.ok) {
       return ctx.reply(`${target.name} has only ${result.allowance} whole minute(s) of mute allowance. No charge applied.`);
     }
-    const notice = achievements?.record(
+    const notice = [achievements?.record(
       chatKey(ctx.msg),
       targetId,
       target.name,
       [{ metric: "muteMinutes", value: minutes }, { metric: "muteCount", value: 1 }],
-    );
+    ), achievements?.muted(chatKey(ctx.msg), targetId, target.name, previousUntil, now)].filter(Boolean).join("\n\n");
     const reply = `${target.name} is muted until ${new Date(result.until).toISOString()}. ` +
       `${minutes} minute(s) added; ${euros(minutes * MUTE_DEBT_CENTS_PER_MINUTE)} removed from their fake debt, ` +
       `${euros(minutes * MUTE_COST_CENTS_PER_MINUTE)} added to yours. Messages will be auto-deleted; they may briefly appear.`;

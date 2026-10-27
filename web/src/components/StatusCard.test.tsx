@@ -40,6 +40,7 @@ describe("StatusCard siesta control", () => {
 
     await waitFor(() => expect(api.cancelSiesta).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.queryByRole("button", { name: "Cancel siesta" })).toBeNull());
+    expect(screen.getByText("Siesta cancelled. Root override announcement queued.")).toBeTruthy();
     client.clear();
   });
 });

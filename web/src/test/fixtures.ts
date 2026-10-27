@@ -16,6 +16,7 @@ export const config: BotConfig = {
   botReplyPrefix: "original", acknowledgeMedia: false, deleteInstagramPosts: false,
   instagramDeleteSenders: [], respondToOwnCommands: true, approvedSenders: [],
   achievementChats: [],
+  achievementTimezone: "Europe/Paris",
   commands: { "bot.ask": "ask" }, keywordResponses: {},
 };
 

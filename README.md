@@ -29,6 +29,23 @@ liveness and the current WhatsApp connection state; linking is not required
 for the dashboard to be healthy.
 
 An active `bot.siesta` can be cancelled from the dashboard's **Connection** tab.
+Cancelling queues a message in the chat where it was started:
+"Root override: siesta cancelled. Nap time is over. Back online!"
+No announcement is sent if the bot is already awake.
+
+Under **Sleep & discipline > Reset request limits**, select a player and an
+approved chat, then use **Reset bot.ask count** to restore their request allowance
+and clear the cooldown immediately. **Reset bot.siesta count** restores their
+daily siesta allowance without waking forced-sleeping players or clearing armed
+status. Both reset only the selected chat by default; **Reset across all chats
+instead** is an explicit opt-in. Verified phone/LID aliases are included.
+The bot queues "Root override: bot.ask request count reset for [player]..."
+(or `bot.siesta`) in the affected approved chat(s). Global resets announce only
+in chats with stored usage/discipline records, not every approved chat.
+These actions apply independently of **Save changes** and do not cancel
+in-progress requests. Announcements survive disconnects using the persistent
+outbox. A queue failure prevents the reset/cancellation and is reported in the
+dashboard; successful actions are recorded in the administrative audit log.
 
 ### Per-chat achievements
 
@@ -63,6 +80,11 @@ message. Elapsed time is measured by the bot between tracked messages, including
 time offline or with achievements disabled. Messages sent while disabled are
 not tracked. Consecutive-message streaks reset when another tracked person
 speaks; bot replies do not interrupt them. Commands and media count for both.
+The linked account's ordinary unprefixed messages count as human messages too,
+even when replies to the owner's commands are disabled. Bot-generated messages
+and outgoing replies starting with the dashboard's configured bot prefix are
+excluded. This tracking happens before the owner-response filter, so a short
+owner message such as "lol" correctly breaks another person's monologue.
 Streaks pause while tracking is disabled. The command displays your best
 completed quiet period and longest streak, not a live silence timer or current
 streak. These records persist across restarts and respect verified identities.
@@ -81,6 +103,57 @@ historical data. Configuration migration 19 adds `bot.achievements`, preserving
 custom command mappings.
 Database schema 15 adds last-message times and current chat streaks. These
 start fresh after upgrading; existing badges and counters are preserved.
+
+#### Surprise achievements
+
+There are also 15 secret badges. Their names, requirements, and progress are
+hidden from `bot.achievements` until earned; only the number still hidden is
+shown. Unlocking announces the surprise in that chat and reveals it in future
+lookups. Existing badges remain visible. Secrets use the same approved-chat
+opt-in, pause/resume behavior, persistent storage, and verified identities.
+New counters start fresh; previous command, pet, and duel history is not imported.
+
+**Access > Achievements > Achievement timezone** controls calendar days and
+night-time activity (default `Europe/Paris`, including daylight-saving changes).
+Different days need not be consecutive. Changing timezone does not rewrite
+previously recorded dates.
+
+<details>
+<summary>Owner reference: secret rules (spoilers)</summary>
+
+- Speak within 10 seconds after a mute expires; commands and media count if
+  accepted by the normal message guards.
+- Be successfully muted again within 10 minutes after a previous mute expires.
+  Extending an active mute does not qualify.
+- Answer trivia correctly while owing at least EUR 50 of global fake debt.
+- Reach zero global fake debt after owing at least EUR 10 observed while
+  tracking was enabled. Dashboard payments and mute deductions qualify.
+  This unlock is queued through the persistent outbox for each enabled chat
+  where that person has tracked activity; it is not broadcast to other chats.
+- Dispatch recognized commands on 7 and 30 distinct calendar days. Free checks
+  count too; aliases for the same command are not different commands.
+- Send tracked messages between 00:00 inclusive and 05:00 exclusive on 5
+  distinct local dates; the repeated daylight-saving hour counts only once.
+- Win a completed trivia duel by one point.
+- Win a completed duel after trailing the leader by at least 3 points during
+  tracked play. Cancelled or interrupted duels do not qualify.
+- Finish runner-up in 5 completed duels; all players tied for second qualify.
+- Submit 5 judged incorrect trivia guesses in a row. A correct scored answer
+  resets the streak; stale, unrecognized, already-scored answers and duplicate
+  duel attempts do not count.
+- Successfully put the bot into siesta 10 times. Invalid requests, already
+  sleeping responses, and forced sleep of the caller do not count.
+- Complete pet-care commands on 7 distinct days. Successful feeding, watering,
+  cleaning, playing and rescue/game answers count; cooldowns and rejected
+  commands do not.
+- Try 10 distinct recognized command IDs, not 10 aliases.
+- After returning from at least 30 days of tracked silence, answer trivia
+  correctly within 10 minutes of that return. A first-ever message cannot qualify.
+
+</details>
+
+Database schema 16 adds secret-achievement facts without resetting existing
+progress or badges. Mute timings and billing use the existing persisted records.
 
 ### Trivia category bans
 
@@ -373,13 +446,17 @@ usage counts, preserving previous ask usage and counting each recorded legacy
 siesta as one use on its recorded day.
 
 To restore a user's allowance, open **Sleep & discipline**, select their **Player**
-contact/JID, and use **Reset bot.ask count** or **Reset bot.siesta count**. Confirm
-the reset across **all chats** for that person, including verified identity aliases.
-No chat selection is required. The buttons are independent: ask resets also clear
+contact/JID and approved **Chat**, and use **Reset bot.ask count** or
+**Reset bot.siesta count**. The reset defaults to that chat, including verified
+identity aliases. Enable **Reset across all chats instead** only for a global
+reset; no chat selection is then required. The buttons are independent: ask resets also clear
 the ask cooldown; siesta resets clear only usage, not forced-sleep or armed state.
 They apply immediately, do not cancel running jobs, and survive restarts.
-Authenticated `POST /api/usage/reset` accepts `{ senderId, command: "ask" | "siesta" }`;
-the administrative audit records the reset without storing the raw user identity.
+Authenticated `POST /api/usage/reset` accepts
+`{ senderId, command: "ask" | "siesta", chatId?: string }`; omitting `chatId`
+preserves the global-reset API behavior. The reset and Root announcement queue
+entries are atomic; the administrative audit records the reset without storing
+the raw user or chat identity.
 
 The profiles API exposes an opaque `sender_key` for each chat/person pair plus
 `chat_id` and `chat_name` (null if unknown). URL-encode the key in API paths. The dashboard

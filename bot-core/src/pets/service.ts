@@ -348,7 +348,7 @@ export class PetService {
     this.store.enqueue(pet, `${title(pet)}\nYou rescued me! I am awake, with a 24-hour grace period. Let's earn my next evolution together.`, now);
   }
 
-  command(chatId: string, sub: string, rest: string, now = Date.now()): string {
+  command(chatId: string, sub: string, rest: string, now = Date.now(), onCare?: () => void): string {
     return this.store.transaction(() => {
       if (!this.approved(chatId)) return "This group is no longer approved. Approve it in the dashboard first.";
       let pet = this.store.get(chatId);
@@ -376,6 +376,7 @@ export class PetService {
       if (!pet) return "No pet in this group yet. Ask the owner or a group admin to use bot.pet enable <name>.";
       this.advance(pet, now);
       let response: string;
+      let cared = false;
       if (!sub || sub === "status") response = statusText(pet);
       else if (sub === "disable" || sub === "pause") {
         if (sub === "disable") pet.enabled = false;
@@ -402,12 +403,14 @@ export class PetService {
       else if (sub === "revive") response = pet.hibernating ? rescueText(pet) : "Your pet is already awake.";
       else if (sub === "feed") {
         if (pet.hibernating) {
+          cared = !pet.rescueFed;
           pet.rescueFed = true;
           this.tryRevive(pet, now);
           response = pet.hibernating ? `A snack is ready!\n${rescueText(pet)}` : "Rescue complete!";
         } else if (pet.clock - pet.lastFeed < HOUR && !(pet.request?.kind === "feed" && pet.request.startedAt !== null)) {
           response = "Still full from that snack! Feeding has a one-hour cooldown.";
         } else {
+          cared = true;
           pet.lastFeed = pet.clock;
           pet.hunger = Math.min(100, pet.hunger + 35);
           if (pet.request?.kind === "feed" && pet.request.startedAt !== null) this.finishRequest(pet, "Delicious! Feeding request complete.", now);
@@ -422,6 +425,7 @@ export class PetService {
           if (pet.clock - pet[last] < HOUR && !requested) {
             response = `${sub === "water" ? "Watering" : "Cleaning"} has a one-hour cooldown.`;
           } else {
+            cared = true;
             pet[last] = pet.clock;
             pet[stat] = Math.min(100, pet[stat] + 35);
             if (requested) this.finishRequest(pet, `${sub === "water" ? "Refreshing!" : "Squeaky clean!"} Request complete.`, now);
@@ -433,6 +437,7 @@ export class PetService {
         else if (pet.request?.kind === "play") response = "Guess a number from 1 to 5 with bot.pet answer <number> once my request arrives.";
         else if (pet.clock - pet.lastPlay < HOUR) response = "Let's rest a little! Playing has a one-hour cooldown.";
         else {
+          cared = true;
           pet.lastPlay = pet.clock;
           pet.happiness = Math.min(100, pet.happiness + 25);
           pet.energy = Math.min(100, pet.energy + 10);
@@ -441,7 +446,9 @@ export class PetService {
       } else if (sub === "answer") {
         const activeNumberGame =
           !pet.hibernating && pet.request?.kind === "play" && pet.request.startedAt !== null;
+        const newAnswer = !pet.hibernating || !pet.rescueAnswered;
         if (this.answer(pet, rest, now)) {
+          cared = newAnswer;
           response = pet.hibernating ? `That's right!\n${rescueText(pet)}` : "That's right!";
         } else if (activeNumberGame) {
           response = "Not quite! Guess again from 1 to 5 with bot.pet answer <number> while the request is active.";
@@ -450,6 +457,7 @@ export class PetService {
         }
       } else response = "Unknown pet command. Use bot.pet help.";
       this.store.save(pet);
+      if (cared) onCare?.();
       return response;
     });
   }

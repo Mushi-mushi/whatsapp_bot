@@ -2,19 +2,22 @@ import type Database from "better-sqlite3";
 import { disciplineKey } from "./repos.js";
 import { identitiesFor } from "./scoped.js";
 import { DEFAULT_COST_CENTS, MUTE_COST_CENTS_PER_MINUTE, MUTE_DEBT_CENTS_PER_MINUTE } from "../router/pricing.js";
+import type { AchievementStore } from "./achievements.js";
 
 export class InteractionStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database.Database, private readonly achievements?: AchievementStore) {}
 
   addDebt(senderId: string, cents: number): boolean {
     if (!Number.isSafeInteger(cents) || cents < 1) throw new Error("Invalid billing amount");
     return this.db.transaction(() => {
       const sender = identitiesFor(this.db).canonical(disciplineKey(senderId));
-      if (!Number.isSafeInteger(this.debt(sender) + cents)) return false;
+      const before = this.debt(sender);
+      if (!Number.isSafeInteger(before + cents)) return false;
       this.db.prepare(`
         INSERT INTO user_interactions (sender_id, count, debt_cents) VALUES (?, 0, ?)
         ON CONFLICT(sender_id) DO UPDATE SET debt_cents = debt_cents + excluded.debt_cents
       `).run(sender, cents);
+      this.achievements?.debtChanged(sender, before, before + cents);
       return true;
     }).immediate();
   }
@@ -32,17 +35,22 @@ export class InteractionStore {
         .run(...aliases);
       this.db.prepare("INSERT INTO user_interactions(sender_id, count, debt_cents) VALUES (?, ?, ?)")
         .run(sender, count, debt - cents);
+      this.achievements?.debtChanged(sender, debt, debt - cents);
       return true;
     }).immediate();
   }
 
   increment(senderId: string, phone?: string | null, cents = DEFAULT_COST_CENTS): void {
     if (!Number.isSafeInteger(cents) || cents < 0) throw new Error("Invalid interaction cost");
-    const sender = identitiesFor(this.db).canonical(disciplineKey(senderId, phone));
-    this.db.prepare(`
-      INSERT INTO user_interactions (sender_id, count, debt_cents) VALUES (?, 1, ?)
-      ON CONFLICT(sender_id) DO UPDATE SET count = count + 1, debt_cents = debt_cents + excluded.debt_cents
-    `).run(sender, cents);
+    this.db.transaction(() => {
+      const sender = identitiesFor(this.db).canonical(disciplineKey(senderId, phone));
+      const before = this.debt(sender);
+      this.db.prepare(`
+        INSERT INTO user_interactions (sender_id, count, debt_cents) VALUES (?, 1, ?)
+        ON CONFLICT(sender_id) DO UPDATE SET count = count + 1, debt_cents = debt_cents + excluded.debt_cents
+      `).run(sender, cents);
+      this.achievements?.debtChanged(sender, before, before + cents);
+    }).immediate();
   }
 
   total(senderId: string, phone?: string | null): number {
@@ -94,6 +102,7 @@ export class InteractionStore {
       this.db.prepare(`DELETE FROM user_interactions WHERE sender_id IN (${aliases.map(() => "?").join(",")})`).run(...aliases);
       this.db.prepare("INSERT INTO user_interactions(sender_id, count, debt_cents) VALUES (?, ?, ?)")
         .run(target, count, debt - minutes * MUTE_DEBT_CENTS_PER_MINUTE);
+      this.achievements?.debtChanged(target, debt, debt - minutes * MUTE_DEBT_CENTS_PER_MINUTE);
       this.increment(caller, null, minutes * MUTE_COST_CENTS_PER_MINUTE);
       this.db.prepare(`INSERT INTO user_mutes(chat_id, sender_id, until_ts) VALUES (?, ?, ?)
         ON CONFLICT(chat_id, sender_id) DO UPDATE SET until_ts = excluded.until_ts`)

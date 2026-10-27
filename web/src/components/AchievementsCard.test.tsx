@@ -6,6 +6,15 @@ import { config } from "@/test/fixtures";
 afterEach(cleanup);
 
 describe("AchievementsCard", () => {
+  it("offers a timezone setting without exposing surprise badge names", () => {
+    const onChange = vi.fn();
+    render(<AchievementsCard config={config} chats={[]} onChange={onChange} />);
+    fireEvent.change(screen.getByLabelText("Achievement timezone"), { target: { value: "America/New_York" } });
+    expect(onChange).toHaveBeenCalledWith({ achievementTimezone: "America/New_York" });
+    expect(screen.queryByText("Night Owl")).toBeNull();
+    expect(screen.getByText(/surprise achievements stay hidden/)).toBeTruthy();
+  });
+
   it("only offers approved chat identities and uses synced names when available", () => {
     const onChange = vi.fn();
     render(<AchievementsCard

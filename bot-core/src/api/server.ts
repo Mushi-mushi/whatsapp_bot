@@ -298,11 +298,25 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     const parsed = z.object({
       senderId: z.string().trim().regex(/^\d+(?::\d+)?@(s\.whatsapp\.net|lid)$/),
       command: z.enum(["ask", "siesta"]),
+      chatId: z.string().trim().regex(/^[^\s@]+@(g\.us|s\.whatsapp\.net|lid)$/).optional(),
     }).strict().safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Select a valid player JID and either ask or siesta." });
-    const { senderId, command }: UsageResetRequest = parsed.data;
-    if (command === "ask") deps.askQuota.resetForUser(senderId);
-    else deps.discipline.resetUsageForUser(senderId);
+    if (!parsed.success) return reply.code(400).send({ ok: false, error: "Select a valid player JID, either ask or siesta, and a valid chat ID for a chat-specific reset." });
+    const { senderId, command, chatId }: UsageResetRequest = parsed.data;
+    const identities = deps.contacts.identities();
+    const approved = new Set(deps.configStore.load().approvedSenders.map((entry) =>
+      identities.canonical(entry.includes("@") ? entry : `${entry.replace(/\D/g, "")}@s.whatsapp.net`)));
+    if (chatId && !approved.has(identities.canonical(chatId))) {
+      return reply.code(400).send({ ok: false, error: "Select an approved chat before resetting its request counter." });
+    }
+    const name = resolveName(senderId) ?? identities.canonical(senderId);
+    const announce = (chats: string[]) => {
+      for (const chat of chats) {
+        if (approved.has(chat)) deps.outbox.enqueue(chat,
+          `Root override: bot.${command} request count reset for ${name}.${command === "ask" ? " Cooldown cleared. You're good to go!" : " Daily allowance restored."}`);
+      }
+    };
+    if (command === "ask") deps.askQuota.resetForUser(senderId, chatId, announce);
+    else deps.discipline.resetUsageForUser(senderId, chatId, announce);
     return { ok: true, command } satisfies UsageResetResponse;
   });
   app.get("/api/health", async () => ({ ok: true, connection: deps.transport.getStatus().state }));
@@ -318,10 +332,13 @@ export async function createApi(deps: ApiDeps): Promise<FastifyInstance> {
     sleeping: deps.runtime.isSleeping(),
     until: deps.runtime.isSleeping() ? deps.runtime.siestaUntil : null,
   }));
-  app.post("/api/siesta/cancel", async () => ({
-    ok: true,
-    cancelled: deps.runtime.cancelSiesta(),
-  }));
+  app.post("/api/siesta/cancel", async (_req, reply) => {
+    if (!deps.runtime.isSleeping()) return { ok: true, cancelled: deps.runtime.cancelSiesta() };
+    const chat = deps.runtime.siestaChatId;
+    if (!chat) return reply.code(409).send({ ok: false, error: "The active siesta has no originating chat; no cancellation or announcement was applied." });
+    deps.outbox.enqueue(chat, "Root override: siesta cancelled. Nap time is over. Back online!");
+    return { ok: true, cancelled: deps.runtime.cancelSiesta() };
+  });
 
   const contactDirectory = (): ContactResolver => {
     const directory = new ContactResolver();

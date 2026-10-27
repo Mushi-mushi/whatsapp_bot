@@ -14,17 +14,19 @@ import type { InteractionStore } from "../state/interactions.js";
 import { MUTE_DEBT_CENTS_PER_MINUTE } from "../router/pricing.js";
 import type { AchievementStore } from "../state/achievements.js";
 
-export function achievementObserver(achievements: AchievementStore): Middleware {
+export function achievementObserver(achievements: AchievementStore, interactions?: InteractionStore): Middleware {
   return async (ctx, next) => {
     const prefix = ctx.config.botReplyPrefix.trim();
     const human = !ctx.msg.isBot && ctx.msg.kind !== "other" && !ctx.msg.raw.message?.protocolMessage &&
       !(ctx.msg.fromMe && prefix && ctx.text.trimStart().startsWith(prefix));
     const chat = chatKey(ctx.msg);
-    const notice = human
-      ? achievements.record(chat, messagePerson(ctx.msg), ctx.msg.senderName, ["messages"])
-      : null;
+    const sender = messagePerson(ctx.msg);
+    const notices = human ? [
+      achievements.record(chat, sender, ctx.msg.senderName, ["messages"]),
+      achievements.unmutedMessage(chat, sender, ctx.msg.senderName, interactions?.muteUntil(chat, sender) ?? 0),
+    ].filter(Boolean) : [];
     await next();
-    if (notice && achievements.enabled(chat)) await ctx.reply(notice);
+    if (notices.length && achievements.enabled(chat)) await ctx.reply(notices.join("\n\n"));
   };
 }
 

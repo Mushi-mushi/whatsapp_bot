@@ -22,6 +22,11 @@ function failureKind(error: string | null): DeliveryFailureKind {
 export class OutboxStore {
   constructor(private readonly db: Database.Database) {}
 
+  enqueue(chatId: string, body: string, now = Date.now()): void {
+    this.db.prepare("INSERT INTO outbox(chat_id,body,available_at,created_at) VALUES (?,?,?,?)")
+      .run(chatId, body, now, now);
+  }
+
   enqueueReminders(now: number): void {
     this.db.transaction(() => {
       const reminders = this.db.prepare("SELECT * FROM reminders WHERE due_ts <= ? ORDER BY due_ts LIMIT 100").all(now) as Reminder[];

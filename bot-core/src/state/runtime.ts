@@ -49,6 +49,7 @@ export interface TriviaSession {
 export interface DuelPlayer {
   name: string;
   score: number;
+  trailed?: boolean;
 }
 
 // A trivia duel: a bounded "first to target correct answers" race with a join
@@ -125,6 +126,7 @@ export class RuntimeState {
 
   // Global siesta: while set and in the future, the bot ignores messages.
   siestaUntil: number | null = null;
+  siestaChatId: string | null = null;
 
   // Active torture sessions and their timers, keyed by chat JID.
   tortureTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -162,6 +164,7 @@ export class RuntimeState {
   cancelSiesta(): boolean {
     const wasSleeping = this.isSleeping();
     this.siestaUntil = null;
+    this.siestaChatId = null;
     return wasSleeping;
   }
 }

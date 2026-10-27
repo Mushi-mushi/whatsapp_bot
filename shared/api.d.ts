@@ -64,6 +64,7 @@ export interface BotConfig {
   respondToOwnCommands: boolean;
   approvedSenders: string[];
   achievementChats: string[];
+  achievementTimezone: string;
   commands: Record<string, string>;
   keywordResponses: Record<string, string>;
 }
@@ -422,6 +423,7 @@ export type UsageCommand = "ask" | "siesta";
 export interface UsageResetRequest {
   senderId: string;
   command: UsageCommand;
+  chatId?: string;
 }
 
 export interface UsageResetResponse {

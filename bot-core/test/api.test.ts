@@ -201,6 +201,77 @@ describe("billing API", () => {
 });
 
 describe("user usage reset API", () => {
+  it.each(["ask", "siesta"] as const)("resets %s only in the selected approved chat and queues one named Root announcement", async (command) => {
+    const { app, deps } = await setup();
+    const senderId = "34600000001@s.whatsapp.net";
+    const lid = "900@lid";
+    const now = Date.now();
+    const day = new Date(now).toISOString().slice(0, 10);
+    deps.configStore.save({ ...deps.configStore.load(), approvedSenders: ["a@g.us", "b@g.us"] });
+    deps.contacts.upsertMany([{ jid: lid, phone: "34600000001", name: "Alice" }]);
+    for (const chat of ["a@g.us", "b@g.us"]) {
+      for (let i = 0; i < 10; i++) deps.askQuota.consume(chat, senderId, null, now);
+      deps.discipline.recordAllowedSiesta(chat, senderId, day);
+      deps.discipline.putToSleep(chat, senderId, now + 60_000);
+      deps.discipline.arm(chat, senderId);
+    }
+    const response = await app.inject({
+      method: "POST", url: "/api/usage/reset", headers: { authorization: `Bearer ${"test-token"}` },
+      payload: { senderId: lid, command, chatId: "a@g.us" },
+    });
+    expect(response.statusCode).toBe(200);
+    if (command === "ask") {
+      expect(deps.askQuota.consume("a@g.us", senderId, null, now).allowed).toBe(true);
+      expect(deps.askQuota.consume("b@g.us", senderId, null, now).allowed).toBe(false);
+      expect(deps.discipline.countToday("a@g.us", senderId, day)).toBe(1);
+    } else {
+      expect(deps.discipline.countToday("a@g.us", senderId, day)).toBe(0);
+      expect(deps.discipline.countToday("b@g.us", senderId, day)).toBe(1);
+      expect(deps.askQuota.consume("a@g.us", senderId, null, now).allowed).toBe(false);
+    }
+    expect(deps.discipline.isArmed("a@g.us", senderId)).toBe(true);
+    expect(deps.discipline.sleepUntil("a@g.us", senderId, now)).toBe(now + 60_000);
+    const notice = deps.outbox.claim(Date.now())!;
+    expect(notice.chat_id).toBe("a@g.us");
+    expect(notice.body).toContain(`Root override: bot.${command} request count reset for Alice.`);
+    deps.outbox.sent(notice);
+    expect(deps.outbox.claim(Date.now())).toBeUndefined();
+  });
+
+  it("rolls back the quota reset when announcement queuing fails", async () => {
+    const { app, deps, db } = await setup();
+    const senderId = "34600000001@s.whatsapp.net";
+    const now = Date.now();
+    deps.configStore.save({ ...deps.configStore.load(), approvedSenders: ["a@g.us"] });
+    for (let i = 0; i < 10; i++) deps.askQuota.consume("a@g.us", senderId, null, now);
+    db.exec("CREATE TRIGGER reject_override BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT, 'queue unavailable'); END;");
+    const response = await app.inject({
+      method: "POST", url: "/api/usage/reset", headers: { authorization: `Bearer ${"test-token"}` },
+      payload: { senderId, command: "ask", chatId: "a@g.us" },
+    });
+    expect(response.statusCode).toBe(500);
+    expect(deps.askQuota.consume("a@g.us", senderId, null, now).allowed).toBe(false);
+  });
+
+  it("rejects unapproved scoped resets and only announces global resets in affected approved chats", async () => {
+    const { app, deps } = await setup();
+    const senderId = "34600000001@s.whatsapp.net";
+    deps.configStore.save({ ...deps.configStore.load(), approvedSenders: ["a@g.us", "untouched@g.us"] });
+    deps.askQuota.consume("a@g.us", senderId);
+    deps.askQuota.consume("unapproved@g.us", senderId);
+    const request = (chatId?: string) => app.inject({
+      method: "POST", url: "/api/usage/reset", headers: { authorization: `Bearer ${"test-token"}` },
+      payload: { senderId, command: "ask", ...(chatId ? { chatId } : {}) },
+    });
+    expect((await request("unapproved@g.us")).statusCode).toBe(400);
+    expect(deps.outbox.claim(Date.now())).toBeUndefined();
+    expect((await request()).statusCode).toBe(200);
+    const notice = deps.outbox.claim(Date.now())!;
+    expect(notice.chat_id).toBe("a@g.us");
+    deps.outbox.sent(notice);
+    expect(deps.outbox.claim(Date.now())).toBeUndefined();
+  });
+
   it("authenticates, validates, resets only the chosen quota globally and audits safely", async () => {
     const { app, deps } = await setup();
     const senderId = "34600000001@s.whatsapp.net";
@@ -934,9 +1005,10 @@ describe("siesta controls", () => {
   const headers = { authorization: "Bearer test-token" };
 
   it("reports and cancels an active siesta through the authenticated API", async () => {
-    const { app, runtime } = await setup();
+    const { app, runtime, deps } = await setup();
     expect((await app.inject({ method: "POST", url: "/api/siesta/cancel" })).statusCode).toBe(401);
     runtime.siestaUntil = Date.now() + 60_000;
+    runtime.siestaChatId = "a@g.us";
     const status = await app.inject({ url: "/api/siesta", headers });
     expect(status.statusCode).toBe(200);
     expect(status.json()).toMatchObject({ sleeping: true, until: runtime.siestaUntil });
@@ -945,14 +1017,41 @@ describe("siesta controls", () => {
     expect(cancelled.statusCode).toBe(200);
     expect(cancelled.json()).toEqual({ ok: true, cancelled: true });
     expect(runtime.isSleeping()).toBe(false);
+    expect(runtime.siestaChatId).toBeNull();
+    const notice = deps.outbox.claim(Date.now())!;
+    expect(notice.chat_id).toBe("a@g.us");
+    expect(notice.body).toContain("Root override: siesta cancelled.");
+    deps.outbox.sent(notice);
+    expect(deps.outbox.claim(Date.now())).toBeUndefined();
     expect((await app.inject({ url: "/api/siesta", headers })).json()).toEqual({ sleeping: false, until: null });
   });
 
   it("reports cancellation as a no-op when no siesta is active", async () => {
-    const { app } = await setup();
+    const { app, deps } = await setup();
     const response = await app.inject({ method: "POST", url: "/api/siesta/cancel", headers });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, cancelled: false });
+    expect(deps.outbox.claim(Date.now())).toBeUndefined();
+  });
+
+  it("leaves siesta active if its announcement cannot be queued", async () => {
+    const { app, runtime, db } = await setup();
+    runtime.siestaUntil = Date.now() + 60_000;
+    runtime.siestaChatId = "a@g.us";
+    db.exec("CREATE TRIGGER reject_override BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT, 'queue unavailable'); END;");
+    const response = await app.inject({ method: "POST", url: "/api/siesta/cancel", headers });
+    expect(response.statusCode).toBe(500);
+    expect(runtime.isSleeping()).toBe(true);
+    expect(runtime.siestaChatId).toBe("a@g.us");
+  });
+
+  it("reports a missing siesta origin rather than silently cancelling without an announcement", async () => {
+    const { app, runtime, deps } = await setup();
+    runtime.siestaUntil = Date.now() + 60_000;
+    const response = await app.inject({ method: "POST", url: "/api/siesta/cancel", headers });
+    expect(response.statusCode).toBe(409);
+    expect(runtime.isSleeping()).toBe(true);
+    expect(deps.outbox.claim(Date.now())).toBeUndefined();
   });
 });
 

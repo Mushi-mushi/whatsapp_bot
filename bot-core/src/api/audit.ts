@@ -58,7 +58,7 @@ export function registerAudit(app: FastifyInstance, store: AuditStore, apiToken?
     if (action === "usage.reset") {
       const body = object(req.body);
       if (typeof body.senderId === "string" && typeof body.command === "string") {
-        return opaque("usage", JSON.stringify([body.command, body.senderId]));
+        return opaque("usage", JSON.stringify([body.command, body.senderId, body.chatId ?? null]));
       }
     }
     if (action.startsWith("billing.")) {

@@ -6,6 +6,7 @@ import { makeMute } from "../src/handlers/commands/mute.js";
 import { muteGuard } from "../src/middleware/index.js";
 import { openDatabase } from "../src/state/db.js";
 import { InteractionStore } from "../src/state/interactions.js";
+import { AchievementStore } from "../src/state/achievements.js";
 import { ContactsStore, SeenActivityStore } from "../src/state/repos.js";
 import type { IncomingMessage, Transport } from "../src/transport/types.js";
 
@@ -48,6 +49,24 @@ function setup() {
 }
 
 describe("debt-powered mutes", () => {
+  it("awards remute secrets only after accepted mutes, not rejected requests or active extensions", async () => {
+    const { db, interactions, people, context, transport } = setup();
+    const achievements = new AchievementStore(db, () => ({
+      ...DEFAULT_CONFIG, approvedSenders: [CHAT], achievementChats: [CHAT],
+    }));
+    const handler = makeMute(interactions, people, achievements);
+    interactions.addDebt(ALICE, 300);
+    await handler(context("Alice Smith 1"));
+    await handler(context("Alice Smith 1")); // Active extension.
+    expect(transport.sendText.mock.calls.flat().join("\n")).not.toContain("I Regret Nothing");
+    vi.setSystemTime(NOW + 120_000);
+    transport.isBotGroupAdmin.mockResolvedValueOnce(false);
+    await handler(context("Alice Smith 1"));
+    expect(transport.sendText.mock.calls.flat().join("\n")).not.toContain("I Regret Nothing");
+    await handler(context("Alice Smith 1"));
+    expect(transport.sendText.mock.calls.flat().join("\n")).toContain("I Regret Nothing");
+  });
+
   it("debits EUR 1 per minute, charges the caller EUR 0.20/minute and extends existing mutes", async () => {
     const { interactions, handler, context, transport } = setup();
     interactions.increment(ALICE, null, 370);

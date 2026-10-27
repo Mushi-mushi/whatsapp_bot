@@ -1,6 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Row } from "@/components/fields";
+import { Input } from "@/components/ui/input";
 import type { BotConfig, ChatIdentity } from "@/lib/api";
 
 interface Props {
@@ -22,6 +23,10 @@ export function AchievementsCard({ config, chats, onChange }: Props) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
+        <Row label="Achievement timezone" hint="IANA timezone for calendar days and night-time activity.">
+          <Input aria-label="Achievement timezone" value={config.achievementTimezone}
+            onChange={(event) => onChange({ achievementTimezone: event.target.value })} />
+        </Row>
         {approved.length === 0 && <p className="text-sm text-muted-foreground">Approve a chat above to enable achievements.</p>}
         {approved.map((chat) => (
           <Row key={chat} label={chats.find((entry) => entry.id === chat)?.name ?? chat} hint={chat}>
@@ -40,6 +45,7 @@ export function AchievementsCard({ config, chats, onChange }: Props) {
           Starts counting from activation, with unlock announcements in that chat.
           Use bot.achievements to see badges for messages, commands, trivia, duel wins,
           returning after 1/7/30 days quiet, and sending 5/10/25 messages in a row.
+          Additional surprise achievements stay hidden until earned.
         </p>
       </CardContent>
     </Card>

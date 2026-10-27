@@ -46,7 +46,7 @@ const TAB_FIELDS: Record<Tab, (keyof BotConfig)[]> = {
     "transcriptionTimeoutSeconds", "siestaMaxCalls",
     "retentionEnabled", "analyticsRetentionDays", "deliveryRetentionDays",
   ],
-  access: ["approvedSenders", "achievementChats"],
+  access: ["approvedSenders", "achievementChats", "achievementTimezone"],
   billing: [],
   ai: [
     "askEnabled", "askMaxCalls", "ollamaModel", "ollamaBaseUrl", "ollamaTimeoutSeconds", "ollamaKeepAlive",

@@ -354,10 +354,12 @@ function duelStandings(duel: TriviaDuel): string {
 }
 
 function reconcileDuel(duel: TriviaDuel, canonical: (id: string) => string): void {
-  const players = new Map<string, { name: string; score: number }>();
+  const players: TriviaDuel["players"] = new Map();
   for (const [id, player] of duel.players) {
     const key = canonical(id);
-    players.set(key, { name: player.name, score: (players.get(key)?.score ?? 0) + player.score });
+    const previous = players.get(key);
+    players.set(key, { name: player.name, score: (previous?.score ?? 0) + player.score,
+      trailed: previous?.trailed || player.trailed });
   }
   duel.players = players;
 }
@@ -472,6 +474,7 @@ export interface TriviaAnswerCtx {
   scores: TriviaScoreStore;
   duelScores: DuelWinStore;
   achievements?: AchievementStore;
+  interactions?: InteractionStore;
   chatId: string;
   senderId: string;
   senderName: string;
@@ -499,10 +502,13 @@ export async function handleTriviaAnswer(c: TriviaAnswerCtx): Promise<boolean> {
   if ([...game.answered].some((id) => c.scores.canonicalPerson(id) === playerId)) return true;
   const result = checkTriviaAnswer(game, c.text);
   if (!result) return false;
+  const secretNotice = c.achievements?.triviaAnswer(chatId, playerId, c.senderName,
+    result.correct, c.interactions?.debt(playerId) ?? 0);
   if (result.correct) {
     game.answered.add(playerId);
     const points = c.scores.add(chatId, playerId, c.senderName, 1);
-    const notice = c.achievements?.record(chatId, playerId, c.senderName, ["trivia"]);
+    const notice = [c.achievements?.record(chatId, playerId, c.senderName, ["trivia"]), secretNotice]
+      .filter(Boolean).join("\n\n");
     await c.reply(`✅ Correct, ${c.senderName}! (+1 → ${points})${notice ? `\n\n${notice}` : ""}`);
     if (runtime.triviaGames.get(chatId) !== game) return true;
     // First correct answer opens a short window so stragglers can still score.
@@ -521,7 +527,7 @@ export async function handleTriviaAnswer(c: TriviaAnswerCtx): Promise<boolean> {
     }
   } else {
     const points = c.scores.add(chatId, playerId, c.senderName, -1);
-    await c.reply(`❌ Not that one, ${c.senderName} — that's -1 (now ${points}).`);
+    await c.reply(`❌ Not that one, ${c.senderName} — that's -1 (now ${points}).${secretNotice ? `\n\n${secretNotice}` : ""}`);
   }
   return true;
 }
@@ -541,12 +547,27 @@ async function handleDuelAttempt(
   const result = checkTriviaAnswer(game, c.text);
   if (!result) return false;
   game.answered.add(playerId);
-  if (!result.correct) return true; // no penalty, consumed silently
+  const secretNotice = c.achievements?.triviaAnswer(c.chatId, playerId, player.name,
+    result.correct, c.interactions?.debt(playerId) ?? 0);
+  if (!result.correct) {
+    if (secretNotice) await c.reply(secretNotice);
+    return true;
+  }
 
   // Fastest correct answer takes the question.
+  const markTrailing = () => {
+    if (!c.achievements?.enabled(c.chatId)) return;
+    const lead = Math.max(...[...duel.players.values()].map((entry) => entry.score));
+    for (const entry of duel.players.values()) if (lead - entry.score >= 3) entry.trailed = true;
+  };
+  markTrailing();
   player.score += 1;
-  const notice = c.achievements?.record(c.chatId, playerId, player.name,
-    player.score >= duel.target ? ["trivia", "duels"] : ["trivia"]);
+  markTrailing();
+  const resultNotice = player.score >= duel.target ? c.achievements?.duelResult(c.chatId,
+    [...duel.players].map(([id, entry]) => ({ id, ...entry })), playerId) : null;
+  const notice = [c.achievements?.record(c.chatId, playerId, player.name,
+    player.score >= duel.target ? ["trivia", "duels"] : ["trivia"]), secretNotice, resultNotice]
+    .filter(Boolean).join("\n\n");
   c.runtime.cancelTriviaTimer(c.chatId, game.timer);
   c.runtime.triviaGames.delete(c.chatId);
   if (player.score >= duel.target) {

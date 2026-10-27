@@ -124,6 +124,8 @@ export function registerConfiguredCommands(
         ? achievements?.record(chat, sender, ctx.msg.senderName, ["commands"])
         : null;
       if (commandNotice) notices.push(commandNotice);
+      const secretNotice = achievements?.command(chat, sender, ctx.msg.senderName, name);
+      if (secretNotice) notices.push(secretNotice);
       await dispatch(ctx);
       if (notices.length && achievements?.enabled(chat)) await ctx.reply(notices.join("\n\n"));
     });

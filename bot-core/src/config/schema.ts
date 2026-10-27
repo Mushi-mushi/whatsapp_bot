@@ -96,6 +96,14 @@ export const ConfigSchema = z.object({
 
   approvedSenders: z.array(z.string()).default([]),
   achievementChats: z.array(z.string().trim().min(1)).default([]),
+  achievementTimezone: z.string().refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value });
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Use a valid IANA timezone").default("Europe/Paris"),
 
   // trigger -> command name (e.g. "bot.roast" -> "roast", "bot.roast.neg" -> "roast").
   commands: z.record(z.string(), z.string()).default({}),

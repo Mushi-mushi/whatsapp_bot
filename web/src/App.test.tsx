@@ -68,17 +68,18 @@ describe("configuration editor", () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Access" }));
     fireEvent.click(screen.getByRole("switch", { name: "Achievements for group@g.us" }));
+    fireEvent.change(screen.getByLabelText("Achievement timezone"), { target: { value: "UTC" } });
     expect(within(screen.getByRole("button", { name: "Access" })).getByTitle("Unsaved changes")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(api.saveConfig).toHaveBeenCalledWith({
-      config: { ...approved, achievementChats: ["group@g.us"] }, revision: "first",
+      config: { ...approved, achievementChats: ["group@g.us"], achievementTimezone: "UTC" }, revision: "first",
     }));
     await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Remove group@g.us" }));
     expect(screen.queryByRole("switch", { name: "Achievements for group@g.us" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(api.saveConfig).toHaveBeenLastCalledWith({
-      config: { ...config, approvedSenders: ["other@g.us"], achievementChats: [] }, revision: "second",
+      config: { ...config, approvedSenders: ["other@g.us"], achievementChats: [], achievementTimezone: "UTC" }, revision: "second",
     }));
   });
 

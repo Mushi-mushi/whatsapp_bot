@@ -302,8 +302,8 @@ function routed() {
   const interactions = new InteractionStore(state.db);
   const handler = vi.fn().mockResolvedValue(undefined);
   const registry = { roll: handler, achievements: makeAchievements(state.store) } as CommandRegistry;
-  bot.use(approvedSenderGuard).use(dedupe(new SeenStore(state.db))).use(ignoreOwn(runtime))
-    .use(siestaGuard(runtime)).use(achievementObserver(state.store));
+  bot.use(approvedSenderGuard).use(dedupe(new SeenStore(state.db)))
+    .use(siestaGuard(runtime)).use(achievementObserver(state.store, interactions)).use(ignoreOwn(runtime));
   registerConfiguredCommands(bot, { "bot.dice": "roll", "bot.badges": "achievements" },
     registry, jobs, vi.fn(), interactions, state.store);
   let id = 0;
@@ -316,6 +316,68 @@ function routed() {
 }
 
 describe("achievement routing", () => {
+  it.each([true, false])("counts the linked owner's unprefixed chatter even when own commands are enabled=%s", async (respondToOwnCommands) => {
+    const { store, message, sendText, configure, handler } = routed();
+    const prefix = "Root bot:";
+    configure({ botReplyPrefix: prefix, respondToOwnCommands });
+    const owner = { fromMe: true, senderId: "34600000002@s.whatsapp.net", senderPhone: "34600000002", senderName: "Owner" };
+    for (let count = 0; count < 4; count++) await message("Si Ying speaking");
+    await message(`  ${prefix}\nGenerated reply`, owner);
+    await message("", { ...owner, kind: "image", isBot: true });
+    expect(store.progress(CHAT, owner.senderId).counts.messages).toBe(0);
+    await message("lol", { ...owner, messageId: "owner-lol" });
+    await message("lol", { ...owner, messageId: "owner-lol" });
+    expect(store.progress(CHAT, owner.senderId).counts).toMatchObject({ messages: 1, consecutive: 1 });
+    await message("Si Ying speaking again");
+    expect(store.progress(CHAT, PN).counts.consecutive).toBe(4);
+    expect(sendText.mock.calls.flat().join("\n")).not.toContain("Monologue");
+    expect(handler).not.toHaveBeenCalled();
+    for (let count = 0; count < 3; count++) await message("Still speaking");
+    await message("", { ...owner, kind: "sticker" });
+    await message("Not alone");
+    expect(store.progress(CHAT, PN).counts).toMatchObject({ messages: 9, consecutive: 4 });
+    expect(store.progress(CHAT, owner.senderId).counts.messages).toBe(2);
+    expect(sendText.mock.calls.flat().join("\n")).not.toContain("Is anyone there?");
+  });
+
+  it("does not interrupt a genuine human streak for bot-prefixed replies from the owner's account", async () => {
+    const { store, message, configure, sendText } = routed();
+    configure({ botReplyPrefix: "Custom Bot:" });
+    for (let count = 0; count < 5; count++) {
+      await message("Human message");
+      await message("Custom Bot:\nAutomated response", {
+        fromMe: true, senderId: "34600000002@s.whatsapp.net", senderPhone: "34600000002",
+      });
+    }
+    expect(store.progress(CHAT, PN).counts).toMatchObject({ messages: 5, consecutive: 5 });
+    expect(store.progress(CHAT, "34600000002@s.whatsapp.net").counts.messages).toBe(0);
+    expect(sendText.mock.calls.flat().join("\n")).toContain("Monologue");
+  });
+
+  it("observes unmute expiry on a real message and counts command days through configured aliases", async () => {
+    vi.useFakeTimers();
+    try {
+      const { message, interactions, sendText } = routed();
+      const now = Date.parse("2026-10-27T12:00:00Z");
+      vi.setSystemTime(now);
+      interactions.addDebt(PN, 100);
+      interactions.mute(CHAT, "34600000002@s.whatsapp.net", PN, 1, now);
+      vi.setSystemTime(now + 60_000);
+      await message("I'm back");
+      expect(sendText.mock.calls.flat().join("\n")).toContain("Unmute Any% Speedrun");
+      for (let day = 0; day < 6; day++) {
+        vi.setSystemTime(now + day * 86_400_000 + 60_000);
+        await message("bot.dice");
+      }
+      expect(sendText.mock.calls.flat().join("\n")).not.toContain("Repeat Customer");
+      vi.setSystemTime(now + 6 * 86_400_000 + 60_000);
+      await message("bot.dice");
+      expect(sendText.mock.calls.flat().join("\n")).toContain("Repeat Customer");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("counts commands and media in a streak while ignoring bot replies and duplicates", async () => {
     const { store, message, sendText } = routed();
     await message("Hello", { messageId: "first" });

@@ -10,6 +10,7 @@ import { checkComeback } from "./insults/game.js";
 import { handleTriviaAnswer } from "./commands/trivia.js";
 import { extractCommandToken } from "../router/normalize.js";
 import type { AchievementStore } from "../state/achievements.js";
+import type { InteractionStore } from "../state/interactions.js";
 
 export interface FallbackDeps {
   runtime: RuntimeState;
@@ -20,6 +21,7 @@ export interface FallbackDeps {
   userMemory: UserMemoryStore;
   profiler: ProfileService;
   achievements?: AchievementStore;
+  interactions?: InteractionStore;
 }
 
 // Handles free-form (non-command) text: active games, unknown bot.xxxx command logging,
@@ -37,6 +39,7 @@ export function makeFallback(deps: FallbackDeps): Handler {
       scores: deps.triviaScores,
       duelScores: deps.duelScores,
       achievements: deps.achievements,
+      interactions: deps.interactions,
       chatId: chatKey(ctx.msg),
       senderId: messagePerson(ctx.msg),
       senderName: ctx.msg.senderName,

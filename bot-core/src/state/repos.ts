@@ -818,20 +818,31 @@ export class SiestaDisciplineStore {
       identities.canonical(row.sender_id) === sender).reduce((sum, row) => sum + row.used, 0);
   }
 
-  resetUsageForUser(senderId: string): void {
+  resetUsageForUser(senderId: string, chatId?: string, onReset?: (chats: string[]) => void): void {
     this.db.transaction(() => {
       const identities = new ContactsStore(this.db).identities();
       const sender = identities.canonical(senderId);
+      const chat = chatId ? identities.canonical(chatId) : null;
+      const affected = new Set<string>(chat ? [chat] : []);
+      const matches = (row: { chat_id: string; sender_id: string }) =>
+        identities.canonical(row.sender_id) === sender && (!chat || identities.canonical(row.chat_id) === chat);
       const usage = this.db.prepare("SELECT chat_id, sender_id FROM siesta_usage").all() as { chat_id: string; sender_id: string }[];
       const remove = this.db.prepare("DELETE FROM siesta_usage WHERE chat_id = ? AND sender_id = ?");
       for (const row of usage) {
-        if (identities.canonical(row.sender_id) === sender) remove.run(row.chat_id, row.sender_id);
+        if (matches(row)) {
+          remove.run(row.chat_id, row.sender_id);
+          affected.add(identities.canonical(row.chat_id));
+        }
       }
       const discipline = this.db.prepare("SELECT chat_id, sender_id FROM siesta_discipline").all() as { chat_id: string; sender_id: string }[];
       const clearDay = this.db.prepare("UPDATE siesta_discipline SET last_siesta_day = NULL WHERE chat_id = ? AND sender_id = ?");
       for (const row of discipline) {
-        if (identities.canonical(row.sender_id) === sender) clearDay.run(row.chat_id, row.sender_id);
+        if (matches(row)) {
+          clearDay.run(row.chat_id, row.sender_id);
+          affected.add(identities.canonical(row.chat_id));
+        }
       }
+      onReset?.([...affected]);
     }).immediate();
   }
 

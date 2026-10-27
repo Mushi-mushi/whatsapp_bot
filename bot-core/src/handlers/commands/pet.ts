@@ -2,6 +2,8 @@ import type { Handler } from "../../router/router.js";
 import type { PetService } from "../../pets/service.js";
 import { petPortrait } from "../../pets/art.js";
 import { parsePetEnable, SPECIES_IDS } from "../../pets/model.js";
+import type { AchievementStore } from "../../state/achievements.js";
+import { messagePerson } from "./local-target.js";
 
 const ADMIN_COMMANDS = new Set(["enable", "disable", "pause", "resume", "rename", "hours"]);
 const COMMANDS = new Set(["", "status", "help", "species", "feed", "water", "clean", "play", "answer", "revive", ...ADMIN_COMMANDS]);
@@ -21,7 +23,7 @@ const HELP = [
   "Pausing, bot downtime, and lost group approval freeze progress and neglect. Silence is a game, never moderation.",
 ].join("\n");
 
-export function makePet(pets: PetService): Handler {
+export function makePet(pets: PetService, achievements?: AchievementStore): Handler {
   return async (ctx) => {
     if (!ctx.msg.isGroup) return ctx.reply("Pets live in groups, not direct messages.");
     if (!ctx.config.approvedSenders.includes(ctx.msg.chatId)) {
@@ -59,11 +61,15 @@ export function makePet(pets: PetService): Handler {
       }
     }
     if (sub === "answer" && !rest) return ctx.reply("Use bot.pet answer <answer>.");
-    const response = pets.command(ctx.msg.chatId, sub, rest);
+    let notice: string | null = null;
+    const now = Date.now();
+    const response = pets.command(ctx.msg.chatId, sub, rest, now, () => {
+      notice = achievements?.care(ctx.msg.chatId, messagePerson(ctx.msg), ctx.msg.senderName, now) ?? null;
+    });
     const pet = pets.store.get(ctx.msg.chatId);
     if ((!sub || sub === "status") && pet) {
       return ctx.sendImage(await petPortrait(pet.stage, pet.hibernating || pet.request?.kind === "silence", pet.species), response);
     }
-    return ctx.reply(response);
+    return ctx.reply(notice ? `${response}\n\n${notice}` : response);
   };
 }

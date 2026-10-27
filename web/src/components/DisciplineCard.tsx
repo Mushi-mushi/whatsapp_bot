@@ -33,6 +33,7 @@ export function DisciplineCard({ chats }: { chats: ChatIdentity[] }) {
   const [senderId, setSenderId] = useState("");
   const [minutes, setMinutes] = useState("10");
   const [error, setError] = useState("");
+  const [resetAllChats, setResetAllChats] = useState(false);
 
   const chatNames = useMemo(() => new Map(chats.map((c) => [c.id, c.name])), [chats]);
   const contactList = contacts.data?.contacts ?? [];
@@ -74,8 +75,9 @@ export function DisciplineCard({ chats }: { chats: ChatIdentity[] }) {
   const validPlayer = /^\d+(?::\d+)?@(s\.whatsapp\.net|lid)$/.test(senderId.trim());
   function confirmReset(command: UsageCommand) {
     const player = senderId.trim();
-    if (!window.confirm(`Reset bot.${command} usage for ${typedName || player} (${player}) across ALL chats?${command === "ask" ? " This also clears the ask cooldown." : ""} Forced-sleep and armed status will not change.`)) return;
-    resetUsage.mutate({ senderId: player, command });
+    const scope = resetAllChats ? "across ALL chats" : `in ${chatNames.get(chatId.trim()) ?? chatId.trim()}`;
+    if (!window.confirm(`Reset bot.${command} usage for ${typedName || player} (${player}) ${scope}?${command === "ask" ? " This also clears the ask cooldown." : ""} A Root override announcement will be queued in the affected approved chat(s). Forced-sleep and armed status will not change.`)) return;
+    resetUsage.mutate({ senderId: player, command, ...(resetAllChats ? {} : { chatId: chatId.trim() }) });
   }
 
   const canSubmit = chatId.trim() !== "" && senderId.trim() !== "";
@@ -178,22 +180,30 @@ export function DisciplineCard({ chats }: { chats: ChatIdentity[] }) {
         </div>
 
         <section aria-label="Reset command usage" className="space-y-2 rounded-md border p-3">
-          <h3 className="text-sm font-medium">Reset command usage across all chats</h3>
+          <h3 className="text-sm font-medium">Reset request limits</h3>
           <p className="text-xs text-muted-foreground">
-            Select a player above; no chat selection is needed. Resets include verified aliases.
+            Select a player and chat above. Resets include verified aliases.
             Ask resets clear its cooldown. Forced-sleep and armed status are unchanged.
             Resets apply immediately, independently of Save changes, and do not cancel running jobs.
+            The bot queues a Root override announcement in the affected approved chat(s).
           </p>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={resetAllChats} disabled={busy}
+              onChange={(event) => setResetAllChats(event.target.checked)} />
+            Reset across all chats instead
+          </label>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" disabled={!validPlayer || busy}
+            <Button variant="outline" disabled={!validPlayer || (!resetAllChats && !chatId.trim()) || busy}
               onClick={() => confirmReset("ask")}>Reset bot.ask count</Button>
-            <Button variant="outline" disabled={!validPlayer || busy}
+            <Button variant="outline" disabled={!validPlayer || (!resetAllChats && !chatId.trim()) || busy}
               onClick={() => confirmReset("siesta")}>Reset bot.siesta count</Button>
           </div>
           {resetUsage.isPending && <p role="status" className="text-sm">Resetting command usage...</p>}
           {resetUsage.error && <p role="alert" className="text-sm text-destructive">Could not reset usage: {resetUsage.error.message}</p>}
           {resetUsage.isSuccess && <p role="status" className="text-sm">
-            Reset bot.{resetUsage.data.command} usage for {resetUsage.variables.senderId} across all chats.
+            Reset bot.{resetUsage.data.command} usage for {resetUsage.variables.senderId} {resetUsage.variables.chatId
+              ? `in ${chatNames.get(resetUsage.variables.chatId) ?? resetUsage.variables.chatId}.`
+              : "across all chats."} Root override announcement queued in affected approved chats.
           </p>}
         </section>
 

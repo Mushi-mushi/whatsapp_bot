@@ -19,6 +19,42 @@ function setup() {
 }
 
 describe("persistent ask quota", () => {
+  it("scopes resets to verified chat and sender aliases and clears cooldowns", () => {
+    const { db, quota } = setup();
+    const lid = "900@lid";
+    for (let i = 0; i < 10; i++) {
+      quota.consume(lid, lid, null, NOW);
+      quota.consume(PN, PN, null, NOW);
+      quota.consume("other@g.us", PN, null, NOW);
+    }
+    new ContactsStore(db).upsertMany([{ jid: lid, phone: "34600000001", name: "Alice" }]);
+    let chats: string[] = [];
+    quota.resetForUser(lid, PN, (affected) => { chats = affected; });
+    expect(chats).toEqual([PN]);
+    for (let i = 0; i < 10; i++) expect(quota.consume(PN, lid, null, NOW + 1).allowed).toBe(true);
+    expect(quota.consume(lid, PN, null, NOW + 1).allowed).toBe(false);
+    expect(quota.consume("other@g.us", PN, null, NOW + 1).allowed).toBe(false);
+  });
+
+  it("rolls back a scoped siesta usage reset if its notification fails, without touching armed status", () => {
+    const { db } = setup();
+    const discipline = new SiestaDisciplineStore(db);
+    const day = "2026-10-18";
+    for (const chat of ["a@g.us", "b@g.us"]) {
+      discipline.recordAllowedSiesta(chat, PN, day);
+      discipline.arm(chat, PN);
+    }
+    expect(() => discipline.resetUsageForUser(PN, "a@g.us", () => { throw new Error("queue unavailable"); }))
+      .toThrow("queue unavailable");
+    expect(discipline.countToday("a@g.us", PN, day)).toBe(1);
+    expect(discipline.get("a@g.us", PN)?.lastSiestaDay).toBe(day);
+    discipline.resetUsageForUser(PN, "a@g.us");
+    expect(discipline.countToday("a@g.us", PN, day)).toBe(0);
+    expect(discipline.get("a@g.us", PN)?.lastSiestaDay).toBeNull();
+    expect(discipline.countToday("b@g.us", PN, day)).toBe(1);
+    expect(discipline.isArmed("a@g.us", PN)).toBe(true);
+  });
+
   it("resets one user's usage and cooldown across all chats and verified aliases only", () => {
     const { db, quota } = setup();
     for (const chat of ["a@g.us", "b@g.us"]) {

@@ -3,6 +3,7 @@ import type { RuntimeState } from "../../state/runtime.js";
 import { disciplineKey, utcDay, type SiestaDisciplineStore } from "../../state/repos.js";
 import type { InteractionStore } from "../../state/interactions.js";
 import { SIESTA_COST_CENTS_PER_MINUTE } from "../../router/pricing.js";
+import type { AchievementStore } from "../../state/achievements.js";
 
 const RESPONSES = [
   (m: number) =>
@@ -28,7 +29,8 @@ const REBEL_RESPONSES = [
     `Rebellion time! No more siestas today — so *you* are grounded and asleep for ${m} minutes. Your messages are going poof until you wake up. 💤`,
 ];
 
-export function makeSiesta(runtime: RuntimeState, discipline: SiestaDisciplineStore, interactions?: InteractionStore): Handler {
+export function makeSiesta(runtime: RuntimeState, discipline: SiestaDisciplineStore, interactions?: InteractionStore,
+  achievements?: AchievementStore): Handler {
   return (ctx) => {
     if (runtime.isSleeping()) {
       const remaining = Math.max(0, (runtime.siestaUntil ?? 0) - Date.now());
@@ -70,7 +72,9 @@ export function makeSiesta(runtime: RuntimeState, discipline: SiestaDisciplineSt
     discipline.recordAllowedSiesta(chatId, senderId, utcDay(now));
     interactions?.increment(senderId, null, minutes * SIESTA_COST_CENTS_PER_MINUTE);
     runtime.siestaUntil = now + minutes * 60000;
+    runtime.siestaChatId = chatId;
     const line = RESPONSES[Math.floor(Math.random() * RESPONSES.length)](minutes);
-    return ctx.reply(line);
+    const notice = achievements?.siesta(chatId, senderId, ctx.msg.senderName, now);
+    return ctx.reply(notice ? `${line}\n\n${notice}` : line);
   };
 }

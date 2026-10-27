@@ -18,15 +18,22 @@ export type AskQuotaResult =
 export class AskQuotaStore {
   constructor(private readonly db: Database.Database) {}
 
-  resetForUser(senderId: string): void {
+  resetForUser(senderId: string, chatId?: string, onReset?: (chats: string[]) => void): void {
     this.db.transaction(() => {
       const identities = new ContactsStore(this.db).identities();
       const sender = identities.canonical(senderId);
+      const chat = chatId ? identities.canonical(chatId) : null;
+      const affected = new Set<string>(chat ? [chat] : []);
       const rows = this.db.prepare("SELECT chat_id, sender_id FROM ask_quota").all() as Pick<QuotaRow, "chat_id" | "sender_id">[];
       const remove = this.db.prepare("DELETE FROM ask_quota WHERE chat_id = ? AND sender_id = ?");
       for (const row of rows) {
-        if (identities.canonical(row.sender_id) === sender) remove.run(row.chat_id, row.sender_id);
+        const rowChat = identities.canonical(row.chat_id);
+        if (identities.canonical(row.sender_id) === sender && (!chat || rowChat === chat)) {
+          remove.run(row.chat_id, row.sender_id);
+          affected.add(rowChat);
+        }
       }
+      onReset?.([...affected]);
     }).immediate();
   }
 

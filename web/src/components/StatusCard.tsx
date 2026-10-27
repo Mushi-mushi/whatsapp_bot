@@ -84,6 +84,7 @@ export function StatusCard({ status }: { status: Status | null }) {
         {siesta.data?.sleeping && (
           <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
             <p className="text-sm text-amber-300">Bot siesta is active. Pet commands remain available.</p>
+            <p className="text-xs text-muted-foreground">Cancelling queues a Root override announcement in the chat where the siesta started.</p>
             <Button
               variant="outline"
               onClick={() => cancelSiesta.mutate()}
@@ -97,6 +98,9 @@ export function StatusCard({ status }: { status: Status | null }) {
         {siesta.isPending && <LoadingState>Loading siesta status...</LoadingState>}
         {siesta.error && <QueryError message={`Siesta status unavailable: ${siesta.error.message}`} onRetry={() => void siesta.refetch()} retrying={siesta.isFetching} retryLabel="Retry siesta status" />}
         {cancelSiesta.error && <p role="alert" className="text-sm text-destructive">Could not cancel siesta: {cancelSiesta.error.message}</p>}
+        {cancelSiesta.isSuccess && <p role="status" className="text-sm text-muted-foreground">
+          {cancelSiesta.data.cancelled ? "Siesta cancelled. Root override announcement queued." : "No active siesta to cancel."}
+        </p>}
 
         {state === "open" && !stale && (
           <p className="text-sm text-emerald-400">The bot is online and listening. 🎉</p>
