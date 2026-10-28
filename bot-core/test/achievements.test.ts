@@ -93,7 +93,7 @@ describe("per-chat achievements", () => {
       messages: 0, commands: 0, trivia: 0, duels: 0, quietDays: 0, consecutive: 0,
       muteMinutes: 0, muteCount: 0, billCents: 0,
     });
-    expect(store.record(CHAT, PN, "Alice", ["messages"])).toContain("First words");
+    expect(store.record(CHAT, PN, "Alice", ["messages"])).toBeNull();
     expect(store.record(CHAT, PN, "Alice", ["messages"])).toBeNull();
     expect(store.record(OTHER, PN, "Alice", ["messages"])).toBeNull();
     expect(store.progress(CHAT, "901@lid").counts.messages).toBe(0);
@@ -105,16 +105,25 @@ describe("per-chat achievements", () => {
     configure({ approvedSenders: [CHAT, OTHER], achievementChats: [CHAT, OTHER] });
     expect(store.record(CHAT, PN, "Renamed", ["messages"])).toBeNull();
     expect(store.progress(CHAT, PN).counts.messages).toBe(3);
-    expect(store.record(OTHER, PN, "Alice", ["messages"])).toContain("First words");
+    expect(store.record(OTHER, PN, "Alice", ["messages"])).toBeNull();
   });
 
-  it.each(ACHIEVEMENTS.filter((badge) => badge.metric !== "quietDays" && badge.metric !== "consecutive"))("unlocks $id at exactly $target and never announces it again", (badge) => {
-    const { store } = setup();
+  it.each(ACHIEVEMENTS.filter((badge) => badge.metric !== "quietDays" && badge.metric !== "consecutive"))("queues $id at exactly $target and never queues it again", (badge) => {
+    const { db, store } = setup();
+    const outbox = new OutboxStore(db);
     for (let count = 1; count < badge.target; count++) {
       expect(store.record(CHAT, PN, "Alice", [badge.metric], count) ?? "").not.toContain(`${badge.name} -`);
     }
     expect(store.progress(CHAT, PN).unlocked.some((row) => row.badge_id === badge.id)).toBe(false);
-    expect(store.record(CHAT, PN, "Alice", [badge.metric], badge.target)).toContain(`${badge.name} -`);
+    expect(store.record(CHAT, PN, "Alice", [badge.metric], badge.target)).toBeNull();
+    const captions: string[] = [];
+    let delivery = outbox.claim(Date.now());
+    while (delivery) {
+      if (delivery.achievement_badge_id === badge.id) captions.push(delivery.body);
+      outbox.sent(delivery);
+      delivery = outbox.claim(Date.now());
+    }
+    expect(captions[0]).toContain(badge.name);
     expect(store.progress(CHAT, PN).unlocked.find((row) => row.badge_id === badge.id)?.unlocked_at).toBe(badge.target);
     expect(store.record(CHAT, PN, "Alice", [badge.metric], badge.target + 1)).toBeNull();
   });
@@ -186,8 +195,7 @@ describe("quiet returns and consecutive messages", () => {
     expect(store.progress(CHAT, PN).counts.quietDays).toBe(0);
     store.record(CHAT, LID, "Bob", ["messages"], first + days * DAY - 1);
     expect(store.progress(CHAT, LID).unlocked.some((row) => row.badge_id === `quiet-${days}`)).toBe(false);
-    const notice = store.record(CHAT, PN, "Alice", ["messages"], first + days * DAY);
-    expect(notice).toContain(ACHIEVEMENTS.find((badge) => badge.id === `quiet-${days}`)!.name);
+    expect(store.record(CHAT, PN, "Alice", ["messages"], first + days * DAY)).toBeNull();
     expect(store.progress(CHAT, PN).counts.quietDays).toBe(days);
     expect(store.record(CHAT, PN, "Alice", ["messages"], first + days * DAY + 1)).toBeNull();
     expect(store.progress(CHAT, PN).counts.quietDays).toBe(days);
@@ -198,7 +206,7 @@ describe("quiet returns and consecutive messages", () => {
     store.record(CHAT, PN, "Alice", ["messages"], 30 * DAY);
     expect(store.progress(CHAT, PN).counts.quietDays).toBe(0);
     store.record(CHAT, PN, "Alice", ["commands", "trivia"], 31 * DAY - 1);
-    expect(store.record(CHAT, PN, "Alice", ["messages"], 31 * DAY)).toContain("Back from the dead");
+    expect(store.record(CHAT, PN, "Alice", ["messages"], 31 * DAY)).toBeNull();
   });
 
   it("includes disabled time since the last tracked message, without tracking messages while disabled", () => {
@@ -207,7 +215,7 @@ describe("quiet returns and consecutive messages", () => {
     configure({ achievementChats: [] });
     expect(store.record(CHAT, PN, "Alice", ["messages"], 6 * DAY)).toBeNull();
     configure({ achievementChats: [CHAT] });
-    expect(store.record(CHAT, PN, "Alice", ["messages"], 7 * DAY)).toContain("Long time no see");
+    expect(store.record(CHAT, PN, "Alice", ["messages"], 7 * DAY)).toBeNull();
     expect(store.progress(CHAT, PN).counts).toMatchObject({ messages: 2, quietDays: 7, consecutive: 2 });
   });
 
@@ -216,7 +224,7 @@ describe("quiet returns and consecutive messages", () => {
     for (let count = 1; count < target; count++) store.record(CHAT, PN, "Alice", ["messages"], count);
     expect(store.progress(CHAT, PN).unlocked.some((row) => row.badge_id === `consecutive-${target}`)).toBe(false);
     const badge = ACHIEVEMENTS.find((entry) => entry.id === `consecutive-${target}`)!;
-    expect(store.record(CHAT, PN, "Alice", ["messages"], target)).toContain(badge.name);
+    expect(store.record(CHAT, PN, "Alice", ["messages"], target)).toBeNull();
     expect(store.progress(CHAT, PN).counts.consecutive).toBe(target);
     store.record(CHAT, LID, "Bob", ["messages"], target + 1);
     expect(store.record(CHAT, PN, "Alice", ["messages"], target + 2)).toBeNull();
@@ -245,9 +253,9 @@ describe("quiet returns and consecutive messages", () => {
     new ContactsStore(db).upsertMany([{ jid: LID, phone: "34600000001", name: "Alice" }]);
     store.record(CHAT, LID, "Alice", ["messages"], 4);
     expect(store.progress(CHAT, PN).counts.consecutive).toBe(3);
-    expect(store.record(CHAT, PN, "Alice", ["messages"], 7 * DAY + 3)).not.toContain("Long time no see");
+    expect(store.record(CHAT, PN, "Alice", ["messages"], 7 * DAY + 3)).toBeNull();
     expect(store.progress(CHAT, PN).counts.quietDays).toBe(6);
-    expect(store.record(CHAT, LID, "Alice", ["messages"], 14 * DAY + 3)).toContain("Long time no see");
+    expect(store.record(CHAT, LID, "Alice", ["messages"], 14 * DAY + 3)).toBeNull();
     expect(store.progress(CHAT, PN).counts.quietDays).toBe(7);
     expect(store.progress(CHAT, PN).counts.consecutive).toBe(4);
     expect(store.progress(CHAT, LID)).toEqual(store.progress(CHAT, PN));
@@ -278,9 +286,7 @@ describe("quiet returns and consecutive messages", () => {
       db.close();
       db = openDatabase(path);
       store = new AchievementStore(db, () => config);
-      const notice = store.record(CHAT, PN, "Alice", ["messages"], DAY + 3);
-      expect(notice).toContain("Back from the dead");
-      expect(notice).toContain("Monologue");
+      expect(store.record(CHAT, PN, "Alice", ["messages"], DAY + 3)).toBeNull();
       expect(store.progress(CHAT, PN).counts).toMatchObject({ commands: 1, messages: 5, quietDays: 1, consecutive: 5 });
       expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
     } finally {
@@ -351,7 +357,7 @@ describe("achievement routing", () => {
     }
     expect(store.progress(CHAT, PN).counts).toMatchObject({ messages: 5, consecutive: 5 });
     expect(store.progress(CHAT, "34600000002@s.whatsapp.net").counts.messages).toBe(0);
-    expect(sendText.mock.calls.flat().join("\n")).toContain("Monologue");
+    expect(sendText.mock.calls.flat().join("\n")).not.toContain("Monologue");
   });
 
   it("observes unmute expiry on a real message and counts command days through configured aliases", async () => {
@@ -364,7 +370,7 @@ describe("achievement routing", () => {
       interactions.mute(CHAT, "34600000002@s.whatsapp.net", PN, 1, now);
       vi.setSystemTime(now + 60_000);
       await message("I'm back");
-      expect(sendText.mock.calls.flat().join("\n")).toContain("Unmute Any% Speedrun");
+      expect(sendText.mock.calls.flat().join("\n")).not.toContain("Unmute Any% Speedrun");
       for (let day = 0; day < 6; day++) {
         vi.setSystemTime(now + day * 86_400_000 + 60_000);
         await message("bot.dice");
@@ -372,7 +378,7 @@ describe("achievement routing", () => {
       expect(sendText.mock.calls.flat().join("\n")).not.toContain("Repeat Customer");
       vi.setSystemTime(now + 6 * 86_400_000 + 60_000);
       await message("bot.dice");
-      expect(sendText.mock.calls.flat().join("\n")).toContain("Repeat Customer");
+      expect(sendText.mock.calls.flat().join("\n")).not.toContain("Repeat Customer");
     } finally {
       vi.useRealTimers();
     }
@@ -388,7 +394,7 @@ describe("achievement routing", () => {
     await message("", { kind: "audio" });
     await message("", { kind: "sticker" });
     expect(store.progress(CHAT, PN).counts).toMatchObject({ messages: 5, consecutive: 5, commands: 1 });
-    expect(sendText.mock.calls.flatMap((call) => call[1]).join("\n")).toContain("Monologue");
+    expect(sendText.mock.calls.flatMap((call) => call[1]).join("\n")).not.toContain("Monologue");
     await message("Hi", { senderId: LID, senderPhone: "", senderName: "Bob" });
     await message("Back");
     expect(store.progress(CHAT, PN).counts.consecutive).toBe(5);
@@ -400,7 +406,7 @@ describe("achievement routing", () => {
     await message("bot.dice", { messageId: "duplicate" });
     expect(handler).toHaveBeenCalledOnce();
     expect(store.progress(CHAT, PN).counts).toMatchObject({ messages: 1, commands: 1 });
-    expect(sendText.mock.calls.flatMap((call) => call[1]).join("\n")).toContain("Button pusher");
+    expect(sendText.mock.calls.flatMap((call) => call[1]).join("\n")).not.toContain("Button pusher");
     await message("bot.badges");
     expect(sendText.mock.calls.at(-1)?.[1]).toContain("First words");
     expect(sendText.mock.calls.at(-1)?.[1]).toContain("[Locked] Chatterbox - 2/100");
@@ -428,11 +434,13 @@ describe("achievement routing", () => {
     expect(store.progress(CHAT, PN).unlocked).toEqual([]);
   });
 
-  it("does not hide announcement send failures or lose the persisted badge", async () => {
-    const { store, message, sendText } = routed();
+  it("does not send duplicate text or lose the persisted badge", async () => {
+    const { db, store, message, sendText } = routed();
     sendText.mockRejectedValueOnce(new Error("disconnected"));
-    await expect(message("Hello")).rejects.toThrow("disconnected");
+    await message("Hello");
+    expect(sendText).not.toHaveBeenCalled();
     expect(store.progress(CHAT, PN).unlocked).toHaveLength(1);
+    expect(new OutboxStore(db).claim(Date.now())?.achievement_badge_id).toBe("messages-1");
   });
 });
 
@@ -462,10 +470,10 @@ describe("trivia achievement integration", () => {
     await handleTriviaAnswer(answer);
     await handleTriviaAnswer(answer);
     expect(store.progress(CHAT, PN).counts.trivia).toBe(1);
-    expect(reply.mock.calls.flatMap((call) => call[0]).join("\n")).toContain("Bright spark");
+    expect(reply.mock.calls.flatMap((call) => call[0]).join("\n")).not.toContain("Bright spark");
   });
 
-  it("counts duel correct answers and the winner once, with both unlocks in the winning reply", async () => {
+  it("counts duel correct answers and the winner once without appending badges to the winning reply", async () => {
     const { store, runtime, answer, reply } = trivia();
     runtime.triviaGames.get(CHAT)!.mode = "duel";
     runtime.triviaDuels.set(CHAT, {
@@ -477,8 +485,8 @@ describe("trivia achievement integration", () => {
     await handleTriviaAnswer(answer);
     await handleTriviaAnswer(answer);
     expect(store.progress(CHAT, PN).counts).toMatchObject({ trivia: 1, duels: 1 });
-    expect(reply.mock.calls[0][0]).toContain("Bright spark");
-    expect(reply.mock.calls[0][0]).toContain("First victory");
+    expect(reply.mock.calls[0][0]).not.toContain("Bright spark");
+    expect(reply.mock.calls[0][0]).not.toContain("First victory");
     expect(runtime.triviaDuels.size).toBe(0);
   });
 

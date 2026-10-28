@@ -121,7 +121,7 @@ export class AchievementStore {
         .run(scope.chat_id, scope.sender_id, id, now);
       const notice = `Secret achievement unlocked for ${name || "Player"}!\n${badge.name} - ${badge.requirement}`;
       this.queueBadge(scope.chat_id, id, notice, now);
-      return notice;
+      return null;
     }).immediate();
   }
 
@@ -262,7 +262,6 @@ export class AchievementStore {
       const earned = new Set(unlocked.map((row) => row.badge_id));
       const changed = new Set<AchievementMetric>();
       const values = new Map<AchievementMetric, number>();
-      const secretNotices: (string | null)[] = [];
 
       for (const metricEntry of metrics) {
         const metric = typeof metricEntry === "string" ? metricEntry : metricEntry.metric;
@@ -280,8 +279,8 @@ export class AchievementStore {
           if (now - previous.last_at >= 30 * DAY_MS) this.fact(chatId, senderId, "returned", "", now, now);
         }
         const day = this.day(now);
-        if (day.hour < 5) secretNotices.push(this.secret(chatId, senderId, name, "night-owl",
-          this.distinct(chatId, senderId, "night", day.key, now), now));
+        if (day.hour < 5) this.secret(chatId, senderId, name, "night-owl",
+          this.distinct(chatId, senderId, "night", day.key, now), now);
         this.db.prepare(`DELETE FROM achievement_facts WHERE ${scope.where} AND kind = 'name'`).run(...scope.params);
         this.fact(chatId, senderId, "name", name, 1, now);
         this.db.prepare(`DELETE FROM achievement_activity WHERE ${scope.where}`).run(...scope.params);
@@ -324,11 +323,7 @@ export class AchievementStore {
         this.queueBadge(scope.chat_id, badge.id, `Achievement unlocked for ${name || "Player"}!\n` +
           `${badge.name} - ${badge.target} ${METRIC_LABELS[badge.metric].toLowerCase()}`, now);
       }
-      const notice = fresh.length
-        ? `Achievement unlocked for ${name || "Player"}!\n${fresh.map((badge) =>
-          `${badge.name} - ${badge.target} ${METRIC_LABELS[badge.metric].toLowerCase()}`).join("\n")}`
-        : null;
-      return [notice, ...secretNotices].filter(Boolean).join("\n\n") || null;
+      return null;
     }).immediate();
   }
 

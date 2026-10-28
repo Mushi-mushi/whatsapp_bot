@@ -59,11 +59,11 @@ describe("surprise achievement rules", () => {
     expect(store.unmutedMessage(CHAT, PN, "Alice", 0, NOW)).toBeNull();
     expect(store.unmutedMessage(CHAT, PN, "Alice", NOW, NOW - 1)).toBeNull();
     expect(store.unmutedMessage(CHAT, PN, "Alice", NOW, NOW + 10_001)).toBeNull();
-    expect(store.unmutedMessage(CHAT, PN, "Alice", NOW, NOW + 10_000)).toContain("Speedrun");
+    expect(store.unmutedMessage(CHAT, PN, "Alice", NOW, NOW + 10_000)).toBeNull();
     expect(store.unmutedMessage(CHAT, PN, "Alice", NOW, NOW + 10_000)).toBeNull();
     expect(store.muted(CHAT, PN, "Alice", NOW + 1, NOW)).toBeNull();
     expect(store.muted(CHAT, PN, "Alice", NOW, NOW + 600_001)).toBeNull();
-    expect(store.muted(CHAT, PN, "Alice", NOW, NOW + 600_000)).toContain("I Regret Nothing");
+    expect(store.muted(CHAT, PN, "Alice", NOW, NOW + 600_000)).toBeNull();
   });
 
   it("counts unique command IDs and calendar days, not aliases or repeated calls", () => {
@@ -71,11 +71,11 @@ describe("surprise achievement rules", () => {
     for (let i = 0; i < 30; i++) store.command(CHAT, PN, "Alice", "roll", NOW);
     expect(store.progress(CHAT, PN).unlocked).toEqual([]);
     for (let day = 1; day < 6; day++) store.command(CHAT, PN, "Alice", "roll", NOW + day * DAY);
-    expect(store.command(CHAT, PN, "Alice", "roll", NOW + 6 * DAY)).toContain("Repeat Customer");
+    expect(store.command(CHAT, PN, "Alice", "roll", NOW + 6 * DAY)).toBeNull();
     for (let day = 7; day < 29; day++) store.command(CHAT, PN, "Alice", "roll", NOW + day * DAY);
-    expect(store.command(CHAT, PN, "Alice", "roll", NOW + 29 * DAY)).toContain("Loyal Customer");
+    expect(store.command(CHAT, PN, "Alice", "roll", NOW + 29 * DAY)).toBeNull();
     for (let i = 1; i < 9; i++) store.command(CHAT, PN, "Alice", `command-${i}`, NOW);
-    expect(store.command(CHAT, PN, "Alice", "command-9", NOW)).toContain("Jack of All Bots");
+    expect(store.command(CHAT, PN, "Alice", "command-9", NOW)).toBeNull();
     expect(store.command(CHAT, PN, "Alice", "command-10", NOW)).toBeNull();
   });
 
@@ -90,7 +90,7 @@ describe("surprise achievement rules", () => {
     expect(store.progress(CHAT, PN).unlocked.some((row) => row.badge_id === "night-owl")).toBe(false);
     store.record(CHAT, PN, "Alice", ["messages"], Date.parse("2026-11-01T04:00:00Z"));
     expect(store.progress(CHAT, PN).unlocked.some((row) => row.badge_id === "night-owl")).toBe(false);
-    expect(store.record(CHAT, PN, "Alice", ["messages"], Date.parse("2026-11-01T03:59:59Z"))).toContain("Night Owl");
+    expect(store.record(CHAT, PN, "Alice", ["messages"], Date.parse("2026-11-01T03:59:59Z"))).toBeNull();
     store.record(CHAT, BOB, "Bob", ["messages"], Date.parse("2026-10-25T00:30:00Z"));
     store.record(CHAT, BOB, "Bob", ["messages"], Date.parse("2026-10-25T01:30:00Z"));
     const nights = store.describe(CHAT, BOB);
@@ -104,7 +104,7 @@ describe("surprise achievement rules", () => {
     for (let day = 1; day <= 7; day++) expect(store.care(CHAT, PN, "Alice", NOW + day * DAY)).toBeNull();
     configure({ achievementChats: [CHAT] });
     for (let day = 1; day < 6; day++) expect(store.care(CHAT, PN, "Alice", NOW + day * DAY)).toBeNull();
-    expect(store.care(CHAT, PN, "Alice", NOW + 6 * DAY)).toContain("Pet's Favourite");
+    expect(store.care(CHAT, PN, "Alice", NOW + 6 * DAY)).toBeNull();
     expect(store.care(OTHER, PN, "Alice", NOW + 6 * DAY)).toBeNull();
   });
 
@@ -116,7 +116,7 @@ describe("surprise achievement rules", () => {
     }
     new ContactsStore(db).upsertMany([{ jid: LID, phone: "34600000001", name: "Alice" }]);
     for (let day = 3; day < 6; day++) expect(store.care(CHAT, LID, "Alice", NOW + day * DAY)).toBeNull();
-    expect(store.care(CHAT, LID, "Alice", NOW + 6 * DAY)).toContain("Pet's Favourite");
+    expect(store.care(CHAT, LID, "Alice", NOW + 6 * DAY)).toBeNull();
     expect(store.care(CHAT, PN, "Renamed", NOW + 7 * DAY)).toBeNull();
     expect(store.describe(CHAT, PN)).toContain("[Unlocked] Pet's Favourite");
   });
@@ -126,12 +126,12 @@ describe("surprise achievement rules", () => {
     for (let i = 0; i < 4; i++) expect(store.triviaAnswer(CHAT, PN, "Alice", false, 0, NOW)).toBeNull();
     expect(store.triviaAnswer(CHAT, PN, "Alice", true, 4_999, NOW)).toBeNull();
     for (let i = 0; i < 4; i++) expect(store.triviaAnswer(CHAT, PN, "Alice", false, 0, NOW)).toBeNull();
-    expect(store.triviaAnswer(CHAT, PN, "Alice", false, 0, NOW)).toContain("The Oracle Is Broken");
-    expect(store.triviaAnswer(CHAT, PN, "Alice", true, 5_000, NOW)).toContain("Still Worth It");
+    expect(store.triviaAnswer(CHAT, PN, "Alice", false, 0, NOW)).toBeNull();
+    expect(store.triviaAnswer(CHAT, PN, "Alice", true, 5_000, NOW)).toBeNull();
     store.record(CHAT, PN, "Alice", ["messages"], NOW);
     store.record(CHAT, PN, "Alice", ["messages"], NOW + 30 * DAY);
     expect(store.triviaAnswer(CHAT, PN, "Alice", true, 0, NOW + 30 * DAY + 600_001)).toBeNull();
-    expect(store.triviaAnswer(CHAT, PN, "Alice", true, 0, NOW + 30 * DAY + 600_000)).toContain("The Return of the King");
+    expect(store.triviaAnswer(CHAT, PN, "Alice", true, 0, NOW + 30 * DAY + 600_000)).toBeNull();
     expect(store.triviaAnswer(CHAT, BOB, "Bob", true, 0, NOW)).toBeNull();
   });
 
@@ -170,14 +170,13 @@ describe("surprise achievement rules", () => {
     const { store } = setup();
     const players = [{ id: PN, name: "Alice", score: 5, trailed: true },
       { id: BOB, name: "Bob", score: 4 }, { id: LID, name: "Charlie", score: 4 }];
-    const notice = store.duelResult(CHAT, players, PN, NOW);
-    expect(notice).toContain("Comeback Kid");
-    expect(notice).toContain("Photo Finish");
+    expect(store.duelResult(CHAT, players, PN, NOW)).toBeNull();
+    expect(store.progress(CHAT, PN).unlocked.map((row) => row.badge_id)).toEqual(
+      expect.arrayContaining(["comeback", "photo-finish"]));
     for (let i = 1; i < 4; i++) expect(store.duelResult(CHAT, players, PN, NOW)).toBeNull();
-    const runners = store.duelResult(CHAT, players, PN, NOW)!;
-    expect(runners).toContain("So Close...");
-    expect(runners).toContain("Bob");
-    expect(runners).toContain("Charlie");
+    expect(store.duelResult(CHAT, players, PN, NOW)).toBeNull();
+    expect(store.progress(CHAT, BOB).unlocked.some((row) => row.badge_id === "runner-up")).toBe(true);
+    expect(store.progress(CHAT, LID).unlocked.some((row) => row.badge_id === "runner-up")).toBe(true);
     expect(store.progress(CHAT, PN).unlocked.some((row) => row.badge_id === "runner-up")).toBe(false);
   });
 
@@ -227,7 +226,7 @@ describe("surprise achievement rules", () => {
       db.close();
       db = openDatabase(path);
       store = new AchievementStore(db, () => config);
-      expect(store.siesta(CHAT, PN, "Alice", NOW)).toContain("Let Them Sleep");
+      expect(store.siesta(CHAT, PN, "Alice", NOW)).toBeNull();
       db.close();
       db = openDatabase(path);
       store = new AchievementStore(db, () => config);
@@ -271,10 +270,10 @@ describe("surprise achievement integrations", () => {
     await handleTriviaAnswer(answer);
     question();
     for (let i = 0; i < 5; i++) await handleTriviaAnswer({ ...answer, text: "London" });
-    expect(reply.mock.calls.flat().join("\n")).toContain("The Oracle Is Broken");
+      expect(reply.mock.calls.flat().join("\n")).not.toContain("The Oracle Is Broken");
     interactions.addDebt(PN, 5_000);
     await handleTriviaAnswer(answer);
-    expect(reply.mock.calls.flat().join("\n")).toContain("Still Worth It");
+      expect(reply.mock.calls.flat().join("\n")).not.toContain("Still Worth It");
   });
 
   it("tracks a real comeback across duel questions", async () => {
@@ -289,8 +288,8 @@ describe("surprise achievement integrations", () => {
       await handleTriviaAnswer(answer);
     }
     const notices = reply.mock.calls.flat().join("\n");
-    expect(notices).toContain("Comeback Kid");
-    expect(notices).toContain("Photo Finish");
+      expect(notices).not.toContain("Comeback Kid");
+      expect(notices).not.toContain("Photo Finish");
     expect(runtime.triviaDuels.has(CHAT)).toBe(false);
     expect(store.progress(CHAT, PN).counts.duels).toBe(1);
   });
@@ -311,7 +310,7 @@ describe("surprise achievement integrations", () => {
       question("duel");
       await handleTriviaAnswer({ ...answer, text: "London" });
     }
-    expect(reply.mock.calls.flat().join("\n")).toContain("The Oracle Is Broken");
+      expect(reply.mock.calls.flat().join("\n")).not.toContain("The Oracle Is Broken");
   });
 
   it("counts only accepted siestas, excluding forced sleep and already-sleeping requests", async () => {
@@ -337,11 +336,11 @@ describe("surprise achievement integrations", () => {
       runtime.cancelSiesta();
       await handler(ctx);
     }
-    expect(reply.mock.calls.flat().join("\n")).not.toContain("Let Them Sleep");
+      expect(reply.mock.calls.flat().join("\n")).not.toContain("Let Them Sleep");
     vi.setSystemTime(NOW + 9 * DAY);
     runtime.cancelSiesta();
     await handler(ctx);
-    expect(reply.mock.calls.flat().join("\n")).toContain("Let Them Sleep");
+    expect(reply.mock.calls.flat().join("\n")).not.toContain("Let Them Sleep");
   });
 
   it("signals actual pet care only, never status, cooldowns or disabled pets", () => {
